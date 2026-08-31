@@ -46,27 +46,28 @@ El código del ESP32 está escrito en C++ y utiliza PlatformIO (o Arduino IDE). 
 **Truco de conexión (IP):**
 Como la app necesita saber la IP del ESP32, hemos programado una función especial: **Cada vez que presionas el botón físico del prototipo, el ESP32 imprimirá su dirección IP en el Monitor Serial.** Solo conecta el ESP32 a la PC, abre el monitor serial, presiona el botón, copia la IP resultante, y actualízala en el código de Flutter.
 
-## Problemas Frecuentes de Hardware
-
-- **Audio roto o entrecortado:** Si al mover el prototipo el audio suena roto o deja de funcionar, es un falso contacto o un cortocircuito en los cables que van a la bornera del altavoz. Revisa que los cables estén bien apretados y el cobre no toque otros cables.
-- **No se conecta al Hotspot:** Asegúrate de que el Hotspot del celular esté configurado para emitir en la banda de **2.4 GHz** (la opción "Maximizar compatibilidad" debe estar encendida en iOS/Android). El ESP32 no soporta 5 GHz.
-
 ## Conexiones de Hardware (Pines ESP32-S3 WROOM)
 
-A continuaci�n se detalla el esquema de conexi�n exacto para que el hardware funcione con el c�digo actual. Aseg�rate de conectar los pines a sus respectivos VCC (3.3V o 5V) y GND.
+A continuación se detalla el esquema de conexión exacto para que el hardware funcione con el código actual. Asegúrate de conectar los pines a sus respectivos VCC (3.3V o 5V) y GND.
 
-### Micr�fono I2S (Ej. INMP441)
+![Pinout ESP32-S3 WROOM](ESP.jpg)
+
+### 🎙️ Micrófono I2S (Ej. INMP441)
 - **SCK / BCLK** -> Pin 42
 - **WS / L/R** -> Pin 41
 - **SD / DOUT** -> Pin 40
 - **L/R (Canal)** -> GND (Para usar canal izquierdo)
 
-### Amplificador de Audio I2S (Ej. MAX98357A)
+### 🔊 Amplificador de Audio I2S (Ej. MAX98357A)
 - **LRC** -> Pin 1
 - **BCLK** -> Pin 2
 - **DIN** -> Pin 21
 
-### Bot�n F�sico (Push-to-talk)
-- **Un pin del bot�n** -> Pin 14
-- **El otro pin del bot�n** -> GND (Usa resistencia pull-up interna del c�digo)
+### 🔘 Botón Físico (Push-to-talk)
+- **Un pin del botón** -> Pin 14
+- **El otro pin del botón** -> GND (Usa resistencia pull-up interna del código)
 
+## Problemas Frecuentes de Hardware
+
+- **Audio roto o entrecortado:** Si al mover el prototipo el audio suena roto o deja de funcionar, es un falso contacto o un cortocircuito en los cables que van a la bornera del altavoz. Revisa que los cables estén bien apretados y el cobre no toque otros cables.
+- **No se conecta al Hotspot:** Asegúrate de que el Hotspot del celular esté configurado para emitir en la banda de **2.4 GHz** (la opción "Maximizar compatibilidad" debe estar encendida en iOS/Android). El ESP32 no soporta 5 GHz.
