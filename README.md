@@ -50,3 +50,23 @@ Como la app necesita saber la IP del ESP32, hemos programado una funciÃ³n especi
 
 - **Audio roto o entrecortado:** Si al mover el prototipo el audio suena roto o deja de funcionar, es un falso contacto o un cortocircuito en los cables que van a la bornera del altavoz. Revisa que los cables estÃ©n bien apretados y el cobre no toque otros cables.
 - **No se conecta al Hotspot:** AsegÃºrate de que el Hotspot del celular estÃ© configurado para emitir en la banda de **2.4 GHz** (la opciÃ³n "Maximizar compatibilidad" debe estar encendida en iOS/Android). El ESP32 no soporta 5 GHz.
+
+## Conexiones de Hardware (Pines ESP32-S3 WROOM)
+
+A continuación se detalla el esquema de conexión exacto para que el hardware funcione con el código actual. Asegúrate de conectar los pines a sus respectivos VCC (3.3V o 5V) y GND.
+
+### Micrófono I2S (Ej. INMP441)
+- **SCK / BCLK** -> Pin 42
+- **WS / L/R** -> Pin 41
+- **SD / DOUT** -> Pin 40
+- **L/R (Canal)** -> GND (Para usar canal izquierdo)
+
+### Amplificador de Audio I2S (Ej. MAX98357A)
+- **LRC** -> Pin 1
+- **BCLK** -> Pin 2
+- **DIN** -> Pin 21
+
+### Botón Físico (Push-to-talk)
+- **Un pin del botón** -> Pin 14
+- **El otro pin del botón** -> GND (Usa resistencia pull-up interna del código)
+
