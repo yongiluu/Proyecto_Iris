@@ -52,18 +52,18 @@ A continuación se detalla el esquema de conexión exacto para que el hardware f
 
 ![Pinout ESP32-S3 WROOM](ESP.jpg)
 
-### 🎙️ Micrófono I2S (Ej. INMP441)
+###  Micrófono I2S (Ej. INMP441)
 - **SCK / BCLK** -> Pin 42
 - **WS / L/R** -> Pin 41
 - **SD / DOUT** -> Pin 40
 - **L/R (Canal)** -> GND (Para usar canal izquierdo)
 
-### 🔊 Amplificador de Audio I2S (Ej. MAX98357A)
+###  Amplificador de Audio I2S (Ej. MAX98357A)
 - **LRC** -> Pin 1
 - **BCLK** -> Pin 2
 - **DIN** -> Pin 21
 
-### 🔘 Botón Físico (Push-to-talk)
+###  Botón Físico (Push-to-talk)
 - **Un pin del botón** -> Pin 14
 - **El otro pin del botón** -> GND (Usa resistencia pull-up interna del código)
 
