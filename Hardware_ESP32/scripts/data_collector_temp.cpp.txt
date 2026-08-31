@@ -1,0 +1,78 @@
+#include <Arduino.h>
+#include <driver/i2s.h>
+
+// =======================================================
+// CONFIGURACIÓN DE PINES DEL MICRÓFONO INMP441
+// =======================================================
+#define I2S_MIC_PORT I2S_NUM_0
+#define I2S_MIC_SCK  42
+#define I2S_MIC_WS   41
+#define I2S_MIC_SD   40
+
+#define SAMPLE_RATE 16000
+
+void initI2S() {
+  i2s_config_t i2s_mic_config = {
+    .mode = (i2s_mode_t)(I2S_MODE_MASTER | I2S_MODE_RX),
+    .sample_rate = SAMPLE_RATE,
+    .bits_per_sample = I2S_BITS_PER_SAMPLE_32BIT,
+    .channel_format = I2S_CHANNEL_FMT_RIGHT_LEFT, // Formato estéreo estándar
+    .communication_format = I2S_COMM_FORMAT_STAND_I2S,
+    .intr_alloc_flags = ESP_INTR_FLAG_LEVEL1,
+    .dma_buf_count = 8,
+    .dma_buf_len = 256,
+    .use_apll = false,
+    .tx_desc_auto_clear = false,
+    .fixed_mclk = 0
+  };
+
+  i2s_pin_config_t i2s_mic_pins = {
+    .bck_io_num = I2S_MIC_SCK,
+    .ws_io_num = I2S_MIC_WS,
+    .data_out_num = I2S_PIN_NO_CHANGE,
+    .data_in_num = I2S_MIC_SD
+  };
+
+  i2s_driver_install(I2S_MIC_PORT, &i2s_mic_config, 0, NULL);
+  i2s_set_pin(I2S_MIC_PORT, &i2s_mic_pins);
+}
+
+void setup() {
+  // Inicializamos a altísima velocidad para evitar cuellos de botella 
+  // (16kHz * 16 bit * 1 canal = 256,000 bps)
+  Serial.begin(921600);
+  initI2S();
+}
+
+void loop() {
+  size_t bytes_read = 0;
+  int32_t samples[128]; // 128 muestras de 32-bit (estéreo)
+
+  esp_err_t result = i2s_read(I2S_MIC_PORT, &samples, sizeof(samples), &bytes_read, portMAX_DELAY);
+  
+  if (result == ESP_OK && bytes_read > 0) {
+    int samples_read = bytes_read / sizeof(int32_t);
+    int16_t out_buffer[64]; // Como ignoramos un canal, el buffer final es la mitad
+    static int32_t dc_offset = 0; 
+    
+    // Procesamos para sacar canal útil, aplicar ganancia y offset
+    for (int i = 0; i < samples_read; i += 2) { 
+      int32_t raw_sample = samples[i]; 
+      int32_t sample16 = raw_sample >> 16; 
+      
+      // Filtro paso alto (offset DC)
+      dc_offset = (dc_offset * 127 + sample16) / 128;
+      int32_t clean_sample = sample16 - dc_offset;
+      
+      // Ganancia de x128 idéntica a tu código original
+      int32_t shifted = clean_sample * 128; 
+      if (shifted > 32767) shifted = 32767;
+      if (shifted < -32768) shifted = -32768;
+      
+      out_buffer[i/2] = (int16_t)shifted;
+    }
+    
+    // Enviar por Serial directo a Python (Raw Bytes)
+    Serial.write((uint8_t*)out_buffer, (samples_read / 2) * sizeof(int16_t));
+  }
+}

@@ -1,0 +1,392 @@
+#include <Arduino.h>
+#include "esp_camera.h"
+#include <WiFi.h>
+#include "esp_http_server.h"
+#include <driver/i2s.h>
+#include <WebSocketsServer.h>
+
+// =======================================================
+// CONFIGURACIÓN DE AUDIO I2S
+// =======================================================
+#define I2S_MIC_PORT I2S_NUM_0
+#define I2S_MIC_SCK  42
+#define I2S_MIC_WS   41
+#define I2S_MIC_SD   40
+
+#define I2S_AMP_PORT I2S_NUM_1
+#define I2S_AMP_LRC  1
+#define I2S_AMP_BCLK 2
+#define I2S_AMP_DIN  21
+
+#define BUTTON_PIN   14
+
+#define SAMPLE_RATE 16000
+
+// Reemplaza con tus credenciales de WiFi
+const char* ssid = "Diego";
+const char* password = "Pepinillos";
+
+// =======================================================
+// CONFIGURACIÓN DE PINES PARA TU ESP32-S3 EXACTA
+// Basado en el diagrama del fabricante
+// =======================================================
+#define PWDN_GPIO_NUM     -1 
+#define RESET_GPIO_NUM    -1 
+#define XCLK_GPIO_NUM     15
+#define SIOD_GPIO_NUM     4  // SDA
+#define SIOC_GPIO_NUM     5  // SCL
+
+#define Y9_GPIO_NUM       16
+#define Y8_GPIO_NUM       17
+#define Y7_GPIO_NUM       18
+#define Y6_GPIO_NUM       12
+#define Y5_GPIO_NUM       10
+#define Y4_GPIO_NUM       8
+#define Y3_GPIO_NUM       9
+#define Y2_GPIO_NUM       11
+#define VSYNC_GPIO_NUM    6
+#define HREF_GPIO_NUM     7
+#define PCLK_GPIO_NUM     13
+// =======================================================
+// =======================================================
+
+WebSocketsServer webSocket = WebSocketsServer(81);
+bool isAppConnected = false;
+uint8_t connectedClientId = 0;
+
+void startCameraServer();
+
+void webSocketEvent(uint8_t num, WStype_t type, uint8_t * payload, size_t length) {
+  switch(type) {
+    case WStype_DISCONNECTED:
+      Serial.printf("[%u] Desconectado!\n", num);
+      if (num == connectedClientId) {
+        isAppConnected = false;
+      }
+      break;
+    case WStype_CONNECTED: {
+      IPAddress ip = webSocket.remoteIP(num);
+      Serial.printf("[%u] Conectado desde %d.%d.%d.%d url: %s\n", num, ip[0], ip[1], ip[2], ip[3], payload);
+      isAppConnected = true;
+      connectedClientId = num;
+      break;
+    }
+    case WStype_BIN: {
+      // Recibimos audio PCM (16-bit, 16kHz, mono) desde Flutter
+      // Convertimos a 32-bit estéreo para el MAX98357A
+      int16_t* incoming_samples = (int16_t*)payload;
+      int num_samples = length / 2; // 2 bytes por muestra
+      
+      // Reservamos buffer en heap para no saturar la pila
+      int32_t* out_buffer = (int32_t*)malloc(num_samples * 2 * sizeof(int32_t));
+      if(out_buffer) {
+        // Multiplicamos por la ganancia (el altavoz soporta 3.2W a 4 ohms)
+        // Multiplicamos por la ganancia
+        const int GANANCIA_SALIDA = 16;
+        
+        for (int i = 0; i < num_samples; i++) {
+          int64_t sample_amplificado = (int64_t)incoming_samples[i] * GANANCIA_SALIDA;
+          // Shift left de 16 bits porque el I2S es 32-bit left-aligned para el DAC
+          sample_amplificado = sample_amplificado << 16;
+          
+          if (sample_amplificado > 2147483647LL) sample_amplificado = 2147483647LL;
+          if (sample_amplificado < -2147483648LL) sample_amplificado = -2147483648LL;
+          
+          // Estéreo: Canal Izquierdo y Derecho iguales
+          out_buffer[i*2] = (int32_t)sample_amplificado;
+          out_buffer[i*2 + 1] = (int32_t)sample_amplificado;
+        }
+        
+        size_t bytes_written = 0;
+        i2s_write(I2S_AMP_PORT, out_buffer, num_samples * 2 * sizeof(int32_t), &bytes_written, portMAX_DELAY);
+        free(out_buffer);
+      }
+      break;
+    }
+    case WStype_TEXT:
+    case WStype_ERROR:
+    case WStype_FRAGMENT_TEXT_START:
+    case WStype_FRAGMENT_BIN_START:
+    case WStype_FRAGMENT:
+    case WStype_FRAGMENT_FIN:
+      break;
+  }
+}
+
+void initI2S() {
+  // 1. Configuración del Micrófono INMP441 (Entrada)
+  i2s_config_t i2s_mic_config = {
+    .mode = (i2s_mode_t)(I2S_MODE_MASTER | I2S_MODE_RX),
+    .sample_rate = SAMPLE_RATE,
+    .bits_per_sample = I2S_BITS_PER_SAMPLE_32BIT,
+    .channel_format = I2S_CHANNEL_FMT_RIGHT_LEFT, // Estéreo para generar los relojes correctamente
+    .communication_format = I2S_COMM_FORMAT_STAND_I2S,
+    .intr_alloc_flags = ESP_INTR_FLAG_LEVEL1,
+    .dma_buf_count = 8,
+    .dma_buf_len = 256,
+    .use_apll = false,
+    .tx_desc_auto_clear = false,
+    .fixed_mclk = 0
+  };
+
+  i2s_pin_config_t i2s_mic_pins = {
+    .bck_io_num = I2S_MIC_SCK,
+    .ws_io_num = I2S_MIC_WS,
+    .data_out_num = I2S_PIN_NO_CHANGE,
+    .data_in_num = I2S_MIC_SD
+  };
+
+  i2s_driver_install(I2S_MIC_PORT, &i2s_mic_config, 0, NULL);
+  i2s_set_pin(I2S_MIC_PORT, &i2s_mic_pins);
+
+  // 2. Configuración del Amplificador MAX98357A (Salida)
+  i2s_config_t i2s_amp_config = {
+    .mode = (i2s_mode_t)(I2S_MODE_MASTER | I2S_MODE_TX),
+    .sample_rate = SAMPLE_RATE,
+    .bits_per_sample = I2S_BITS_PER_SAMPLE_32BIT,
+    .channel_format = I2S_CHANNEL_FMT_RIGHT_LEFT, // Estéreo para que el MAX98357A reciba el ciclo LRC completo
+    .communication_format = I2S_COMM_FORMAT_STAND_I2S,
+    .intr_alloc_flags = ESP_INTR_FLAG_LEVEL1,
+    .dma_buf_count = 8,
+    .dma_buf_len = 256,
+    .use_apll = false,
+    .tx_desc_auto_clear = true,
+    .fixed_mclk = 0
+  };
+
+  i2s_pin_config_t i2s_amp_pins = {
+    .bck_io_num = I2S_AMP_BCLK,
+    .ws_io_num = I2S_AMP_LRC,
+    .data_out_num = I2S_AMP_DIN,
+    .data_in_num = I2S_PIN_NO_CHANGE
+  };
+
+  i2s_driver_install(I2S_AMP_PORT, &i2s_amp_config, 0, NULL);
+  i2s_set_pin(I2S_AMP_PORT, &i2s_amp_pins);
+}
+
+void setup() {
+  Serial.begin(115200);
+  Serial.setDebugOutput(true);
+  Serial.println();
+  
+  pinMode(BUTTON_PIN, INPUT_PULLUP);
+
+  camera_config_t config;
+  config.ledc_channel = LEDC_CHANNEL_0;
+  config.ledc_timer = LEDC_TIMER_0;
+  config.pin_d0 = Y2_GPIO_NUM;
+  config.pin_d1 = Y3_GPIO_NUM;
+  config.pin_d2 = Y4_GPIO_NUM;
+  config.pin_d3 = Y5_GPIO_NUM;
+  config.pin_d4 = Y6_GPIO_NUM;
+  config.pin_d5 = Y7_GPIO_NUM;
+  config.pin_d6 = Y8_GPIO_NUM;
+  config.pin_d7 = Y9_GPIO_NUM;
+  config.pin_xclk = XCLK_GPIO_NUM;
+  config.pin_pclk = PCLK_GPIO_NUM;
+  config.pin_vsync = VSYNC_GPIO_NUM;
+  config.pin_href = HREF_GPIO_NUM;
+  config.pin_sccb_sda = SIOD_GPIO_NUM;
+  config.pin_sccb_scl = SIOC_GPIO_NUM;
+  config.pin_pwdn = PWDN_GPIO_NUM;
+  config.pin_reset = RESET_GPIO_NUM;
+  config.xclk_freq_hz = 20000000;
+  
+  // Usamos un formato estándar y estable
+  config.pixel_format = PIXFORMAT_JPEG;
+  config.frame_size = FRAMESIZE_SVGA; // Aumentamos a 800x600 para ver más detalle
+  config.jpeg_quality = 10; // Mejor calidad
+  config.fb_count = 1;
+
+  // Si tenemos PSRAM, podemos subir la resolución y los buffers
+  if(psramFound()){
+    config.frame_size = FRAMESIZE_QVGA; // Forzamos 320x240 para streaming super rápido
+    config.jpeg_quality = 12; // Un poco más compresión para aligerar la red
+    config.fb_count = 2; // Doble buffer para video suave
+  }
+
+  // Inicializar la cámara
+  esp_err_t err = esp_camera_init(&config);
+  if (err != ESP_OK) {
+    Serial.printf("Error al inicializar la cámara: 0x%x\n", err);
+    return;
+  }
+  
+  // Configuración del sensor para la OV3660 (rotar imagen si está al revés)
+  sensor_t * s = esp_camera_sensor_get();
+  s->set_vflip(s, 1);
+  s->set_hmirror(s, 1);
+
+  // Conectar a WiFi
+  WiFi.begin(ssid, password);
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(500);
+    Serial.print(".");
+  }
+  Serial.println("");
+  Serial.println("WiFi conectado");
+
+  // Iniciar servidor web de la cámara
+  startCameraServer();
+
+  // Iniciar WebSockets
+  webSocket.begin();
+  webSocket.onEvent(webSocketEvent);
+
+  // Inicializar periféricos I2S para el loopback de audio
+  initI2S();
+
+  Serial.print("¡Cámara y Audio listos! Accede a http://");
+  Serial.println(WiFi.localIP());
+  Serial.println("WebSocket corriendo en puerto 81");
+}
+
+unsigned long last_print_time = 0;
+unsigned long total_samples = 0;
+
+int16_t audio_accum_buffer[1600]; // Buffer para acumular 100ms de audio (16kHz mono)
+int audio_accum_idx = 0;
+
+bool buttonState = HIGH; // Estado estable actual
+bool lastButtonState = HIGH; // Estado previo para debounce
+unsigned long lastDebounceTime = 0;
+const unsigned long debounceDelay = 50;
+
+void loop() {
+  webSocket.loop();
+
+  // === Lectura del botón físico ===
+  bool reading = digitalRead(BUTTON_PIN);
+  
+  if (reading != lastButtonState) {
+    lastDebounceTime = millis();
+  }
+  
+  if ((millis() - lastDebounceTime) > debounceDelay) {
+    if (reading != buttonState) {
+      buttonState = reading;
+      
+      if (buttonState == LOW) { // Presionado
+        Serial.println("Botón Presionado -> CMD_PTT_START");
+        if (isAppConnected) webSocket.broadcastTXT("CMD_PTT_START");
+      } else { // Soltado
+        Serial.println("Botón Soltado -> CMD_PTT_STOP");
+        if (isAppConnected) {
+          // Enviar los ultimos datos de audio antes del STOP
+          if (audio_accum_idx > 0) {
+            webSocket.sendBIN(connectedClientId, (uint8_t*)audio_accum_buffer, audio_accum_idx * sizeof(int16_t));
+            audio_accum_idx = 0;
+          }
+          webSocket.broadcastTXT("CMD_PTT_STOP");
+        }
+      }
+    }
+  }
+  lastButtonState = reading;
+
+  // === Lectura y proceso del micrófono ===
+  size_t bytes_read = 0;
+  size_t bytes_written = 0;
+  int32_t samples[128]; // 128 muestras de 32-bit (estéreo)
+
+  esp_err_t result = i2s_read(I2S_MIC_PORT, &samples, sizeof(samples), &bytes_read, 10 / portTICK_PERIOD_MS);
+  
+  if (result == ESP_OK && bytes_read > 0) {
+    int samples_read = bytes_read / sizeof(int32_t);
+    
+    if (isAppConnected) {
+      // -----------------------------------------------------
+      // MODO BRIDGE: Acumular audio y enviar vía WebSocket
+      // El canal activo de este micrófono resultó ser el índice 0.
+      static int32_t dc_offset = 0; // Filtro paso alto para quitar ruido DC
+      for (int i = 0; i < samples_read; i += 2) { 
+        int32_t raw_sample = samples[i]; 
+        
+        // Bajar a la escala original de 16 bits sin ganancia todavía
+        int32_t sample16 = raw_sample >> 16; 
+        
+        // Actualizar el offset DC (promedio móvil lento)
+        dc_offset = (dc_offset * 127 + sample16) / 128;
+        
+        // Señal limpia centrada exactamente en 0
+        int32_t clean_sample = sample16 - dc_offset;
+        
+        // Aplicar la ganancia deseada (x16 = +24dB) ahora que es seguro
+        int32_t shifted = clean_sample * 16;
+        
+        if (shifted > 32767) shifted = 32767;
+        if (shifted < -32768) shifted = -32768;
+        
+        if (audio_accum_idx < 1600) {
+          audio_accum_buffer[audio_accum_idx++] = (int16_t)shifted;
+        }
+      }
+      
+      // Si el buffer alcanzó ~32ms (512 muestras = 1024 bytes), enviarlo.
+      // Así evitamos desbordar el buffer TCP de la ESP32 (Connection reset/Disconnect)
+      if (audio_accum_idx >= 512) {
+        webSocket.sendBIN(connectedClientId, (uint8_t*)audio_accum_buffer, audio_accum_idx * sizeof(int16_t));
+        audio_accum_idx = 0;
+      }
+      
+    } else {
+      // -----------------------------------------------------
+      // MODO LOCAL (Loopback): Cuando la app no está conectada
+      // -----------------------------------------------------
+      const int GANANCIA = 16; 
+      for (int i = 0; i < samples_read; i++) {
+        int64_t sample_amplificado = (int64_t)samples[i] * GANANCIA;
+        if (sample_amplificado > 2147483647LL) sample_amplificado = 2147483647LL;
+        if (sample_amplificado < -2147483648LL) sample_amplificado = -2147483648LL;
+        samples[i] = (int32_t)sample_amplificado;
+      }
+      i2s_write(I2S_AMP_PORT, &samples, bytes_read, &bytes_written, portMAX_DELAY);
+    }
+  }
+}
+// =======================================================
+// MOTOR DEL SERVIDOR WEB (Iris Optic Nerve Test)
+// =======================================================
+httpd_handle_t camera_httpd = NULL;
+
+static esp_err_t capture_handler(httpd_req_t *req){
+    camera_fb_t * fb = NULL;
+    
+    // Tomar y devolver un frame para limpiar el buffer viejo de la cámara
+    fb = esp_camera_fb_get();
+    if(fb) { esp_camera_fb_return(fb); }
+    
+    // Tomar el frame fresco real
+    fb = esp_camera_fb_get();
+    if (!fb) {
+    Serial.println("Fallo al capturar la imagen");
+    httpd_resp_send_500(req);
+    return ESP_FAIL;
+  }
+  
+  // Le decimos al navegador que le vamos a mandar una imagen JPEG
+  httpd_resp_set_type(req, "image/jpeg");
+  esp_err_t res = httpd_resp_send(req, (const char *)fb->buf, fb->len);
+  
+  // Liberamos la memoria para la siguiente foto
+  esp_camera_fb_return(fb);
+  return res;
+}
+
+void startCameraServer() {
+  httpd_config_t config = HTTPD_DEFAULT_CONFIG();
+  config.server_port = 80;
+  
+  httpd_uri_t index_uri = {
+    .uri       = "/",
+    .method    = HTTP_GET,
+    .handler   = capture_handler,
+    .user_ctx  = NULL
+  };
+  
+  // Iniciamos el servidor y le asignamos la ruta principal "/"
+  if (httpd_start(&camera_httpd, &config) == ESP_OK) {
+    httpd_register_uri_handler(camera_httpd, &index_uri);
+  }
+}
