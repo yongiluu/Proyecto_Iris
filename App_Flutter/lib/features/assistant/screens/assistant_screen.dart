@@ -32,14 +32,14 @@ class AssistantScreen extends StatefulWidget {
 class _AssistantScreenState extends State<AssistantScreen>
     with TickerProviderStateMixin {
   
-  // IP DE LA ESP32 (Actualízala si cambia en el monitor serie)
+  // IP DE LA ESP32 (Actualizala si cambia en el monitor serie)
   static const String ESP32_IP = '10.215.241.172';
 
   // ─── Services ───
   final CameraService _nativeCameraService = CameraService();
   final SpeechService _nativeSpeechService = SpeechService();
   final Esp32CameraService _esp32CameraService = Esp32CameraService(ESP32_IP);
-  final Esp32SpeechService _esp32SpeechService = Esp32SpeechService(ESP32_IP);
+  final Esp32SpeechService _esp32SpeechService = Esp32SpeechService();
   final OccipitalAgentService _agentService = OccipitalAgentService();
   final TtsService _ttsService = TtsService();
   final HapticService _hapticService = HapticService();
@@ -50,7 +50,7 @@ class _AssistantScreenState extends State<AssistantScreen>
   bool _isInitialized = false;
   bool _isProcessing = false;
   String _lastDescription = '';
-  String _statusText = 'Presiona el botón para hablar';
+  String _statusText = 'Presiona el boton para hablar';
   
   // ─── Continuous Mode ───
   bool _continuousMode = false;
@@ -121,21 +121,39 @@ class _AssistantScreenState extends State<AssistantScreen>
         }
       };
 
+      _esp32SpeechService.onConnectionChanged = (bool connected) {
+        if (mounted && _hardwareMode == HardwareMode.esp32) {
+          setState(() {
+            _statusText = connected ? 'Conectado a ESP32 (BLE)' : 'Buscando Iris_ESP32 por Bluetooth...';
+          });
+          if (connected) {
+            _hapticService.vibrateStart();
+            _ttsService.speakStatus('Bluetooth conectado');
+          }
+        }
+      };
+
       await Future.wait<void>([
         _nativeCameraService.initialize(),
         _nativeSpeechService.initialize(),
         _esp32CameraService.initialize(),
-        _esp32SpeechService.initialize(),
+        _esp32SpeechService.init(),
         _ttsService.initialize(),
         _hapticService.initialize(),
       ]);
 
       setState(() => _isInitialized = true);
+      
+      if (_hardwareMode == HardwareMode.esp32) {
+         setState(() {
+            _statusText = _esp32SpeechService.isConnected ? 'Conectado a ESP32 (BLE)' : 'Buscando Iris_ESP32 por Bluetooth...';
+         });
+      }
 
-      await _ttsService.speakStatus('Iris está lista.', esp32Service: _hardwareMode == HardwareMode.esp32 ? _esp32SpeechService : null);
+      await _ttsService.speakStatus('Iris esta lista.', esp32Service: _hardwareMode == HardwareMode.esp32 ? _esp32SpeechService : null);
     } catch (e) {
       setState(() {
-        _statusText = 'Error de inicialización: $e';
+        _statusText = 'Error de inicializacion: $e';
       });
       debugPrint('⚠️ Error initializing services: $e');
     }
@@ -164,8 +182,8 @@ class _AssistantScreenState extends State<AssistantScreen>
       await _ttsService.speakStatus('Iris lista.', esp32Service: _hardwareMode == HardwareMode.esp32 ? _esp32SpeechService : null);
     }
     
-    // Activamos SIEMPRE el micrófono nativo del celular (incluso en modo ESP32)
-    // Esto es muy útil porque el usuario tiene el celular en el bolsillo/mano.
+    // Activamos SIEMPRE el microfono nativo del celular (incluso en modo ESP32)
+    // Esto es muy util porque el usuario tiene el celular en el bolsillo/mano.
     _startNativeListening();
   }
 
@@ -276,6 +294,8 @@ class _AssistantScreenState extends State<AssistantScreen>
       _isProcessing = true;
       _statusText = 'Transcribiendo audio...';
     });
+    _pulseController.stop();
+    _pulseController.reset();
 
     try {
       if (await Vibration.hasVibrator() == true) {
@@ -294,24 +314,24 @@ class _AssistantScreenState extends State<AssistantScreen>
            _esp32SpeechService.startThinkingSound();
        }
     } else if (_hardwareMode == HardwareMode.esp32) {
-       // Envía "Pensando..." sonoro al ESP32
+       // Envia "Pensando..." sonoro al ESP32
        _esp32SpeechService.startThinkingSound();
        prompt = await _esp32SpeechService.stopListeningAndTranscribe();
-       // Detenemos sonido pensante al tener la transcripción
+       // Detenemos sonido pensante al tener la transcripcion
        _esp32SpeechService.stopThinkingSound();
     } else {
        prompt = await _nativeSpeechService.stopListening();
     }
     
     if (prompt.isEmpty) {
-      _resetState('No entendí o hubo ruido, por favor intenta de nuevo');
-      await _ttsService.speak('No escuché claramente, ¿puedes repetir?', esp32Service: _hardwareMode == HardwareMode.esp32 ? _esp32SpeechService : null);
+      _resetState('No entendi o hubo ruido, por favor intenta de nuevo');
+      await _ttsService.speak('No escuche claramente, puedes repetir?', esp32Service: _hardwareMode == HardwareMode.esp32 ? _esp32SpeechService : null);
       return;
     }
 
     // Comandos de voz del modo continuo
     final lowerPrompt = prompt.toLowerCase();
-    final activateKeywords = ['activa el modo continuo', 'descripción continua', 'describe todo el tiempo'];
+    final activateKeywords = ['activa el modo continuo', 'descripcion continua', 'describe todo el tiempo'];
     final deactivateKeywords = ['deja de describir', 'desactiva continuo'];
     
     if (activateKeywords.any((k) => lowerPrompt.contains(k))) {
@@ -339,7 +359,7 @@ class _AssistantScreenState extends State<AssistantScreen>
         },
         captureImageCallback: () async {
           if (_hardwareMode == HardwareMode.esp32) {
-            return await _esp32CameraService.captureSingleFrame();
+            return await _esp32SpeechService.captureSingleFrame();
           } else {
             return await _nativeCameraService.captureSingleFrame();
           }
@@ -371,7 +391,7 @@ class _AssistantScreenState extends State<AssistantScreen>
       setState(() {
          _isListening = false;
          _isProcessing = false;
-         _statusText = errorMessage ?? 'Presiona el botón para hablar';
+         _statusText = errorMessage ?? 'Presiona el boton para hablar';
       });
     }
   }
@@ -391,15 +411,35 @@ class _AssistantScreenState extends State<AssistantScreen>
   Widget _buildCameraPreview() {
     if (_hardwareMode == HardwareMode.esp32) {
       return ValueListenableBuilder<Uint8List?>(
-        valueListenable: _esp32CameraService.frameNotifier,
-        builder: (context, frame, child) {
-          if (frame == null) {
-            return const Center(child: CircularProgressIndicator(color: AppTheme.primaryCyan));
+        valueListenable: _esp32SpeechService.lastPhotoNotifier,
+        builder: (context, photoData, child) {
+          if (photoData != null) {
+            return SizedBox.expand(
+              child: Image.memory(
+                photoData,
+                fit: BoxFit.cover,
+                gaplessPlayback: true,
+              ),
+            );
           }
-          return SizedBox.expand(
-            child: FittedBox(
-              fit: BoxFit.cover,
-              child: Image.memory(frame, gaplessPlayback: true),
+          return Container(
+            color: Colors.black87,
+            child: Center(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(
+                    _esp32SpeechService.isConnected ? Icons.bluetooth_connected : Icons.bluetooth_searching,
+                    color: _esp32SpeechService.isConnected ? AppTheme.primaryCyan : Colors.grey,
+                    size: 64,
+                  ),
+                  const SizedBox(height: 16),
+                  Text(
+                    _esp32SpeechService.isConnected ? 'Camara ESP32 (Lista para captura)' : 'Buscando Iris_ESP32 por Bluetooth...',
+                    style: const TextStyle(color: Colors.white70),
+                  ),
+                ],
+              ),
             ),
           );
         },
@@ -456,7 +496,7 @@ class _AssistantScreenState extends State<AssistantScreen>
     final isSelected = _hardwareMode == mode;
     return GestureDetector(
       onTap: () {
-         if (_isListening || _isProcessing) return; // Bloquear cambio si está ocupado
+         if (_isListening || _isProcessing) return; // Bloquear cambio si esta ocupado
          setState(() {
             _hardwareMode = mode;
          });
@@ -549,7 +589,7 @@ class _AssistantScreenState extends State<AssistantScreen>
                       letterSpacing: 1.5,
                     ),
                   ),
-                  const SizedBox(width: 8), // Añadir un poco de espacio
+                  const SizedBox(width: 8), // Anadir un poco de espacio
                   Row(
                     children: [
                       const Text('Continuo', style: TextStyle(color: Colors.white70, fontSize: 12)),
@@ -608,7 +648,7 @@ class _AssistantScreenState extends State<AssistantScreen>
                 Icon(Icons.spatial_audio_off, color: AppTheme.accentCyan, size: 18),
                 SizedBox(width: 8),
                 Text(
-                  'ÚLTIMA DESCRIPCIÓN',
+                  'ULTIMA DESCRIPCION',
                   style: TextStyle(
                     color: AppTheme.accentCyan,
                     fontSize: 12,

@@ -14,14 +14,15 @@ class OccipitalAgentService {
 
   static const String systemPrompt = '''
 Eres Occipital, un asistente visual y de razonamiento avanzado y altamente confiable. ERES LOS OJOS DE UNA PERSONA CIEGA.
-Tu directiva principal es la seguridad del usuario y la precisión absoluta. 
-TIENES ACCESO A HERRAMIENTAS. DEBES USARLAS CUANDO SEA NECESARIO:
-1. Si el usuario pregunta por su entorno, qué hay frente a él, o pide que le leas algo, LLAMA A `analyze_surroundings`.
-2. Si el usuario pregunta por su ubicación, el clima, o dónde está, LLAMA A `get_weather_and_location`.
-3. Si el usuario hace una pregunta sobre medicinas, salud o directrices médicas, LLAMA A `search_medical_database`.
-4. Si el usuario hace una pregunta general o conversacional (ej: "hola", "¿cuánto es 2+2?"), RESPONDE DIRECTAMENTE sin usar herramientas.
+Tu directiva principal es la seguridad del usuario y la precision absoluta. 
+TIENES ACCESO A HERRAMIENTAS Y ES OBLIGATORIO USARLAS CUANDO EL USUARIO PREGUNTE POR SU ENTORNO.
+REGLA DE ORO: Si el usuario dice "Que ves aqui�?", "Describe esto", o cualquier cosa sobre su vision o entorno, DEBES LLAMAR INMEDIATAMENTE a `analyze_surroundings`. NO preguntes que quiere ver! Llama a la herramienta de inmediato!
+1. Entorno/vision -> LLAMA A `analyze_surroundings`.
+2. Ubicacion/Clima -> LLAMA A `get_weather_and_location`.
+3. Salud/Medicinas -> LLAMA A `search_medical_database`.
+4. Charla general -> RESPONDE DIRECTAMENTE.
 
-RESPONDE SIEMPRE EN ESPAÑOL Y DE FORMA MUY BREVE, CORTA Y CONCISA. No des explicaciones largas.
+RESPONDE SIEMPRE EN ESPANOL Y DE FORMA MUY BREVE, CORTA Y CONCISA. No des explicaciones largas.
 ''';
 
   bool _isInitialized = false;
@@ -48,7 +49,7 @@ RESPONDE SIEMPRE EN ESPAÑOL Y DE FORMA MUY BREVE, CORTA Y CONCISA. No des expli
     final deploymentName = 'gpt-4.1-mini';
 
     if (endpoint.isEmpty || key.isEmpty) {
-      return "Las claves de API para Azure OpenAI no están configuradas.";
+      return "Las claves de API para Azure OpenAI no estan configuradas.";
     }
 
     final url = Uri.parse('https://occipital-east-resource.services.ai.azure.com/openai/v1/chat/completions');
@@ -129,7 +130,7 @@ RESPONDE SIEMPRE EN ESPAÑOL Y DE FORMA MUY BREVE, CORTA Y CONCISA. No des expli
       String toolResult = "";
 
       if (functionName == 'analyze_surroundings') {
-        onStatusUpdate?.call('Analizando Visión...');
+        onStatusUpdate?.call('Analizando vision...');
         final imageBytes = await captureImageCallback();
         if (imageBytes != null) {
           final base64Image = base64Encode(imageBytes);
@@ -144,7 +145,7 @@ RESPONDE SIEMPRE EN ESPAÑOL Y DE FORMA MUY BREVE, CORTA Y CONCISA. No des expli
           messages.add({
             "role": "user",
             "content": [
-              {"type": "text", "text": "Aquí tienes la imagen capturada para tu análisis:"},
+              {"type": "text", "text": "aqui� tienes la imagen capturada para tu analisis:"},
               {"type": "image_url", "image_url": {"url": "data:image/jpeg;base64,$base64Image"}}
             ]
           });
@@ -166,7 +167,7 @@ RESPONDE SIEMPRE EN ESPAÑOL Y DE FORMA MUY BREVE, CORTA Y CONCISA. No des expli
            "content": toolResult
         });
       } else if (functionName == 'search_medical_database') {
-        onStatusUpdate?.call('Consultando Base de Datos Médica...');
+        onStatusUpdate?.call('Consultando Base de Datos Medica...');
         final args = jsonDecode(toolCall['function']['arguments']);
         toolResult = await _searchMedicalDB(args['query'] ?? userPrompt);
         messages.add({
@@ -197,7 +198,7 @@ RESPONDE SIEMPRE EN ESPAÑOL Y DE FORMA MUY BREVE, CORTA Y CONCISA. No des expli
 
     } catch (e) {
       debugPrint('Exception in OccipitalAgentService: $e');
-      return "Hubo un problema de conexión. Inténtalo de nuevo.";
+      return "Hubo un problema de conexion. Intentalo de nuevo.";
     }
   }
 
@@ -244,15 +245,15 @@ RESPONDE SIEMPRE EN ESPAÑOL Y DE FORMA MUY BREVE, CORTA Y CONCISA. No des expli
           weatherText = '$tempRounded°C y $description';
         }
       }
-      return "Ubicación: $locationText. Clima: $weatherText.";
+      return "Ubicacion: $locationText. Clima: $weatherText.";
     } catch (e) {
-      return "No se pudo obtener el clima o ubicación.";
+      return "No se pudo obtener el clima o Ubicacion.";
     }
   }
 
   Future<String> _searchMedicalDB(String query) async {
     if (EnvConfig.azureSearchEndpoint.isEmpty || EnvConfig.azureSearchKey.isEmpty) {
-      return "Base de datos médica no configurada.";
+      return "Base de datos Medica no configurada.";
     }
     try {
       final searchUrl = Uri.parse('${EnvConfig.azureSearchEndpoint}/indexes/insulina-fda-kb/docs/search?api-version=2023-11-01');
@@ -268,9 +269,9 @@ RESPONDE SIEMPRE EN ESPAÑOL Y DE FORMA MUY BREVE, CORTA Y CONCISA. No des expli
           return values.map((e) => e['content'] ?? '').join('\n');
         }
       }
-      return "No se encontraron resultados en la base de datos médica para la consulta: $query.";
+      return "No se encontraron resultados en la base de datos Medica para la consulta: $query.";
     } catch (e) {
-      return "Error al consultar la base de datos médica.";
+      return "Error al consultar la base de datos Medica.";
     }
   }
 

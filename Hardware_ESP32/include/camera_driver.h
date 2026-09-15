@@ -2,9 +2,9 @@
 #define CAMERA_DRIVER_H
 
 #include "esp_camera.h"
-#include "esp_http_server.h"
 
 bool initCamera();
-void startCameraServer();
+// Retorna un puntero al frame capture. Recuerda llamar a esp_camera_fb_return(fb) despues de usarlo.
+camera_fb_t* capturePhoto();
 
 #endif

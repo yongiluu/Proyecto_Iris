@@ -1,94 +1,238 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:io';
-import 'dart:math';
 import 'dart:typed_data';
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
+import 'package:flutter_blue_plus/flutter_blue_plus.dart';
 import '../../core/constants/env_config.dart';
 
 class Esp32SpeechService {
-  final String _ip;
-  WebSocket? _channel;
-  bool _isInitialized = false;
-  
-  // Callbacks para la UI
-  VoidCallback? onRecordingStarted;
-  VoidCallback? onRecordingStopped;
-  
-  // Buffer de audio
+  BluetoothDevice? _device;
+  BluetoothCharacteristic? _rxCharacteristic; // Send TTS
+  BluetoothCharacteristic? _txCharacteristic; // Receive Mic
+  BluetoothCharacteristic? _cmdCharacteristic; // Receive Commands
+  BluetoothCharacteristic? _photoCharacteristic; // Receive Photo
+
   final List<int> _audioBuffer = [];
+  final List<int> _photoBuffer = [];
   bool _isRecording = false;
-  bool _isSendingAudio = false; // <-- Bandera para poder interrumpir el audio
+  bool _isSendingAudio = false;
+  bool _isReceivingPhoto = false;
+  int _expectedPhotoSize = 0;
+  bool _isInitialized = false;
+
   Timer? _thinkingTimer;
+
+  // UUIDs
+  static const String SERVICE_UUID = "6E400001-B5A3-F393-E0A9-E50E24DCCA9E";
+  static const String CHAR_UUID_RX = "6E400002-B5A3-F393-E0A9-E50E24DCCA9E";
+  static const String CHAR_UUID_TX = "6E400003-B5A3-F393-E0A9-E50E24DCCA9E";
+  static const String CHAR_UUID_CMD_TX = "6E400004-B5A3-F393-E0A9-E50E24DCCA9E";
+  static const String CHAR_UUID_PHOTO_TX = "6E400005-B5A3-F393-E0A9-E50E24DCCA9E";
+
+  Function()? onRecordingStarted;
+  Function()? onRecordingStopped;
+  Function(bool)? onConnectionChanged;
   
-  Esp32SpeechService(this._ip);
+  Completer<Uint8List?>? _photoCompleter;
+  
+  final ValueNotifier<Uint8List?> lastPhotoNotifier = ValueNotifier(null);
 
-  Future<void> initialize() async {
-    try {
-      _connectWebSocket(); // Se llama sin await para no bloquear la carga inicial de la UI
-    } catch (e) {
-      debugPrint('⚠️ Esp32SpeechService: Error inicial al conectar (se reintentará): $e');
-    }
+  bool isConnected = false;
+  Timer? _reconnectTimer;
+
+  Future<void> init() async {
+    if (_isInitialized) return;
+    _isInitialized = true;
+    
+    // Escuchar el estado del Bluetooth
+    FlutterBluePlus.adapterState.listen((BluetoothAdapterState state) {
+      if (state == BluetoothAdapterState.on) {
+        _scanAndConnect();
+      } else {
+        isConnected = false;
+        onConnectionChanged?.call(false);
+      }
+    });
+
+    // Watchdog para reconexion
+    _reconnectTimer = Timer.periodic(const Duration(seconds: 5), (timer) async {
+      if (!isConnected && FlutterBluePlus.adapterStateNow == BluetoothAdapterState.on) {
+         if (FlutterBluePlus.isScanningNow == false) {
+             _scanAndConnect();
+         }
+      }
+    });
   }
 
-  Future<void> _connectWebSocket() async {
+  StreamSubscription<List<ScanResult>>? _scanSubscription;
+  StreamSubscription<BluetoothConnectionState>? _connectionSubscription;
+  bool _isConnecting = false;
+
+  Future<void> _scanAndConnect() async {
+    if (isConnected || _isConnecting) return;
+    _isConnecting = true;
     try {
-      _channel = await WebSocket.connect('ws://$_ip:81/');
-      _channel!.pingInterval = const Duration(seconds: 3);
-      _isInitialized = true;
-      debugPrint('🎙️ Esp32SpeechService: Conectado a WebSocket de ESP32');
-      
-      _channel!.listen(
-        (message) {
-          if (message is String) {
-            debugPrint('📩 Comando ESP32: $message');
-            if (message == 'CMD_PTT_START') {
-              _isRecording = true;
-              stopAudio(); // <-- Detenemos cualquier audio TTS que se estuviera enviando
-              _audioBuffer.clear();
-              onRecordingStarted?.call();
-            } else if (message == 'CMD_PTT_STOP') {
-              _isRecording = false;
-              onRecordingStopped?.call(); // Avisa a la UI que comience a procesar
+      debugPrint('Buscando dispositivo Iris_ESP32 por BLE...');
+      await FlutterBluePlus.startScan(timeout: const Duration(seconds: 4));
+
+      _scanSubscription?.cancel();
+      _scanSubscription = FlutterBluePlus.scanResults.listen((results) async {
+        for (ScanResult r in results) {
+          if (r.device.platformName == "Iris_ESP32" || r.device.advName == "Iris_ESP32") {
+            debugPrint('¡Dispositivo Iris encontrado! Conectando...');
+            FlutterBluePlus.stopScan();
+            _scanSubscription?.cancel();
+            
+            _device = r.device;
+
+            _connectionSubscription?.cancel();
+            _connectionSubscription = _device!.connectionState.listen((BluetoothConnectionState state) {
+              if (state == BluetoothConnectionState.connected) {
+                debugPrint('Conectado a Iris por BLE.');
+                isConnected = true;
+                _isConnecting = false;
+                onConnectionChanged?.call(true);
+              } else if (state == BluetoothConnectionState.disconnected) {
+                debugPrint('Iris desconectado.');
+                isConnected = false;
+                onConnectionChanged?.call(false);
+                if (!_isConnecting) {
+                  _cleanupAndReconnect();
+                }
+              }
+            });
+
+            try {
+              await _device!.connect(license: License.nonprofit);
+              
+              await Future.delayed(const Duration(milliseconds: 500));
+              
+              if (defaultTargetPlatform == TargetPlatform.android) {
+                try {
+                  await _device!.requestMtu(512);
+                } catch (e) {
+                  debugPrint('Advertencia: No se pudo negociar MTU: $e');
+                }
+              }
+
+              await Future.delayed(const Duration(milliseconds: 500));
+              await _discoverServices();
+            } catch (e) {
+              debugPrint('Error en conexion BLE: $e');
+              _isConnecting = false;
+              _cleanupAndReconnect();
             }
-          } else if (message is List<int>) {
-            if (_isRecording) {
-              _audioBuffer.addAll(message);
-            }
+            break;
           }
-        },
-        onDone: () {
-           debugPrint('🔌 WebSocket cerrado por el servidor. Reconectando en 2s...');
-           _isInitialized = false;
-           Future.delayed(const Duration(seconds: 2), _connectWebSocket);
-        },
-        onError: (e) {
-           debugPrint('❌ Error WebSocket: $e. Reconectando en 2s...');
-           _isInitialized = false;
-           Future.delayed(const Duration(seconds: 2), _connectWebSocket);
-        },
-      );
+        }
+      });
     } catch (e) {
-      debugPrint('⚠️ Error al conectar WebSocket: $e. Reintentando en 3s...');
-      _isInitialized = false;
-      Future.delayed(const Duration(seconds: 3), _connectWebSocket);
+      debugPrint('Error al escanear BLE: $e');
+      _isConnecting = false;
     }
   }
 
-  /// Envía audio crudo (PCM 16-bit) a la placa ESP32 para que lo reproduzca
-  Future<void> sendAudioToEsp32(Uint8List pcmData) async {
-    if (!_isInitialized || _channel == null || _channel!.readyState != WebSocket.open) return;
+  Future<void> _discoverServices() async {
+    if (_device == null) return;
+    List<BluetoothService> services = await _device!.discoverServices();
+    for (BluetoothService service in services) {
+      if (service.uuid.toString().toUpperCase().replaceAll('-', '') == SERVICE_UUID.replaceAll('-', '')) {
+        for (BluetoothCharacteristic c in service.characteristics) {
+          if (c.uuid.toString().toUpperCase().replaceAll('-', '') == CHAR_UUID_RX.replaceAll('-', '')) {
+            _rxCharacteristic = c;
+          } else if (c.uuid.toString().toUpperCase().replaceAll('-', '') == CHAR_UUID_TX.replaceAll('-', '')) {
+            _txCharacteristic = c;
+            await c.setNotifyValue(true);
+            c.onValueReceived.listen(_onAudioReceived);
+          } else if (c.uuid.toString().toUpperCase().replaceAll('-', '') == CHAR_UUID_CMD_TX.replaceAll('-', '')) {
+            _cmdCharacteristic = c;
+            await c.setNotifyValue(true);
+            c.onValueReceived.listen(_onCmdReceived);
+          } else if (c.uuid.toString().toUpperCase().replaceAll('-', '') == CHAR_UUID_PHOTO_TX.replaceAll('-', '')) {
+            _photoCharacteristic = c;
+            await c.setNotifyValue(true);
+            c.onValueReceived.listen(_onPhotoChunkReceived);
+          }
+        }
+      }
+    }
+  }
 
+  void _onCmdReceived(List<int> value) {
+    String cmd = String.fromCharCodes(value).trim();
+    debugPrint('Comando BLE recibido: $cmd');
+    if (cmd == 'CMD_PTT_START') {
+      _isRecording = true;
+      stopAudio();
+      _audioBuffer.clear();
+      onRecordingStarted?.call();
+    } else if (cmd == 'CMD_PTT_STOP') {
+      _isRecording = false;
+      onRecordingStopped?.call();
+    } else if (cmd.startsWith('CMD_PHOTO_START:')) {
+      _isReceivingPhoto = true;
+      _photoBuffer.clear();
+      _expectedPhotoSize = int.tryParse(cmd.split(':')[1]) ?? 0;
+      debugPrint('Esperando foto de $_expectedPhotoSize bytes');
+    } else if (cmd == 'CMD_PHOTO_END') {
+      _isReceivingPhoto = false;
+      if (_photoCompleter != null && !_photoCompleter!.isCompleted) {
+        final photoBytes = Uint8List.fromList(_photoBuffer);
+        lastPhotoNotifier.value = photoBytes;
+        _photoCompleter!.complete(photoBytes);
+      }
+    } else if (cmd == 'CMD_PHOTO_ERROR') {
+      _isReceivingPhoto = false;
+      if (_photoCompleter != null && !_photoCompleter!.isCompleted) {
+        _photoCompleter!.complete(null);
+      }
+    }
+  }
+
+  void _onPhotoChunkReceived(List<int> value) {
+    if (_isReceivingPhoto) {
+      _photoBuffer.addAll(value);
+    }
+  }
+
+  Future<Uint8List?> captureSingleFrame() async {
+    if (_cmdCharacteristic == null) return null;
+    
+    _photoCompleter = Completer<Uint8List?>();
+    
+    // Send command to ESP32 to take photo
+    await _cmdCharacteristic!.write(utf8.encode("CMD_TAKE_PHOTO"), withoutResponse: true);
+    
+    // Timeout in case ESP32 fails silently or photo is large
+    return await _photoCompleter!.future.timeout(const Duration(seconds: 15), onTimeout: () {
+      _isReceivingPhoto = false;
+      return null;
+    });
+  }
+
+  void _onAudioReceived(List<int> value) {
+    if (_isRecording) {
+      _audioBuffer.addAll(value);
+    }
+  }
+
+  void _cleanupAndReconnect() {
+    _connectionSubscription?.cancel();
+    _scanSubscription?.cancel();
+    _device?.disconnect();
+    _device = null;
+    _rxCharacteristic = null;
+    _txCharacteristic = null;
+    _cmdCharacteristic = null;
+    _isConnecting = false;
+    Future.delayed(const Duration(seconds: 3), _scanAndConnect);
+  }
+
+  Future<void> sendAudioToEsp32(Uint8List pcmData) async {
+    if (_device == null || _rxCharacteristic == null) return;
     _isSendingAudio = true;
 
-    // 1. PROCESAMIENTO DE AUDIO (Control de Volumen)
-    // El usuario indicó que sigue sonando un poco desgarrado.
-    // Como el sonido ya no se corta, el "desgarro" actual es saturación ANALÓGICA del pequeño
-    // amplificador I2S al intentar empujar demasiado volumen y quedarse sin corriente (o chocar con el techo de voltaje).
-    // Solución: Como estará cerca del oído, reducimos el volumen digital al 35% aquí.
-    // (La ESP32 lo multiplica por 2, por lo que el volumen final real será del 70%, 
-    // completamente limpio y sin distorsión).
     final processedData = Uint8List(pcmData.length);
     final ByteData inData = ByteData.sublistView(pcmData);
     final ByteData outData = ByteData.sublistView(processedData);
@@ -96,84 +240,60 @@ class Esp32SpeechService {
     for (int i = 0; i < pcmData.length; i += 2) {
       if (i + 1 < pcmData.length) {
         int sample = inData.getInt16(i, Endian.little);
-        
-        // Convertimos a float
         double x = sample / 32768.0;
-        
-        // Volumen al 35% digital (que al multiplicarse por 2 en la ESP32, será 70% real)
-        x = x * 0.35;
-        
-        // Volvemos a entero
+        x = x * 0.35; // Escala de volumen
         int outSample = (x * 32767.0).round();
         outData.setInt16(i, outSample, Endian.little);
       }
     }
 
-    // 2. ENVÍO INTELIGENTE (Pacing con Stopwatch)
-    // Para evitar que se corte a los 4/5 (Timeout de Ping por saturación) y 
-    // evitar el sonido desgarrado por falta de datos (Starvation),
-    // enviamos el audio manteniendo siempre exactamente 500ms de "ventaja" sobre el tiempo real.
     final stopwatch = Stopwatch()..start();
-    const int chunkSize = 2048; // 64ms de audio a 16kHz
+    // Fragmentos de 500 bytes máximo por el límite de MTU en BLE
+    const int chunkSize = 500; 
     
     for (int i = 0; i < processedData.length; i += chunkSize) {
-      if (!_isSendingAudio || _channel!.readyState != WebSocket.open) break;
+      if (!_isSendingAudio) break;
 
       int end = (i + chunkSize < processedData.length) ? i + chunkSize : processedData.length;
-      _channel!.add(processedData.sublist(i, end));
+      await _rxCharacteristic!.write(processedData.sublist(i, end), withoutResponse: true);
 
-      // Calculamos cuántos milisegundos de audio hemos enviado en total
+      // Pacing inteligente
       double sentAudioTimeMs = (end / 32000.0) * 1000.0;
-      
-      // Esperamos hasta que el tiempo real alcance al audio enviado menos 500ms
-      // Esto asegura que la ESP32 siempre tenga 500ms de audio en su buffer (ni más, ni menos).
-      while (stopwatch.elapsedMilliseconds < sentAudioTimeMs - 500) {
+      while (stopwatch.elapsedMilliseconds < sentAudioTimeMs - 100) {
         if (!_isSendingAudio) break;
-        await Future.delayed(const Duration(milliseconds: 10));
+        await Future.delayed(const Duration(milliseconds: 5));
       }
     }
     
     _isSendingAudio = false;
   }
 
-  /// Detiene el envío de audio actual (ej. si el usuario presiona el botón para hablar)
   void stopAudio() {
     _isSendingAudio = false;
   }
 
-  /// Inicia la reproducción periódica de un suave tono de "pensando" en la ESP32
   void startThinkingSound() {
-    if (!_isInitialized || _channel == null || _channel!.readyState != WebSocket.open) return;
-    _channel!.add('CMD_BEEP_THINKING');
-    
-    _thinkingTimer?.cancel();
-    _thinkingTimer = Timer.periodic(const Duration(seconds: 2), (timer) {
-      if (_channel!.readyState == WebSocket.open) {
-        _channel!.add('CMD_BEEP_THINKING');
-      } else {
-        timer.cancel();
-      }
-    });
+    if (_rxCharacteristic != null) {
+      _rxCharacteristic!.write(utf8.encode('CMD_BEEP_THINKING'), withoutResponse: true);
+      _thinkingTimer?.cancel();
+      _thinkingTimer = Timer.periodic(const Duration(seconds: 2), (timer) {
+        if (_rxCharacteristic != null) {
+          _rxCharacteristic!.write(utf8.encode('CMD_BEEP_THINKING'), withoutResponse: true);
+        } else {
+          timer.cancel();
+        }
+      });
+    }
   }
 
-  /// Detiene el sonido de "pensando"
   void stopThinkingSound() {
     _thinkingTimer?.cancel();
   }
 
-  /// Retorna el texto transcrito del audio acumulado
   Future<String> stopListeningAndTranscribe() async {
-    if (_audioBuffer.isEmpty) {
-      debugPrint('⚠️ No hay audio grabado.');
-      return '';
-    }
+    if (_audioBuffer.isEmpty) return '';
     
-    debugPrint('💾 Procesando audio de ${_audioBuffer.length} bytes...');
-    
-    // Convertir PCM crudo a WAV
     final wavBytes = _createWavHeader(_audioBuffer);
-    
-    // Enviar a Hugging Face Whisper
     return await _transcribeWithHuggingFace(wavBytes);
   }
 
@@ -186,12 +306,9 @@ class Esp32SpeechService {
     int bitsPerSample = 16;
     
     var header = ByteData(44);
-    // 'RIFF'
     header.setUint8(0, 82); header.setUint8(1, 73); header.setUint8(2, 70); header.setUint8(3, 70);
     header.setUint32(4, 36 + pcmData.length, Endian.little);
-    // 'WAVE'
     header.setUint8(8, 87); header.setUint8(9, 65); header.setUint8(10, 86); header.setUint8(11, 69);
-    // 'fmt '
     header.setUint8(12, 102); header.setUint8(13, 109); header.setUint8(14, 116); header.setUint8(15, 32);
     header.setUint32(16, 16, Endian.little);
     header.setUint16(20, 1, Endian.little);
@@ -200,7 +317,6 @@ class Esp32SpeechService {
     header.setUint32(28, byteRate, Endian.little);
     header.setUint16(32, blockAlign, Endian.little);
     header.setUint16(34, bitsPerSample, Endian.little);
-    // 'data'
     header.setUint8(36, 100); header.setUint8(37, 97); header.setUint8(38, 116); header.setUint8(39, 97);
     header.setUint32(40, pcmData.length, Endian.little);
     
@@ -212,15 +328,10 @@ class Esp32SpeechService {
 
   Future<String> _transcribeWithHuggingFace(Uint8List wavBytes) async {
     final key = EnvConfig.huggingFaceApiKey.trim();
-    
-    if (key.isEmpty) {
-      debugPrint('⚠️ Faltan credenciales de Hugging Face');
-      return '';
-    }
+    if (key.isEmpty) return '';
 
     try {
       final url = Uri.parse('https://router.huggingface.co/hf-inference/models/openai/whisper-large-v3-turbo');
-      
       final response = await http.post(
         url,
         headers: {
@@ -232,20 +343,16 @@ class Esp32SpeechService {
       
       if (response.statusCode == 200) {
         final result = jsonDecode(response.body);
-        final transcribed = result['text'] ?? '';
-        debugPrint('🎙️ Transcripción (ESP32): $transcribed');
-        return transcribed.toString().trim();
-      } else {
-        debugPrint('❌ Error Hugging Face Whisper: ${response.statusCode} - ${response.body}');
+        return result['text']?.toString().trim() ?? '';
       }
     } catch (e) {
-      debugPrint('❌ Error enviando a Hugging Face: $e');
+      debugPrint('Error Hugging Face: $e');
     }
     return '';
   }
 
   void dispose() {
     _thinkingTimer?.cancel();
-    _channel?.close();
+    _device?.disconnect();
   }
 }

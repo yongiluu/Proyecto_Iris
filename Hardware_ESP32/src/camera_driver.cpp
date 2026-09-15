@@ -1,22 +1,6 @@
 #include "camera_driver.h"
 #include "config.h"
 
-static httpd_handle_t camera_httpd = NULL;
-
-static esp_err_t capture_handler(httpd_req_t *req) {
-  camera_fb_t * fb = esp_camera_fb_get();
-  if (!fb) {
-    httpd_resp_send_500(req);
-    return ESP_FAIL;
-  }
-  
-  httpd_resp_set_type(req, "image/jpeg");
-  esp_err_t res = httpd_resp_send(req, (const char *)fb->buf, fb->len);
-  
-  esp_camera_fb_return(fb);
-  return res;
-}
-
 bool initCamera() {
   camera_config_t config;
   config.ledc_channel = LEDC_CHANNEL_0;
@@ -52,18 +36,14 @@ bool initCamera() {
   return (err == ESP_OK);
 }
 
-void startCameraServer() {
-  httpd_config_t config = HTTPD_DEFAULT_CONFIG();
-  config.server_port = 80;
+camera_fb_t* capturePhoto() {
+  // Clear old frames from buffer to ensure we get a fresh picture with correct exposure
+  camera_fb_t * fb = esp_camera_fb_get();
+  if (fb) esp_camera_fb_return(fb);
   
-  httpd_uri_t capture_uri = {
-    .uri      = "/capture",
-    .method   = HTTP_GET,
-    .handler  = capture_handler,
-    .user_ctx = NULL
-  };
-  
-  if (httpd_start(&camera_httpd, &config) == ESP_OK) {
-    httpd_register_uri_handler(camera_httpd, &capture_uri);
-  }
+  fb = esp_camera_fb_get();
+  if (fb) esp_camera_fb_return(fb);
+
+  // Return fresh frame
+  return esp_camera_fb_get();
 }
