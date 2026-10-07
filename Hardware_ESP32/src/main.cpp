@@ -3,6 +3,8 @@
 #include "camera_driver.h"
 #include "audio_player.h"
 #include "ble_manager.h"
+#include "audio_processing.h"
+#include "tflite_inference.h"
 #include <driver/i2s.h>
 
 #define I2S_MIC_PORT I2S_NUM_0
@@ -61,6 +63,8 @@ void setup() {
 
   initAudioPlayer();
   initMic();
+  initAudioProcessing(); // Inicializar motor FFT Edge AI
+  initEdgeAI(); // Inicializar TensorFlow Lite Micro
 
   bleManager.init(onAudioReceived);
   
@@ -112,25 +116,27 @@ void loop() {
   }
   lastButtonState = reading;
 
-  if (isTransmitting && bleManager.isConnected()) {
-    int32_t samples[125]; // 500 bytes i2s
-    size_t bytes_read = 0;
+  // Lectura continua del micrófono para Edge AI
+  int32_t samples[125]; // 500 bytes i2s
+  size_t bytes_read = 0;
+  
+  esp_err_t result = i2s_read(I2S_MIC_PORT, &samples, sizeof(samples), &bytes_read, portMAX_DELAY);
+  
+  if (result == ESP_OK && bytes_read > 0) {
+    int num_samples = bytes_read / 4;
+    int16_t out_buf[125]; 
     
-    esp_err_t result = i2s_read(I2S_MIC_PORT, &samples, sizeof(samples), &bytes_read, portMAX_DELAY);
+    // INMP441 uses 24-bit left justified in 32-bit (shifted by 14)
+    for(int i = 0; i < num_samples; i++) {
+      out_buf[i] = samples[i] >> 14;
+    }
     
-    if (result == ESP_OK && bytes_read > 0) {
-      int num_samples = bytes_read / 4;
-      int16_t out_buf[125]; 
-      
-      // INMP441 uses 24-bit left justified in 32-bit (shifted by 14)
-      for(int i = 0; i < num_samples; i++) {
-        out_buf[i] = samples[i] >> 14;
-      }
-      
+    // 1. Procesamiento Local (Edge AI - Extracción de características)
+    processAudioFrame(out_buf, num_samples * 2);
+    
+    // 2. Transmisión Bluetooth (Solo si el botón está presionado)
+    if (isTransmitting && bleManager.isConnected()) {
       bleManager.sendAudioChunk((const uint8_t*)out_buf, num_samples * 2);
     }
-  } else {
-    // Evitamos saturar la CPU si no estamos transmitiendo
-    delay(10);
   }
 }
