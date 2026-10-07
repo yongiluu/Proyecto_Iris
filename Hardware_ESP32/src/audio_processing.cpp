@@ -39,7 +39,8 @@ void processAudioFrame(const int16_t* audioData, size_t length) {
 
             // Sensibilidad ajustada para detectar ruidos
             if (maxMagnitude > 800000) { 
-                Serial.printf("[Edge AI] Sonido fuerte detectado -> Frecuencia dominante: %.2f Hz\n", dominantFreq);
+                // MUTEADO para probar la Visión IA tranquilos
+                // Serial.printf("[Edge AI] Sonido fuerte detectado -> Frecuencia dominante: %.2f Hz\n", dominantFreq);
                 
                 // === EJECUTAR MODELO TENSORFLOW LITE ===
                 // Le pasamos las 128 frecuencias útiles de la FFT a la red neuronal

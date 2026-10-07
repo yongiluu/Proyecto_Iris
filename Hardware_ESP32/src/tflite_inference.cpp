@@ -63,14 +63,14 @@ void runInference(double* fft_features, size_t num_features) {
     float score_voice = output->data.f[1];
     float score_loud = output->data.f[2];
     
-    // Imprimir lo que realmente está pensando la IA
-    Serial.printf("   -> IA Scores | Silencio: %.2f | Voz: %.2f | Ruido Fuerte: %.2f\n", score_silence, score_voice, score_loud);
+    // Imprimir lo que realmente está pensando la IA (MUTEADO)
+    // Serial.printf("   -> IA Scores | Silencio: %.2f | Voz: %.2f | Ruido Fuerte: %.2f\n", score_silence, score_voice, score_loud);
 
     if (score_loud > 0.5) {
-        Serial.println("🤖 [Edge AI PREDICCIÓN]: ¡Ruido Fuerte / Alarma!");
+        // Serial.println("🤖 [Edge AI PREDICCIÓN]: ¡Ruido Fuerte / Alarma!");
     } else if (score_voice > 0.5) {
-        Serial.println("🤖 [Edge AI PREDICCIÓN]: Voz / Conversación");
+        // Serial.println("🤖 [Edge AI PREDICCIÓN]: Voz / Conversación");
     } else {
-        Serial.println("🤖 [Edge AI PREDICCIÓN]: Silencio / Indeterminado");
+        // Serial.println("🤖 [Edge AI PREDICCIÓN]: Silencio / Indeterminado");
     }
 }
