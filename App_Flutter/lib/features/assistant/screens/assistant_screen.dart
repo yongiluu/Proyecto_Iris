@@ -129,6 +129,8 @@ class _AssistantScreenState extends State<AssistantScreen>
         }
       };
 
+      _esp32SpeechService.onAudioEvent = _onAudioEvent;
+
       // Un servicio que falla (ej. sin permiso de camara) no debe impedir usar los demas.
       await Future.wait<void>([
         _initSafely('camara', _nativeCameraService.initialize()),
@@ -173,6 +175,30 @@ class _AssistantScreenState extends State<AssistantScreen>
       _hardwareMode == HardwareMode.esp32 ? _esp32SpeechService : null;
 
   bool _isNativeMicActive = false;
+
+  // ─── Alertas de sonido detectadas por la placa (Edge AI) ───
+  static const Map<String, String> _audioAlertPhrases = {
+    'bocina': 'una bocina',
+    'sirena': 'una sirena',
+    'perro': 'un perro',
+  };
+  static const Duration _audioAlertCooldown = Duration(seconds: 10);
+  DateTime? _lastAudioAlert;
+
+  Future<void> _onAudioEvent(String label, int confidence) async {
+    if (!mounted || _hardwareMode != HardwareMode.esp32) return;
+    // No interrumpir mientras el usuario habla o Iris responde.
+    if (_isListening || _isProcessing || _ttsService.isSpeaking) return;
+
+    final now = DateTime.now();
+    if (_lastAudioAlert != null && now.difference(_lastAudioAlert!) < _audioAlertCooldown) return;
+    _lastAudioAlert = now;
+
+    final what = _audioAlertPhrases[label] ?? 'un sonido: $label';
+    setState(() => _statusText = 'Se escucha $what ($confidence%)');
+    await _hapticService.vibrateTick();
+    await _ttsService.speakStatus('Atencion, se escucha $what', esp32Service: _activeEsp32);
+  }
 
   // ─── Volume Button Handler ───
   void _handleVolumeUpPress() {

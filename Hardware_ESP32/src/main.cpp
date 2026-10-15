@@ -1,12 +1,13 @@
+#ifndef IRIS_AUDIO_CAPTURE // El firmware de captura de datos (audio_capture.cpp) tiene su propio setup/loop
+
 #include <Arduino.h>
 #include "config.h"
 #include "camera_driver.h"
+#include "audio_events.h"
 #include "audio_player.h"
 #include "ble_manager.h"
-#include "audio_processing.h"
 #include "mic_driver.h"
 #include "photo_transfer.h"
-#include "tflite_inference.h"
 #include "tflite_vision.h"
 #include "vision_task.h"
 
@@ -32,10 +33,18 @@ void onCommandReceived(const char* command) {
   }
 }
 
+// Se ejecuta en la tarea de inferencia de audio. Formato: CMD_AUDIO_EVENT:<clase>:<porcentaje>
+void onAudioEvent(const char* label, int confidencePercent) {
+  char command[48];
+  snprintf(command, sizeof(command), "CMD_AUDIO_EVENT:%s:%d", label, confidencePercent);
+  bleManager.sendCommand(command);
+}
+
 void startPushToTalk() {
   Serial.println("Boton Presionado -> CMD_PTT_START");
   isTransmitting = true;
   setVisionPaused(true);
+  setAudioEventsPaused(true);
   bleManager.sendCommand("CMD_PTT_START");
 }
 
@@ -43,6 +52,7 @@ void stopPushToTalk() {
   Serial.println("Boton Soltado -> CMD_PTT_STOP");
   isTransmitting = false;
   setVisionPaused(false);
+  setAudioEventsPaused(false);
   delay(kStopFlushDelayMs); // deja vaciar la cola BLE de audio antes del STOP
   bleManager.sendCommand("CMD_PTT_STOP");
 }
@@ -74,9 +84,8 @@ void setup() {
   if (!initAudioPlayer()) Serial.println("Error al inicializar el reproductor de audio");
   if (!initMic()) Serial.println("Error al inicializar el microfono");
 
-  initAudioProcessing(); // Motor FFT (Edge AI audio)
-  initEdgeAI();          // TensorFlow Lite Micro (audio)
-  initVisionAI();        // TensorFlow Lite Micro (imagenes)
+  initVisionAI(); // TensorFlow Lite Micro (imagenes)
+  if (!startAudioEvents(onAudioEvent)) Serial.println("Error al iniciar la deteccion de audio");
 
   bleManager.init(onAudioReceived, onCommandReceived);
 
@@ -98,6 +107,7 @@ void loop() {
   if (isTransmitting && !bleManager.isConnected()) {
     isTransmitting = false;
     setVisionPaused(false);
+    setAudioEventsPaused(false);
   }
 
   int16_t samples[kMicMaxSamples];
@@ -107,10 +117,12 @@ void loop() {
   const size_t byteCount = sampleCount * sizeof(int16_t);
 
   // 1. Procesamiento local (Edge AI audio)
-  processAudioFrame(samples, byteCount);
+  feedAudioEvents(samples, sampleCount);
 
   // 2. Transmision Bluetooth
   if (isTransmitting) {
     bleManager.sendAudioChunk((const uint8_t*)samples, byteCount);
   }
 }
+
+#endif

@@ -61,6 +61,9 @@ class Esp32SpeechService {
   Function()? onRecordingStopped;
   Function(bool)? onConnectionChanged;
 
+  /// Alerta de sonido detectada por el modelo de la placa (ej. 'sirena', 87).
+  void Function(String label, int confidencePercent)? onAudioEvent;
+
   /// Ultima foto recibida de la placa, para mostrarla en la UI.
   final ValueNotifier<Uint8List?> lastPhotoNotifier = ValueNotifier(null);
 
@@ -260,6 +263,10 @@ class Esp32SpeechService {
       debugPrint('Esperando foto de $_expectedPhotoSize bytes');
     } else if (command == 'CMD_PHOTO_END') {
       _finishPhoto();
+    } else if (command.startsWith('CMD_AUDIO_EVENT:')) {
+      // CMD_AUDIO_EVENT:<clase>:<porcentaje>
+      final parts = command.split(':');
+      if (parts.length >= 3) onAudioEvent?.call(parts[1], int.tryParse(parts[2]) ?? 0);
     } else if (command == 'CMD_PHOTO_ERROR') {
       _isReceivingPhoto = false;
       _photoBuffer.clear();

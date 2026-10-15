@@ -1,0 +1,6 @@
+.venv/
+data/
+__pycache__/
+models/checkpoints/
+tests/build/
+*.log

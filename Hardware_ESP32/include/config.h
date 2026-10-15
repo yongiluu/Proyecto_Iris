@@ -31,6 +31,14 @@
 #define PHOTO_CHUNK_DELAY_MS    20            // Backpressure entre notificaciones de foto
 #define VISION_INTERVAL_MS      1000
 
+// ==========================================
+// Eventos de audio (Edge AI, modelo de ML_Training/audio)
+// ==========================================
+// El umbral de alerta viene del entrenamiento: kAudioAlertThreshold en audio_model_data.h
+#define AUDIO_EVENT_COOLDOWN_MS 5000   // no repetir la misma alerta antes de esto
+#define AUDIO_EVENTS_DEBUG      0      // 1 = imprime los puntajes de cada inferencia por serial
+#define AUDIO_CAPTURE_BAUD      921600 // firmware de captura de datos (entornos *_audio_capture)
+
 #ifdef IRIS_XIAO
 // ==========================================
 // PINES XIAO ESP32S3 SENSE (PROTOTIPO 2)

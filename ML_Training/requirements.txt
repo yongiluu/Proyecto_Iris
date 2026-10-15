@@ -1,0 +1,9 @@
+tensorflow>=2.15     # en Lambda usar la imagen con GPU (tensorflow[and-cuda] en Linux)
+numpy
+scipy
+soundfile
+tqdm
+requests
+pyserial             # capture_from_board.py
+sounddevice          # live_demo.py (microfono del PC)
+ziglang              # compilador C++ para tests/test_frontend.py
