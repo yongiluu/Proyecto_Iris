@@ -38,10 +38,43 @@ void sendPhoto() {
   bleManager.sendCommand(ok ? "CMD_PHOTO_END" : "CMD_PHOTO_ERROR");
 }
 
+constexpr uint32_t kRequestJpeg = 1 << 0;
+constexpr uint32_t kRequestGray = 1 << 1;
+uint8_t grayCopy[96 * 96];
+
+// Frame 96x96 en grises para recolectar datos de entrenamiento desde la app.
+void sendGrayFrame() {
+  camera_fb_t* frame = acquireGrayFrame();
+  if (frame == nullptr || frame->len > sizeof(grayCopy)) {
+    if (frame) releaseGrayFrame(frame);
+    bleManager.sendCommand("CMD_FRAME_ERROR");
+    return;
+  }
+  // Copiar y liberar enseguida: la vision local no debe quedarse sin camara durante el envio.
+  const size_t length = frame->len;
+  const unsigned width = frame->width, height = frame->height;
+  memcpy(grayCopy, frame->buf, length);
+  releaseGrayFrame(frame);
+
+  char header[40];
+  snprintf(header, sizeof(header), "CMD_FRAME_START:%u:%u", width, height);
+  bool ok = bleManager.sendCommand(header);
+  const size_t chunkSize = bleManager.payloadSize();
+  for (size_t offset = 0; ok && offset < length; offset += chunkSize) {
+    size_t chunk = length - offset;
+    if (chunk > chunkSize) chunk = chunkSize;
+    ok = bleManager.sendPhotoChunk(grayCopy + offset, chunk);
+    delay(PHOTO_CHUNK_DELAY_MS);
+  }
+  bleManager.sendCommand(ok ? "CMD_FRAME_END" : "CMD_FRAME_ERROR");
+}
+
 void photoTask(void*) {
   for (;;) {
-    ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
-    sendPhoto();
+    uint32_t requests = 0;
+    xTaskNotifyWait(0, UINT32_MAX, &requests, portMAX_DELAY);
+    if (requests & kRequestJpeg) sendPhoto();
+    if (requests & kRequestGray) sendGrayFrame();
   }
 }
 }
@@ -52,5 +85,9 @@ bool startPhotoTask() {
 }
 
 void requestPhotoCapture() {
-  if (photoTaskHandle != nullptr) xTaskNotifyGive(photoTaskHandle);
+  if (photoTaskHandle != nullptr) xTaskNotify(photoTaskHandle, kRequestJpeg, eSetBits);
+}
+
+void requestGrayFrameCapture() {
+  if (photoTaskHandle != nullptr) xTaskNotify(photoTaskHandle, kRequestGray, eSetBits);
 }

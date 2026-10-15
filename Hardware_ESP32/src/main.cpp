@@ -18,6 +18,8 @@ constexpr uint32_t kStopFlushDelayMs = 20;
 
 volatile bool beepRequested = false;
 bool isTransmitting = false;
+// Modo recoleccion de datos (pantalla "Misiones" de la app): manda el microfono crudo sin apretar el boton.
+volatile bool collectingAudio = false;
 
 // Se ejecuta en el hilo BLE: solo encolar, nunca bloquear.
 void onAudioReceived(const uint8_t* data, size_t length) {
@@ -29,6 +31,12 @@ void onCommandReceived(const char* command) {
     requestPhotoCapture();
   } else if (strcmp(command, "CMD_BEEP_THINKING") == 0) {
     beepRequested = true;
+  } else if (strcmp(command, "CMD_COLLECT_AUDIO_START") == 0) {
+    collectingAudio = true;
+  } else if (strcmp(command, "CMD_COLLECT_AUDIO_STOP") == 0) {
+    collectingAudio = false;
+  } else if (strcmp(command, "CMD_COLLECT_FRAME") == 0) {
+    requestGrayFrameCapture();
   } else {
     Serial.printf("[BLE] Comando desconocido: %s\n", command);
   }
@@ -45,6 +53,20 @@ void onAudioEvent(const char* label, int confidencePercent) {
 void onVisionEvent(const char* label, int confidencePercent) {
   char command[48];
   snprintf(command, sizeof(command), "CMD_VISION_EVENT:%s:%d", label, confidencePercent);
+  bleManager.sendCommand(command);
+}
+
+// Contexto silencioso (cada AMBIENT_CONTEXT_PERIOD_MS). Formato: CMD_AUDIO_CONTEXT:<clase>:<%>
+void onAudioContext(const char* label, int percent) {
+  char command[48];
+  snprintf(command, sizeof(command), "CMD_AUDIO_CONTEXT:%s:%d", label, percent);
+  bleManager.sendCommand(command);
+}
+
+// Formato: CMD_VISION_CONTEXT:<clase>:<%>
+void onVisionContext(const char* label, int percent) {
+  char command[48];
+  snprintf(command, sizeof(command), "CMD_VISION_CONTEXT:%s:%d", label, percent);
   bleManager.sendCommand(command);
 }
 
@@ -92,8 +114,8 @@ void setup() {
   if (!initAudioPlayer()) Serial.println("Error al inicializar el reproductor de audio");
   if (!initMic()) Serial.println("Error al inicializar el microfono");
 
-  if (!initVisionAI(onVisionEvent)) Serial.println("Error al iniciar la vision local");
-  if (!startAudioEvents(onAudioEvent)) Serial.println("Error al iniciar la deteccion de audio");
+  if (!initVisionAI(onVisionEvent, onVisionContext)) Serial.println("Error al iniciar la vision local");
+  if (!startAudioEvents(onAudioEvent, onAudioContext)) Serial.println("Error al iniciar la deteccion de audio");
 
   bleManager.init(onAudioReceived, onCommandReceived);
 
@@ -117,6 +139,7 @@ void loop() {
     setVisionPaused(false);
     setAudioEventsPaused(false);
   }
+  if (collectingAudio && !bleManager.isConnected()) collectingAudio = false;
 
   int16_t samples[kMicMaxSamples];
   size_t sampleCount = readMicSamples(samples, kMicMaxSamples);
@@ -127,8 +150,8 @@ void loop() {
   // 1. Procesamiento local (Edge AI audio)
   feedAudioEvents(samples, sampleCount);
 
-  // 2. Transmision Bluetooth
-  if (isTransmitting) {
+  // 2. Transmision Bluetooth (push-to-talk o recoleccion de datos)
+  if (isTransmitting || collectingAudio) {
     bleManager.sendAudioChunk((const uint8_t*)samples, byteCount);
   }
 }

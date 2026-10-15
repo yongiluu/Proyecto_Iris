@@ -7,6 +7,29 @@ Entrenamiento de los modelos TensorFlow Lite Micro que corren **dentro de la pla
 | Audio (`audio/`) | ✅ pipeline completo, modelo v1 entrenado con datos públicos | `fondo`, `voz`, `bocina`, `sirena`, `perro` |
 | Visión (`vision/`) | ✅ pipeline completo, modelo v1 entrenado con Open Images | `nada`, `persona`, `vehiculo`, `escalera`, `puerta` |
 
+## Cuando llegue el prototipo: recolectar datos con el celular (recomendado)
+
+La app tiene una pantalla **Misiones de datos** (ícono 📋 arriba a la derecha en la pantalla principal). Con la placa conectada por Bluetooth, te guía misión por misión ("Audio de calle 3/8", "Puertas 50/100") y guarda los audios y fotos en el celular. Así puedes grabar en la calle sin PC.
+
+1. Sube una vez el firmware normal a la XIAO: `cd Hardware_ESP32 && pio run -e seeed_xiao_esp32s3 -t upload`.
+2. En la app, elige el modo **Placa ESP32**, abre **Misiones de datos** y completa las misiones (~15 min de audio y ~750 fotos). Lleva la placa donde la usaría la persona. Cada grabación avisa si se perdió audio por Bluetooth, y puedes borrar la última toma si salió mal.
+3. Pasa los datos al PC: botón **Exportar** (zip por Drive, correo, etc.) o, por USB, copia la carpeta `Android/data/<app>/files/iris_dataset`.
+4. Impórtalos y reentrena, desde `ML_Training/`:
+   ```bash
+   python import_phone_data.py iris_dataset_XXXX.zip
+   python audio/prepare_dataset.py && python audio/train.py --finetune && python audio/export_model.py
+   python vision/prepare_dataset.py && python vision/train.py --finetune && python vision/export_model.py
+   cd ../Hardware_ESP32 && pio run -e seeed_xiao_esp32s3 -t upload
+   ```
+
+Las misiones se editan en `App_Flutter/lib/features/data_collection/missions.dart`. El ambiente de cada grabación (casa, calle, transporte) queda en el nombre del archivo, para entrenar más adelante un modelo de ambiente. Los firmwares `*_audio_capture` y `*_photo_capture` con cable USB siguen sirviendo para pruebas en el escritorio.
+
+## Qué hace la app con lo que detecta la placa
+
+- **Visión:** aviso hablado y vibración ("Adelante hay una escalera").
+- **Audio:** **contexto silencioso.** Una persona ciega suele oír la sirena antes que el modelo, así que por defecto no se avisa en voz alta (`_speakAudioAlerts` en `assistant_screen.dart`).
+- La placa manda cada 10 s un resumen de lo que más oyó y vio (`CMD_AUDIO_CONTEXT` / `CMD_VISION_CONTEXT`). Cuando el usuario pregunta algo, la app le pasa ese resumen y las alertas de los últimos 2 minutos a la IA de la nube como contexto (`SensorContext`). Por ejemplo, "se escuchan personas hablando", "puerta al frente", "se escuchó una sirena hace 20 s".
+
 ## Cómo funciona el modelo de audio
 
 ```text
@@ -15,7 +38,7 @@ micrófono 16 kHz ─► log-mel 40 bandas cada 20 ms ─► ventana de 1 s (49�
 
 - Las features se calculan **igual** en Python (`audio/features.py`) y en el firmware (`Hardware_ESP32/src/audio_frontend.cpp`). `tests/test_frontend.py` compila el código C++ en el PC y verifica que den lo mismo.
 - Las tablas del firmware (ventana, filtros mel) y el modelo se **generan** con `export_model.py`. No se editan a mano.
-- La placa corre la red cada 0,5 s en su propia tarea, la pausa mientras se aprieta el botón y avisa solo de `bocina`, `sirena` y `perro` (umbral `ALERT_THRESHOLD` = 0,7 de `config.py`, sin repetir antes de 5 s).
+- La placa corre la red cada 0,5 s en su propia tarea, la pausa mientras se aprieta el botón y manda como alerta solo `bocina`, `sirena` y `perro` (umbral `ALERT_THRESHOLD` = 0,7 de `config.py`, sin repetir antes de 5 s). La app las usa como contexto silencioso (ver arriba).
 
 ## Resultados del modelo v1 (2026-10-14)
 
@@ -70,7 +93,7 @@ python audio/live_demo.py --wav sirena.wav # o un archivo (busca sirenas/bocinas
 
 Muestra los puntajes cada 0,5 s y marca 🔔 cuando la placa mandaría una alerta.
 
-## Cuando llegue el prototipo: datos reales (lo que más mejora el modelo)
+## Datos reales con cable USB (alternativa a la app)
 
 El modelo v1 nunca ha "oído" el micrófono real. Con 10–20 minutos de grabaciones de la placa mejora mucho.
 

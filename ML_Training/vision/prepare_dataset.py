@@ -136,14 +136,17 @@ def collect_openimages(pools):
 
 
 def collect_board(pools):
-    """Fotos reales de la placa (96x96). Se separan por archivo."""
+    """Fotos reales de la placa (96x96). Se separan por tanda: fotos seguidas son casi iguales y no
+    deben quedar unas en train y otras en test. Tanda = nombre sin el numero final
+    (app: <clase>__<ambiente>__<mision>__<fecha>_<n>; capture_photos.py: <clase>_<nota>_<fecha>_<n>)."""
     if not config.BOARD_DIR.exists():
         return
     found = Counter()
     for cls in config.CLASSES:
         for path in sorted((config.BOARD_DIR / cls).glob("*.png")):
             image = np.asarray(Image.open(path).convert("L"))
-            pools[split_by_key(path.name)][cls].append(resize(image, CROP))
+            take = path.stem.rsplit("_", 1)[0]
+            pools[split_by_key("board:" + take)][cls].append(resize(image, CROP))
             found[cls] += 1
     if found:
         print(f"Fotos de la placa: {dict(found)}")

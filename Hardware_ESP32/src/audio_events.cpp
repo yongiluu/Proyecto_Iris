@@ -18,6 +18,7 @@
 namespace {
 AudioFrontend frontend;
 AudioEventCallback onEvent = nullptr;
+AudioEventCallback onContext = nullptr;
 
 tflite::MicroInterpreter* interpreter = nullptr;
 TfLiteTensor* input = nullptr;
@@ -37,8 +38,29 @@ std::atomic<bool> inferenceBusy{false};  // true mientras la tarea usa el tensor
 
 float previousScores[kAudioNumClasses] = {};
 uint32_t lastEventMs[kAudioNumClasses] = {};
+uint16_t contextCounts[kAudioNumClasses] = {};
+uint32_t lastContextMs = 0;
+
+// Resumen periodico: clase ganadora mas frecuente desde el ultimo resumen.
+void updateContext(const float* scores) {
+    int top = 0;
+    for (int i = 1; i < kAudioNumClasses; i++) if (scores[i] > scores[top]) top = i;
+    contextCounts[top]++;
+
+    uint32_t now = millis();
+    if (now - lastContextMs < AMBIENT_CONTEXT_PERIOD_MS) return;
+    lastContextMs = now;
+    int best = 0, total = 0;
+    for (int i = 0; i < kAudioNumClasses; i++) {
+        total += contextCounts[i];
+        if (contextCounts[i] > contextCounts[best]) best = i;
+    }
+    if (total > 0 && onContext) onContext(kAudioLabels[best], contextCounts[best] * 100 / total);
+    memset(contextCounts, 0, sizeof(contextCounts));
+}
 
 void handleScores(const float* scores) {
+    updateContext(scores);
     // Promedio con la inferencia anterior (~1 s de contexto) para evitar alertas por un golpe aislado.
     int best = -1;
     float bestScore = 0.0f;
@@ -111,8 +133,9 @@ void onFrame(const float* mel, void*) {
 }
 }  // namespace
 
-bool startAudioEvents(AudioEventCallback callback) {
+bool startAudioEvents(AudioEventCallback callback, AudioEventCallback contextCallback) {
     onEvent = callback;
+    onContext = contextCallback;
 
     const tflite::Model* model = tflite::GetModel(g_audio_model_data);
     if (model->version() != TFLITE_SCHEMA_VERSION) {

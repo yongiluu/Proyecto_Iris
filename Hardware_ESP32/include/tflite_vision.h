@@ -9,7 +9,9 @@
 // Se llama desde la tarea de vision cuando hay un aviso (ej. "escalera", 84).
 typedef void (*VisionEventCallback)(const char* label, int confidencePercent);
 
-bool initVisionAI(VisionEventCallback callback);
+// onContext recibe cada AMBIENT_CONTEXT_PERIOD_MS la clase mas vista (ej. "puerta", 70 = 70% de los
+// frames). Es contexto silencioso para la IA de la app. Puede ser nullptr.
+bool initVisionAI(VisionEventCallback callback, VisionEventCallback onContext = nullptr);
 
 // Un frame 96x96 en grises (1 byte por pixel). Llamar siempre desde la misma tarea.
 void runVisionInference(const uint8_t* image_data, size_t len);

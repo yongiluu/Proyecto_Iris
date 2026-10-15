@@ -50,6 +50,13 @@ class Esp32SpeechService {
   int _expectedPhotoSize = 0;
   Completer<Uint8List?>? _photoCompleter;
 
+  // Frame 96x96 en grises (modo recoleccion). Comparte la caracteristica de foto con el JPEG.
+  final BytesBuilder _frameBuffer = BytesBuilder(copy: false);
+  bool _isReceivingFrame = false;
+  int _frameWidth = 0;
+  int _frameHeight = 0;
+  Completer<GrayFrame?>? _frameCompleter;
+
   int _audioSession = 0;
   bool _isSendingAudio = false;
   bool _isInitialized = false;
@@ -66,6 +73,16 @@ class Esp32SpeechService {
 
   /// Algo visto por la camara de la placa (ej. 'escalera', 84).
   void Function(String label, int confidencePercent)? onVisionEvent;
+
+  /// Resumen silencioso cada ~10 s de lo que oye / ve la placa (clase mas frecuente y su %).
+  void Function(String label, int percent)? onAudioContext;
+  void Function(String label, int percent)? onVisionContext;
+
+  /// Audio crudo del microfono (PCM 16-bit, 16 kHz) para la recoleccion de datos.
+  void Function(List<int> pcm)? onRawMicAudio;
+
+  /// true mientras la pantalla de misiones graba: el asistente no debe hablar encima.
+  bool isCollectingData = false;
 
   /// Ultima foto recibida de la placa, para mostrarla en la UI.
   final ValueNotifier<Uint8List?> lastPhotoNotifier = ValueNotifier(null);
@@ -231,8 +248,12 @@ class Esp32SpeechService {
 
     _isRecording = false;
     _isReceivingPhoto = false;
+    _isReceivingFrame = false;
     _micBuffer.clear();
     _photoBuffer.clear();
+    _frameBuffer.clear();
+    final frameCompleter = _frameCompleter;
+    if (frameCompleter != null && !frameCompleter.isCompleted) frameCompleter.complete(null);
     _audioSession++;
     _isSendingAudio = false;
     _thinkingTimer?.cancel();
@@ -242,6 +263,7 @@ class Esp32SpeechService {
   // ───────────────────────── Recepcion desde la placa ─────────────────────────
 
   void _onMicAudioReceived(List<int> value) {
+    onRawMicAudio?.call(value);
     if (_isRecording && _micBuffer.length < _maxRecordingBytes) {
       _micBuffer.add(value);
     }
@@ -274,6 +296,21 @@ class Esp32SpeechService {
       // CMD_VISION_EVENT:<clase>:<porcentaje>
       final parts = command.split(':');
       if (parts.length >= 3) onVisionEvent?.call(parts[1], int.tryParse(parts[2]) ?? 0);
+    } else if (command.startsWith('CMD_AUDIO_CONTEXT:')) {
+      final parts = command.split(':');
+      if (parts.length >= 3) onAudioContext?.call(parts[1], int.tryParse(parts[2]) ?? 0);
+    } else if (command.startsWith('CMD_VISION_CONTEXT:')) {
+      final parts = command.split(':');
+      if (parts.length >= 3) onVisionContext?.call(parts[1], int.tryParse(parts[2]) ?? 0);
+    } else if (command.startsWith('CMD_FRAME_START:')) {
+      // CMD_FRAME_START:<ancho>:<alto>
+      final parts = command.split(':');
+      _frameWidth = parts.length >= 3 ? int.tryParse(parts[1]) ?? 0 : 0;
+      _frameHeight = parts.length >= 3 ? int.tryParse(parts[2]) ?? 0 : 0;
+      _frameBuffer.clear();
+      _isReceivingFrame = true;
+    } else if (command == 'CMD_FRAME_END' || command == 'CMD_FRAME_ERROR') {
+      _finishFrame(ok: command == 'CMD_FRAME_END');
     } else if (command == 'CMD_PHOTO_ERROR') {
       _isReceivingPhoto = false;
       _photoBuffer.clear();
@@ -282,7 +319,22 @@ class Esp32SpeechService {
   }
 
   void _onPhotoChunkReceived(List<int> value) {
-    if (_isReceivingPhoto) _photoBuffer.add(value);
+    if (_isReceivingFrame) {
+      _frameBuffer.add(value);
+    } else if (_isReceivingPhoto) {
+      _photoBuffer.add(value);
+    }
+  }
+
+  void _finishFrame({required bool ok}) {
+    _isReceivingFrame = false;
+    final bytes = _frameBuffer.takeBytes();
+    final complete = ok && _frameWidth > 0 && bytes.length == _frameWidth * _frameHeight;
+    if (ok && !complete) debugPrint('Frame descartado: ${bytes.length} bytes de ${_frameWidth * _frameHeight}');
+    final completer = _frameCompleter;
+    if (completer != null && !completer.isCompleted) {
+      completer.complete(complete ? GrayFrame(_frameWidth, _frameHeight, bytes) : null);
+    }
   }
 
   void _finishPhoto() {
@@ -333,6 +385,46 @@ class Esp32SpeechService {
       timeout.cancel();
       _isReceivingPhoto = false;
       if (!completer.isCompleted) completer.complete(null);
+    }
+  }
+
+  // ───────────────────────── Recoleccion de datos ─────────────────────────
+
+  /// Pide el frame 96x96 en grises que ve el modelo de vision. null si falla o expira.
+  Future<GrayFrame?> captureGrayFrame() async {
+    final command = _commandCharacteristic;
+    if (command == null || !isConnected) return null;
+    if (_frameCompleter != null && !_frameCompleter!.isCompleted) return null;
+
+    final completer = Completer<GrayFrame?>();
+    _frameCompleter = completer;
+    final timeout = Timer(const Duration(seconds: 5), () {
+      _isReceivingFrame = false;
+      if (!completer.isCompleted) completer.complete(null);
+    });
+    try {
+      await command.write(utf8.encode('CMD_COLLECT_FRAME'), withoutResponse: true);
+      return await completer.future;
+    } catch (e) {
+      debugPrint('Error pidiendo frame: $e');
+      return null;
+    } finally {
+      timeout.cancel();
+      if (!completer.isCompleted) completer.complete(null);
+    }
+  }
+
+  /// Activa o corta el envio continuo del microfono (sin apretar el boton de la placa).
+  Future<bool> setMicStreaming(bool enabled) async {
+    final command = _commandCharacteristic;
+    if (command == null || !isConnected) return false;
+    try {
+      await command.write(utf8.encode(enabled ? 'CMD_COLLECT_AUDIO_START' : 'CMD_COLLECT_AUDIO_STOP'),
+          withoutResponse: true);
+      return true;
+    } catch (e) {
+      debugPrint('Error cambiando el envio del microfono: $e');
+      return false;
     }
   }
 
@@ -425,7 +517,10 @@ class Esp32SpeechService {
     return _transcribeWithHuggingFace(_buildWav(pcm));
   }
 
-  Uint8List _buildWav(Uint8List pcm) {
+  Uint8List _buildWav(Uint8List pcm) => buildWav(pcm);
+
+  /// WAV PCM 16-bit mono 16 kHz (el formato del microfono de la placa).
+  static Uint8List buildWav(Uint8List pcm) {
     const channels = 1;
     const bitsPerSample = 16;
     const byteRate = _sampleRate * channels * bitsPerSample ~/ 8;
@@ -499,4 +594,13 @@ class Esp32SpeechService {
     }
     lastPhotoNotifier.dispose();
   }
+}
+
+/// Imagen en grises (1 byte por pixel) tal como la entrega la camara de la placa.
+class GrayFrame {
+  final int width;
+  final int height;
+  final Uint8List pixels;
+
+  const GrayFrame(this.width, this.height, this.pixels);
 }

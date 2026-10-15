@@ -48,6 +48,10 @@
 #define VISION_CAPTURE_BAUD        921600 // firmware de captura de fotos (entorno *_photo_capture)
 #define VISION_CAPTURE_INTERVAL_MS 200    // ~5 frames por segundo hacia el PC
 
+// Contexto silencioso para la IA de la app: cada cuanto la placa resume lo que oye y ve
+// (CMD_AUDIO_CONTEXT / CMD_VISION_CONTEXT). No genera avisos hablados.
+#define AMBIENT_CONTEXT_PERIOD_MS  10000
+
 #ifdef IRIS_XIAO
 // ==========================================
 // PINES XIAO ESP32S3 SENSE (PROTOTIPO 2)

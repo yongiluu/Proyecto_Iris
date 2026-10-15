@@ -16,6 +16,8 @@ import '../../../services/hardware/camera_service.dart';
 import '../../../services/hardware/esp32_speech_service.dart';
 import '../../../services/ai/speech_service.dart';
 import '../../../services/ai/occipital_agent_service.dart';
+import '../../../services/hardware/sensor_context.dart';
+import '../../data_collection/missions_screen.dart';
 import '../../../services/ai/tts_service.dart';
 import '../../../services/hardware/haptic_service.dart';
 
@@ -38,6 +40,7 @@ class _AssistantScreenState extends State<AssistantScreen>
   final OccipitalAgentService _agentService = OccipitalAgentService();
   final TtsService _ttsService = TtsService();
   final HapticService _hapticService = HapticService();
+  final SensorContext _sensorContext = SensorContext();
 
   // ─── State ───
   HardwareMode _hardwareMode = HardwareMode.standalone;
@@ -131,6 +134,8 @@ class _AssistantScreenState extends State<AssistantScreen>
 
       _esp32SpeechService.onAudioEvent = _onAudioEvent;
       _esp32SpeechService.onVisionEvent = _onVisionEvent;
+      _esp32SpeechService.onAudioContext = _sensorContext.onAudioContext;
+      _esp32SpeechService.onVisionContext = _sensorContext.onVisionContext;
 
       // Un servicio que falla (ej. sin permiso de camara) no debe impedir usar los demas.
       await Future.wait<void>([
@@ -185,9 +190,15 @@ class _AssistantScreenState extends State<AssistantScreen>
   };
   static const Duration _audioAlertCooldown = Duration(seconds: 10);
   DateTime? _lastAudioAlert;
+  // Una persona ciega suele oir la sirena antes que el modelo: por defecto los sonidos solo se
+  // guardan como contexto para la IA (SensorContext). true = tambien avisarlos en voz alta
+  // (util para personas que ademas oyen poco).
+  static const bool _speakAudioAlerts = false;
 
   Future<void> _onAudioEvent(String label, int confidence) async {
-    if (!mounted || _hardwareMode != HardwareMode.esp32) return;
+    _sensorContext.onAudioEvent(label);
+    if (!_speakAudioAlerts) return;
+    if (!mounted || _hardwareMode != HardwareMode.esp32 || _esp32SpeechService.isCollectingData) return;
     // No interrumpir mientras el usuario habla o Iris responde.
     if (_isListening || _isProcessing || _ttsService.isSpeaking) return;
 
@@ -213,7 +224,8 @@ class _AssistantScreenState extends State<AssistantScreen>
   final Map<String, DateTime> _lastVisionAlert = {};
 
   Future<void> _onVisionEvent(String label, int confidence) async {
-    if (!mounted || _hardwareMode != HardwareMode.esp32) return;
+    _sensorContext.onVisionEvent(label);
+    if (!mounted || _hardwareMode != HardwareMode.esp32 || _esp32SpeechService.isCollectingData) return;
     if (_isListening || _isProcessing || _ttsService.isSpeaking) return;
 
     final now = DateTime.now();
@@ -332,6 +344,7 @@ class _AssistantScreenState extends State<AssistantScreen>
         if (mounted) setState(() => _statusText = status);
       },
       captureImageCallback: _captureImage,
+      sensorContext: _hardwareMode == HardwareMode.esp32 ? _sensorContext.describe() : null,
     );
     if (desc != null && mounted) {
       setState(() {
@@ -418,6 +431,7 @@ class _AssistantScreenState extends State<AssistantScreen>
           if (mounted) setState(() => _statusText = status);
         },
         captureImageCallback: _captureImage,
+        sensorContext: _hardwareMode == HardwareMode.esp32 ? _sensorContext.describe() : null,
       );
       
       if (_hardwareMode == HardwareMode.esp32) _esp32SpeechService.stopThinkingSound();
@@ -547,6 +561,20 @@ class _AssistantScreenState extends State<AssistantScreen>
     );
   }
 
+  /// Pantalla de recoleccion de datos (para el equipo, no para el usuario final).
+  Widget _buildMissionsButton() {
+    return Padding(
+      padding: const EdgeInsets.only(right: 12),
+      child: IconButton(
+        tooltip: 'Misiones de recoleccion de datos',
+        icon: const Icon(Icons.assignment_outlined, color: Colors.white70),
+        onPressed: () => Navigator.of(context).push(MaterialPageRoute(
+          builder: (_) => MissionsScreen(esp32: _esp32SpeechService),
+        )),
+      ),
+    );
+  }
+
   Widget _buildToggleOption({required IconData icon, required String label, required HardwareMode mode}) {
     final isSelected = _hardwareMode == mode;
     return GestureDetector(
@@ -592,7 +620,12 @@ class _AssistantScreenState extends State<AssistantScreen>
               child: Column(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
-                  _buildHardwareToggle(),
+                  Row(
+                    children: [
+                      Expanded(child: _buildHardwareToggle()),
+                      _buildMissionsButton(),
+                    ],
+                  ),
                   Expanded(
                     child: SingleChildScrollView(
                       child: Column(

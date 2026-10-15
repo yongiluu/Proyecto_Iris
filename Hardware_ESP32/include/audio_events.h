@@ -10,7 +10,9 @@
 // Se llama desde la tarea de inferencia cuando se detecta una alerta (ej. "sirena", 87).
 typedef void (*AudioEventCallback)(const char* label, int confidencePercent);
 
-bool startAudioEvents(AudioEventCallback callback);
+// onContext recibe cada AMBIENT_CONTEXT_PERIOD_MS la clase que mas aparecio (ej. "voz", 60 = 60% de
+// las inferencias). Es contexto silencioso para la IA de la app, no una alerta. Puede ser nullptr.
+bool startAudioEvents(AudioEventCallback callback, AudioEventCallback onContext = nullptr);
 
 // Alimentar con las muestras del microfono (PCM 16-bit, 16 kHz). Llamar desde el loop.
 void feedAudioEvents(const int16_t* samples, size_t count);

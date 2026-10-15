@@ -101,6 +101,7 @@ RESPONDE SIEMPRE EN ESPANOL Y DE FORMA MUY BREVE, CORTA Y CONCISA. No des explic
     required String userPrompt,
     required Future<Uint8List?> Function() captureImageCallback,
     Function(String status)? onStatusUpdate,
+    String? sensorContext,
   }) async {
     debugPrint('🧠 OccipitalAgentService: Thinking about prompt: $userPrompt');
     onStatusUpdate?.call('Pensando...');
@@ -113,6 +114,8 @@ RESPONDE SIEMPRE EN ESPANOL Y DE FORMA MUY BREVE, CORTA Y CONCISA. No des explic
     final deployment = EnvConfig.azureFoundryDeployment;
     final messages = <Map<String, dynamic>>[
       {'role': 'system', 'content': systemPrompt},
+      // Lo que oyen y ven los modelos locales de la placa (ver SensorContext).
+      if (sensorContext != null) {'role': 'system', 'content': sensorContext},
       {'role': 'user', 'content': userPrompt},
     ];
 
