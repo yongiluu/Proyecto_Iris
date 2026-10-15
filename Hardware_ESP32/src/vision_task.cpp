@@ -9,9 +9,18 @@ namespace {
 volatile bool visionPaused = false;
 
 void visionTask(void*) {
+  bool wasPaused = false;
   for (;;) {
     vTaskDelay(pdMS_TO_TICKS(VISION_INTERVAL_MS));
-    if (visionPaused) continue;
+    if (visionPaused) {
+      wasPaused = true;
+      continue;
+    }
+    if (wasPaused) {
+      // No promediar la escena de antes de la pausa con la de ahora.
+      resetVisionSmoothing();
+      wasPaused = false;
+    }
 
     camera_fb_t* frame = acquireGrayFrame();
     if (frame == nullptr) continue;

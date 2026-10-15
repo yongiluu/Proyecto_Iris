@@ -5,7 +5,7 @@ Entrenamiento de los modelos TensorFlow Lite Micro que corren **dentro de la pla
 | Modelo | Estado | Qué detecta |
 |---|---|---|
 | Audio (`audio/`) | ✅ pipeline completo, modelo v1 entrenado con datos públicos | `fondo`, `voz`, `bocina`, `sirena`, `perro` |
-| Visión | ⏳ pendiente (hoy la placa usa el *person detection* genérico de Google) | — |
+| Visión (`vision/`) | ✅ pipeline completo, modelo v1 entrenado con Open Images | `nada`, `persona`, `vehiculo`, `escalera`, `puerta` |
 
 ## Cómo funciona el modelo de audio
 
@@ -123,6 +123,97 @@ Luego copia a tu PC los archivos generados (`Hardware_ESP32/include/audio_model_
 2. Corre `prepare_dataset.py`, `train.py` y `export_model.py`.
 3. Si agregas una alerta, añade su frase en `_audioAlertPhrases` (`App_Flutter/lib/features/assistant/screens/assistant_screen.dart`).
 
+---
+
+# Modelo de visión (`vision/`)
+
+```text
+cámara OV2640 96×96 grises ─► MobileNetV1 0.25 int8 (1 vez por segundo) ─► promedio de 2 frames ─► CMD_VISION_EVENT por BLE ─► la app vibra y avisa
+```
+
+- Clases (en `vision/config.py`): `nada`, `persona`, `vehiculo`, `escalera`, `puerta`. Se avisa de todas menos `nada`, con umbral `ALERT_THRESHOLD` = 0,7 y sin repetir la misma clase antes de 8 s (`VISION_EVENT_COOLDOWN_MS`). La app además calla cada clase por 20 s.
+- La entrada es exactamente lo que da la cámara (`FRAMESIZE_96X96`, `PIXFORMAT_GRAYSCALE`). El firmware convierte cada píxel con una tabla calculada de la cuantización del modelo, así que no hay que tocar código al reentrenar.
+- La red es MobileNetV1 0,25 (como el *person detection* de Google), partiendo de pesos de ImageNet pasados a un canal. Usa solo `CONV_2D`, `DEPTHWISE_CONV_2D`, `AVERAGE_POOL_2D`, `FULLY_CONNECTED` y `SOFTMAX`, sin PAD, MEAN, SHAPE, STRIDED_SLICE ni PACK. `export_model.py` falla si aparece otra op.
+- Pesa ~306 KB en flash, hace ~7,3 M MAC por imagen y usa ~87 KB de arena: la pide al heap, en RAM interna o, si no alcanza, en PSRAM.
+
+**Datos:** subconjunto de **Open Images V7**. Se toman las cajas de validation y test (~100 MB de CSV) y, en streaming, las fotos de train con escaleras o puertas, que son raras. El CSV de 2,3 GB no se guarda. Cada foto se baja, se pasa a grises y se reduce a 256 px (~30 KB). De cada foto se sacan recortes cuadrados donde el objeto cubre al menos 10–15 % de la imagen. "Nada" son fotos sin esas clases más zonas vacías de las fotos con objetos (calles sin autos, paredes sin puertas).
+
+**Simulación de la OV2640** (`vision/augment.py`): poca luz con más ruido, exposición y gamma, viñeteado, desenfoque y movimiento, baja resolución, ruido de sensor, artefactos JPEG, inclinación leve y zoom. Se aplica al azar en cada época. El reporte mide el test limpio y también un "test cámara" degradado con semilla fija.
+
+## Resultados del modelo de visión v1
+
+Entrenado en CPU (30 épocas, ~50 min) con ~24,6 mil recortes de ~13,9 mil fotos de Open Images, sin fotos de la placa. Se midió sobre el test (3.269 recortes de fotos que no vio al entrenar) con el modelo **int8**, que es lo que corre en la placa:
+
+| | Test limpio | Test con simulación OV2640 |
+|---|---|---|
+| Exactitud general | 82,7 % | 78,4 % |
+| Recall nada / persona / vehículo / escalera / puerta | 74 / 72 / 89 / 89 / 86 % | 73 / 64 / 82 / 82 / 83 % |
+| Avisos correctos con umbral 0,8 (persona / vehículo / escalera / puerta) | 54 / 82 / 78 / 73 % | 42 / 74 / 70 / 69 % |
+| **Avisos falsos sobre "nada"** (umbral 0,8, 1 frame) | **10,8 %** | **9,6 %** |
+| Aviso de la clase equivocada | 1,8 % | 2,4 % |
+
+Con umbral 0,7 se detecta ~5 puntos más, pero los avisos falsos suben a ~14 %. Por eso v1 usa 0,8. La placa además promedia 2 frames, lo que debería bajar algo los falsos (no está medido).
+
+**Limitaciones conocidas (léelas antes de confiar en el modelo):**
+- **Nunca vio la cámara real.** Las cifras son sobre fotos de internet, encuadradas por fotógrafos. En la placa (altura del pecho, movimiento, OV2640) seguramente serán peores hasta hacer el fine-tuning con `capture_photos.py`.
+- **Persona es la clase más débil** (54 % de avisos correctos, 42 % con la simulación) y la que más avisos falsos genera sobre "nada": muchas fotos de "nada" tienen formas o reflejos parecidos a personas. El *person detection* genérico de Google, entrenado con 115 mil fotos, era probablemente mejor para personas solas. A cambio, este modelo suma vehículos, escaleras y puertas.
+- Un ~10 % de avisos falsos por frame sigue siendo mucho para avisos de voz: la placa no repite una clase antes de 8 s y la app calla cada clase por 20 s. Con fotos reales de `nada` esto debería mejorar bastante.
+- Las escaleras vienen de solo ~3.600 fotos (3 recortes cada una, correlacionados), así que su cifra es algo optimista. "Escalera" incluye escaleras mecánicas.
+- Algunas fotos de Open Images vienen giradas 90° (no se aplicó su metadato de rotación): es ruido menor en el entrenamiento.
+- No se mide aquí: tiempo por inferencia en la placa (MobileNet 0,25 a 96×96 suele tardar unos cientos de ms sin optimizaciones ESP-NN; la placa infiere 1 vez por segundo) ni la RAM real libre con BLE + audio + visión. Ver el log al arrancar.
+
+## Entrenar visión
+
+Desde `ML_Training/` (con el mismo `.venv` del audio):
+
+```bash
+python vision/download_datasets.py        # ~2,4 GB de descarga (la mayoría en streaming), ~0,6 GB en disco, ~45 min
+python vision/prepare_dataset.py          # recortes etiquetados -> data/vision_dataset.npz (~10 min)
+python vision/train.py                    # ~55 min en CPU (30 épocas), ~5 min en GPU
+python vision/export_model.py             # int8 + valida ops + genera vision_model_data.h/.cpp
+cd ../Hardware_ESP32 && pio run -e seeed_xiao_esp32s3 -t upload
+```
+
+Al arrancar, la placa debe imprimir `[Vision IA] Listo: 5 clases, arena X/... bytes`. Para ver los puntajes de cada frame, pon `VISION_EVENTS_DEBUG 1` en `config.h`.
+
+## Probar visión sin el prototipo
+
+```bash
+python vision/live_demo.py              # webcam del notebook, recortada al centro y reducida a 96×96 grises
+python vision/live_demo.py --simulate   # además la degrada como la OV2640 (tecla S para alternar)
+python vision/live_demo.py --images carpeta/   # clasifica fotos sueltas
+```
+
+## Fotos reales de la placa (XIAO, prototipo 2)
+
+Es lo que más va a mejorar el modelo: la cámara real, a la altura y con el ángulo reales.
+
+```bash
+cd Hardware_ESP32
+pio run -e seeed_xiao_esp32s3_photo_capture -t upload     # manda los frames 96x96 por USB (~5 por segundo)
+cd ../ML_Training
+python vision/capture_photos.py --label nada --count 300 --note casa       # una foto cada 0,5 s mientras caminas
+python vision/capture_photos.py --label puerta --count 100 --note casa
+python vision/capture_photos.py --label escalera --count 100 --note edificio
+python vision/capture_photos.py --label vehiculo --count 100 --note calle
+python vision/capture_photos.py --label persona --manual                     # ESPACIO guarda cada foto
+```
+
+Las fotos quedan en `data/vision_board/<clase>/`. Después corre `prepare_dataset.py`, `train.py --finetune` y `export_model.py`, y vuelve a subir el firmware normal. Prioriza `nada` en muchos lugares distintos: es lo que evita los avisos falsos. Sirve también para revisar si la cámara quedó al revés (en ese caso, ver `camera_driver.cpp`).
+
+## Visión en Lambda
+
+El CPU alcanza para esta red, pero en Lambda se pueden usar más datos:
+
+```bash
+python vision/download_datasets.py --scale 4    # 4x más fotos por clase (hay ~36 mil de personas, ~24 mil de vehículos)
+python vision/prepare_dataset.py && python vision/train.py --epochs 60 && python vision/export_model.py
+```
+
+Para más escaleras y puertas, agrega `"persona"`/`"vehiculo"` a `TRAIN_SEARCH_CLASSES` en `download_datasets.py` (el filtrado de train trae todas sus fotos) o suma otra fuente. **VizWiz** (fotos tomadas por personas ciegas) quedó pendiente: no tiene etiquetas de estas clases, y sus zips (>10 GB) no caben en el disco local.
+
 ## Licencias de los datos
 
 ESC-50 y UrbanSound8K son **CC BY-NC** (uso no comercial), y la voz chilena (OpenSLR 71) es **CC BY-SA 4.0**. Sirven para el prototipo y la investigación. Para un producto comercial habría que reentrenar con datos propios o con licencia compatible.
+
+Open Images V7: las anotaciones son **CC BY 4.0** y las fotos vienen de Flickr con licencia **CC BY 2.0** (Google no garantiza la licencia de cada foto). El modelo de visión no guarda fotos, pero el dataset local (`data/vision_images/`) no se debe redistribuir.

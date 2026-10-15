@@ -1,4 +1,5 @@
-#ifndef IRIS_AUDIO_CAPTURE // El firmware de captura de datos (audio_capture.cpp) tiene su propio setup/loop
+// Los firmwares de captura de datos (audio_capture.cpp, photo_capture.cpp) tienen su propio setup/loop
+#if !defined(IRIS_AUDIO_CAPTURE) && !defined(IRIS_PHOTO_CAPTURE)
 
 #include <Arduino.h>
 #include "config.h"
@@ -37,6 +38,13 @@ void onCommandReceived(const char* command) {
 void onAudioEvent(const char* label, int confidencePercent) {
   char command[48];
   snprintf(command, sizeof(command), "CMD_AUDIO_EVENT:%s:%d", label, confidencePercent);
+  bleManager.sendCommand(command);
+}
+
+// Se ejecuta en la tarea de vision. Formato: CMD_VISION_EVENT:<clase>:<porcentaje>
+void onVisionEvent(const char* label, int confidencePercent) {
+  char command[48];
+  snprintf(command, sizeof(command), "CMD_VISION_EVENT:%s:%d", label, confidencePercent);
   bleManager.sendCommand(command);
 }
 
@@ -84,7 +92,7 @@ void setup() {
   if (!initAudioPlayer()) Serial.println("Error al inicializar el reproductor de audio");
   if (!initMic()) Serial.println("Error al inicializar el microfono");
 
-  initVisionAI(); // TensorFlow Lite Micro (imagenes)
+  if (!initVisionAI(onVisionEvent)) Serial.println("Error al iniciar la vision local");
   if (!startAudioEvents(onAudioEvent)) Serial.println("Error al iniciar la deteccion de audio");
 
   bleManager.init(onAudioReceived, onCommandReceived);

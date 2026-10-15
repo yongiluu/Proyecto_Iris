@@ -130,6 +130,7 @@ class _AssistantScreenState extends State<AssistantScreen>
       };
 
       _esp32SpeechService.onAudioEvent = _onAudioEvent;
+      _esp32SpeechService.onVisionEvent = _onVisionEvent;
 
       // Un servicio que falla (ej. sin permiso de camara) no debe impedir usar los demas.
       await Future.wait<void>([
@@ -198,6 +199,32 @@ class _AssistantScreenState extends State<AssistantScreen>
     setState(() => _statusText = 'Se escucha $what ($confidence%)');
     await _hapticService.vibrateTick();
     await _ttsService.speakStatus('Atencion, se escucha $what', esp32Service: _activeEsp32);
+  }
+
+  // ─── Avisos de la camara de la placa (Edge AI) ───
+  static const Map<String, String> _visionAlertPhrases = {
+    'persona': 'una persona',
+    'vehiculo': 'un vehiculo',
+    'escalera': 'una escalera',
+    'puerta': 'una puerta',
+  };
+  // Por clase: una escalera no debe callar el aviso de un vehiculo.
+  static const Duration _visionAlertCooldown = Duration(seconds: 20);
+  final Map<String, DateTime> _lastVisionAlert = {};
+
+  Future<void> _onVisionEvent(String label, int confidence) async {
+    if (!mounted || _hardwareMode != HardwareMode.esp32) return;
+    if (_isListening || _isProcessing || _ttsService.isSpeaking) return;
+
+    final now = DateTime.now();
+    final last = _lastVisionAlert[label];
+    if (last != null && now.difference(last) < _visionAlertCooldown) return;
+    _lastVisionAlert[label] = now;
+
+    final what = _visionAlertPhrases[label] ?? label;
+    setState(() => _statusText = 'Adelante: $what ($confidence%)');
+    await _hapticService.vibrateTick();
+    await _ttsService.speakStatus('Adelante hay $what', esp32Service: _activeEsp32);
   }
 
   // ─── Volume Button Handler ───

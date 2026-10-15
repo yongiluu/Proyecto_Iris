@@ -39,6 +39,15 @@
 #define AUDIO_EVENTS_DEBUG      0      // 1 = imprime los puntajes de cada inferencia por serial
 #define AUDIO_CAPTURE_BAUD      921600 // firmware de captura de datos (entornos *_audio_capture)
 
+// ==========================================
+// Vision local (Edge AI, modelo de ML_Training/vision)
+// ==========================================
+// El umbral de aviso viene del entrenamiento: kVisionAlertThreshold en vision_model_data.h
+#define VISION_EVENT_COOLDOWN_MS   8000   // no repetir el mismo aviso antes de esto
+#define VISION_EVENTS_DEBUG        0      // 1 = imprime los puntajes de cada frame por serial
+#define VISION_CAPTURE_BAUD        921600 // firmware de captura de fotos (entorno *_photo_capture)
+#define VISION_CAPTURE_INTERVAL_MS 200    // ~5 frames por segundo hacia el PC
+
 #ifdef IRIS_XIAO
 // ==========================================
 // PINES XIAO ESP32S3 SENSE (PROTOTIPO 2)

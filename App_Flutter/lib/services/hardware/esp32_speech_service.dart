@@ -64,6 +64,9 @@ class Esp32SpeechService {
   /// Alerta de sonido detectada por el modelo de la placa (ej. 'sirena', 87).
   void Function(String label, int confidencePercent)? onAudioEvent;
 
+  /// Algo visto por la camara de la placa (ej. 'escalera', 84).
+  void Function(String label, int confidencePercent)? onVisionEvent;
+
   /// Ultima foto recibida de la placa, para mostrarla en la UI.
   final ValueNotifier<Uint8List?> lastPhotoNotifier = ValueNotifier(null);
 
@@ -267,6 +270,10 @@ class Esp32SpeechService {
       // CMD_AUDIO_EVENT:<clase>:<porcentaje>
       final parts = command.split(':');
       if (parts.length >= 3) onAudioEvent?.call(parts[1], int.tryParse(parts[2]) ?? 0);
+    } else if (command.startsWith('CMD_VISION_EVENT:')) {
+      // CMD_VISION_EVENT:<clase>:<porcentaje>
+      final parts = command.split(':');
+      if (parts.length >= 3) onVisionEvent?.call(parts[1], int.tryParse(parts[2]) ?? 0);
     } else if (command == 'CMD_PHOTO_ERROR') {
       _isReceivingPhoto = false;
       _photoBuffer.clear();

@@ -1,81 +1,130 @@
 #include "tflite_vision.h"
+
 #include <TensorFlowLite_ESP32.h>
+#include <esp_heap_caps.h>
+#include <math.h>
 #include "tensorflow/lite/micro/all_ops_resolver.h"
+#include "tensorflow/lite/micro/micro_error_reporter.h"
 #include "tensorflow/lite/micro/micro_interpreter.h"
 #include "tensorflow/lite/schema/schema_generated.h"
-#include "tensorflow/lite/micro/micro_error_reporter.h"
-#include "person_detect_model_data.h"
+
+#include "config.h"
+#include "vision_model_data.h"
 
 namespace {
-    const tflite::Model* vision_model = nullptr;
-    tflite::MicroInterpreter* vision_interpreter = nullptr;
-    tflite::ErrorReporter* vision_error_reporter = nullptr;
-    TfLiteTensor* vision_input = nullptr;
-    TfLiteTensor* vision_output = nullptr;
+tflite::MicroInterpreter* interpreter = nullptr;
+TfLiteTensor* input = nullptr;
+TfLiteTensor* output = nullptr;
+VisionEventCallback onEvent = nullptr;
 
-    constexpr int kVisionTensorArenaSize = 136 * 1024; // 136KB for MobileNet Vision
-    uint8_t vision_tensor_arena[kVisionTensorArenaSize];
-}
+// Pixel 0..255 -> int8 de entrada, precalculado con la cuantizacion del modelo.
+int8_t pixelToInput[256];
 
-void initVisionAI() {
-    Serial.println("[Edge AI Visión] Inicializando TensorFlow Lite para Imágenes...");
-    
-    static tflite::MicroErrorReporter micro_error_reporter;
-    vision_error_reporter = &micro_error_reporter;
+float previousScores[kVisionNumClasses] = {};
+uint32_t lastEventMs[kVisionNumClasses] = {};
 
-    vision_model = tflite::GetModel(g_person_detect_model_data);
-    if (vision_model->version() != TFLITE_SCHEMA_VERSION) {
-        Serial.println("[Edge AI Visión] Error: Schema version incorrecta.");
-        return;
+void handleScores(const float* scores) {
+    // Promedio con el frame anterior (~1 s antes) para no avisar por un frame suelto.
+    int best = -1;
+    float bestScore = 0.0f;
+    for (int i = 0; i < kVisionNumClasses; i++) {
+        float smoothed = 0.5f * (scores[i] + previousScores[i]);
+        previousScores[i] = scores[i];
+        if (kVisionIsAlert[i] && smoothed > bestScore) {
+            bestScore = smoothed;
+            best = i;
+        }
     }
 
-    static tflite::AllOpsResolver vision_resolver;
-    static tflite::MicroInterpreter static_interpreter(
-        vision_model, vision_resolver, vision_tensor_arena, kVisionTensorArenaSize, vision_error_reporter);
-    vision_interpreter = &static_interpreter;
+#if VISION_EVENTS_DEBUG
+    Serial.print("[Vision IA]");
+    for (int i = 0; i < kVisionNumClasses; i++) Serial.printf(" %s=%.2f", kVisionLabels[i], scores[i]);
+    Serial.println();
+#endif
 
-    TfLiteStatus allocate_status = vision_interpreter->AllocateTensors();
-    if (allocate_status != kTfLiteOk) {
-        Serial.println("[Edge AI Visión] Error: AllocateTensors() falló.");
-        return;
+    if (best < 0 || bestScore < kVisionAlertThreshold) return;
+    uint32_t now = millis();
+    if (lastEventMs[best] != 0 && now - lastEventMs[best] < VISION_EVENT_COOLDOWN_MS) return;
+    lastEventMs[best] = now;
+
+    int percent = (int)lroundf(bestScore * 100.0f);
+    Serial.printf("[Vision IA] Aviso: %s (%d%%)\n", kVisionLabels[best], percent);
+    if (onEvent) onEvent(kVisionLabels[best], percent);
+}
+}  // namespace
+
+bool initVisionAI(VisionEventCallback callback) {
+    onEvent = callback;
+
+    const tflite::Model* model = tflite::GetModel(g_vision_model_data);
+    if (model->version() != TFLITE_SCHEMA_VERSION) {
+        Serial.println("[Vision IA] Version de schema del modelo incorrecta");
+        return false;
     }
 
-    vision_input = vision_interpreter->input(0);
-    vision_output = vision_interpreter->output(0);
-    
-    Serial.println("[Edge AI Visión] Modelo de Detección de Personas Cargado.");
+    // RAM interna (rapida); si no alcanza, PSRAM.
+    uint8_t* arena = (uint8_t*)heap_caps_malloc(kVisionTensorArenaSize, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+    if (arena == nullptr) arena = (uint8_t*)heap_caps_malloc(kVisionTensorArenaSize, MALLOC_CAP_SPIRAM);
+    if (arena == nullptr) {
+        Serial.println("[Vision IA] Sin memoria para el tensor arena");
+        return false;
+    }
+
+    static tflite::MicroErrorReporter errorReporter;
+    static tflite::AllOpsResolver resolver;
+    static tflite::MicroInterpreter staticInterpreter(model, resolver, arena, kVisionTensorArenaSize, &errorReporter);
+    interpreter = &staticInterpreter;
+
+    if (interpreter->AllocateTensors() != kTfLiteOk) {
+        Serial.printf("[Vision IA] AllocateTensors fallo: sube kVisionTensorArenaSize (%d)\n", kVisionTensorArenaSize);
+        interpreter = nullptr;
+        return false;
+    }
+
+    input = interpreter->input(0);
+    output = interpreter->output(0);
+    if (input->type != kTfLiteInt8 || input->bytes != (size_t)(kVisionImageSize * kVisionImageSize) ||
+        output->type != kTfLiteInt8 || output->dims->data[output->dims->size - 1] != kVisionNumClasses) {
+        Serial.println("[Vision IA] El modelo no calza con la camara 96x96: vuelve a correr export_model.py");
+        interpreter = nullptr;
+        return false;
+    }
+
+    for (int p = 0; p < 256; p++) {
+        float value = p * kVisionPixelScale + kVisionPixelOffset;
+        long q = lroundf(value / input->params.scale) + input->params.zero_point;
+        pixelToInput[p] = (int8_t)(q < -128 ? -128 : q > 127 ? 127 : q);
+    }
+
+    Serial.printf("[Vision IA] Listo: %d clases, arena %u/%d bytes\n", kVisionNumClasses,
+                  (unsigned)interpreter->arena_used_bytes(), kVisionTensorArenaSize);
+    return true;
 }
 
-void runVisionInference(uint8_t* image_data, size_t len) {
-    if (!vision_interpreter) return;
+void runVisionInference(const uint8_t* image_data, size_t len) {
+    if (interpreter == nullptr) return;
 
     // El modelo espera exactamente 96x96x1 bytes; otro tamano indica una camara mal configurada.
-    if (len != (size_t)vision_input->bytes) {
-        Serial.printf("[Edge AI Vision] Tamano de imagen inesperado: %u (se esperaban %d)\n", (unsigned)len, vision_input->bytes);
+    if (len != input->bytes) {
+        Serial.printf("[Vision IA] Tamano de imagen inesperado: %u (se esperaban %u)\n", (unsigned)len,
+                      (unsigned)input->bytes);
         return;
     }
 
-    // El input del modelo person_detection es INT8, 96x96x1
-    for (size_t i = 0; i < len; i++) {
-        // El modelo de TensorFlow espera los pixeles normalizados y convertidos a int8 (-128 a 127)
-        vision_input->data.int8[i] = image_data[i] - 128;
-    }
+    for (size_t i = 0; i < len; i++) input->data.int8[i] = pixelToInput[image_data[i]];
 
-    if (vision_interpreter->Invoke() != kTfLiteOk) {
-        Serial.println("[Edge AI Visión] Error en Invoke().");
+    if (interpreter->Invoke() != kTfLiteOk) {
+        Serial.println("[Vision IA] Error en Invoke()");
         return;
     }
 
-    // El output es un arreglo de 2 elementos [No Persona, Persona] en formato INT8
-    int8_t person_score = vision_output->data.int8[1];
-    int8_t no_person_score = vision_output->data.int8[0];
-    
-    // Convertir de INT8 (-128 a 127) a un porcentaje (0 a 100)
-    int person_percent = (person_score + 128) * 100 / 255;
-    
-    Serial.printf("   -> IA Visión | Probabilidad de Persona: %d%%\n", person_percent);
-    
-    if (person_percent > 70) {
-        Serial.println("👁️ [Edge AI PREDICCIÓN]: ¡PERSONA DETECTADA al frente!");
-    }
+    float scores[kVisionNumClasses];
+    const float scale = output->params.scale;
+    const int zeroPoint = output->params.zero_point;
+    for (int i = 0; i < kVisionNumClasses; i++) scores[i] = (output->data.int8[i] - zeroPoint) * scale;
+    handleScores(scores);
+}
+
+void resetVisionSmoothing() {
+    for (int i = 0; i < kVisionNumClasses; i++) previousScores[i] = 0.0f;
 }
