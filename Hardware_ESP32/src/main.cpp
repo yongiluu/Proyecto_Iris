@@ -4,132 +4,113 @@
 #include "audio_player.h"
 #include "ble_manager.h"
 #include "audio_processing.h"
+#include "mic_driver.h"
+#include "photo_transfer.h"
 #include "tflite_inference.h"
 #include "tflite_vision.h"
-#include <driver/i2s.h>
+#include "vision_task.h"
 
+namespace {
+constexpr uint32_t kDebounceMs = 50;
+constexpr uint32_t kStopFlushDelayMs = 20;
 
+volatile bool beepRequested = false;
+bool isTransmitting = false;
 
-// Definimos el callback global
+// Se ejecuta en el hilo BLE: solo encolar, nunca bloquear.
 void onAudioReceived(const uint8_t* data, size_t length) {
-  playAudioBuffer((uint8_t*)data, length);
+  playAudioBuffer(data, length);
 }
 
-void initMic() {
-  i2s_config_t i2s_mic_config = {
-#ifdef IRIS_XIAO
-    .mode = (i2s_mode_t)(I2S_MODE_MASTER | I2S_MODE_RX | I2S_MODE_PDM),
-    .sample_rate = AUDIO_SAMPLE_RATE,
-    .bits_per_sample = I2S_BITS_PER_SAMPLE_16BIT,
-    .channel_format = I2S_CHANNEL_FMT_ONLY_RIGHT,
-#else
-    .mode = (i2s_mode_t)(I2S_MODE_MASTER | I2S_MODE_RX),
-    .sample_rate = AUDIO_SAMPLE_RATE,
-    .bits_per_sample = I2S_BITS_PER_SAMPLE_32BIT,
-    .channel_format = I2S_CHANNEL_FMT_ONLY_LEFT,
-#endif
-    .communication_format = I2S_COMM_FORMAT_STAND_I2S,
-    .intr_alloc_flags = ESP_INTR_FLAG_LEVEL1,
-    .dma_buf_count = 8,
-    .dma_buf_len = 256,
-    .use_apll = false,
-    .tx_desc_auto_clear = false,
-    .fixed_mclk = 0
-  };
+void onCommandReceived(const char* command) {
+  if (strcmp(command, "CMD_TAKE_PHOTO") == 0) {
+    requestPhotoCapture();
+  } else if (strcmp(command, "CMD_BEEP_THINKING") == 0) {
+    beepRequested = true;
+  } else {
+    Serial.printf("[BLE] Comando desconocido: %s\n", command);
+  }
+}
 
-  i2s_pin_config_t i2s_mic_pins = {
-    .bck_io_num = I2S_AMP_BCLK,
-    .ws_io_num = I2S_AMP_LRC,
-    .data_out_num = I2S_PIN_NO_CHANGE,
-    .data_in_num = I2S_AMP_DIN
-  };
+void startPushToTalk() {
+  Serial.println("Boton Presionado -> CMD_PTT_START");
+  isTransmitting = true;
+  setVisionPaused(true);
+  bleManager.sendCommand("CMD_PTT_START");
+}
 
-  i2s_driver_install(I2S_MIC_PORT, &i2s_mic_config, 0, NULL);
-  i2s_set_pin(I2S_MIC_PORT, &i2s_mic_pins);
+void stopPushToTalk() {
+  Serial.println("Boton Soltado -> CMD_PTT_STOP");
+  isTransmitting = false;
+  setVisionPaused(false);
+  delay(kStopFlushDelayMs); // deja vaciar la cola BLE de audio antes del STOP
+  bleManager.sendCommand("CMD_PTT_STOP");
+}
+
+void handleButton() {
+  static bool stableState = HIGH;
+  static bool lastReading = HIGH;
+  static uint32_t lastChangeMs = 0;
+
+  bool reading = digitalRead(BUTTON_PIN);
+  if (reading != lastReading) {
+    lastReading = reading;
+    lastChangeMs = millis();
+  }
+
+  if (reading != stableState && millis() - lastChangeMs >= kDebounceMs) {
+    stableState = reading;
+    if (stableState == LOW) startPushToTalk();
+    else stopPushToTalk();
+  }
+}
 }
 
 void setup() {
   Serial.begin(115200);
-
   pinMode(BUTTON_PIN, INPUT_PULLUP);
 
-  if (!initCamera()) {
-    Serial.println("Error al inicializar la camara");
-  }
+  if (!initCamera()) Serial.println("Error al inicializar la camara");
+  if (!initAudioPlayer()) Serial.println("Error al inicializar el reproductor de audio");
+  if (!initMic()) Serial.println("Error al inicializar el microfono");
 
-  initAudioPlayer();
-  initMic();
-  initAudioProcessing(); // Inicializar motor FFT Edge AI
-  initEdgeAI(); // Inicializar TensorFlow Lite Micro (Audio)
-  initVisionAI(); // Inicializar TensorFlow Lite Micro (ImÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¡genes)
+  initAudioProcessing(); // Motor FFT (Edge AI audio)
+  initEdgeAI();          // TensorFlow Lite Micro (audio)
+  initVisionAI();        // TensorFlow Lite Micro (imagenes)
 
-  bleManager.init(onAudioReceived);
-  
+  bleManager.init(onAudioReceived, onCommandReceived);
+
+  if (!startPhotoTask()) Serial.println("Error al crear la tarea de fotos");
+  if (!startVisionTask()) Serial.println("Error al crear la tarea de vision");
+
   Serial.println("Iris ESP32 listo. Esperando conexion BLE...");
 }
 
 void loop() {
-  static bool isCapturingPhoto = false;
-  static bool isTransmitting = false;
-  static bool lastButtonState = HIGH;
+  handleButton();
 
-  bool reading = digitalRead(BUTTON_PIN);
-
-  if (reading != lastButtonState) {
-    if (reading == LOW) {
-      Serial.println("Boton Presionado -> CMD_PTT_START");
-      bleManager.sendCommand("CMD_PTT_START");
-      isTransmitting = true;
-    } else {
-      Serial.println("Boton Soltado -> CMD_PTT_STOP");
-      isTransmitting = false;
-      delay(20); // Allow BLE queue to flush audio before sending stop command
-      bleManager.sendCommand("CMD_PTT_STOP");
-    }
-    delay(50); // Debounce
-  }
-  lastButtonState = reading;
-
-  // Lectura continua del microfono para Edge AI
-#ifdef IRIS_XIAO
-  int16_t samples[250]; // 500 bytes (PDM 16-bit)
-#else
-  int32_t samples[125]; // 500 bytes (I2S 32-bit)
-#endif
-  size_t bytes_read = 0;
-  
-  esp_err_t result = i2s_read(I2S_MIC_PORT, &samples, sizeof(samples), &bytes_read, portMAX_DELAY);
-  
-  if (result == ESP_OK && bytes_read > 0) {
-#ifdef IRIS_XIAO
-    int num_samples = bytes_read / 2;
-    int16_t* out_buf = samples;
-#else
-    int num_samples = bytes_read / 4;
-    int16_t out_buf[125]; 
-    for(int i = 0; i < num_samples; i++) {
-      out_buf[i] = samples[i] >> 14;
-    }
-#endif
-    
-    // 1. Procesamiento Local (Edge AI Audio)
-    processAudioFrame(out_buf, num_samples * 2);
-    
-    // 2. Transmision Bluetooth
-    if (isTransmitting && bleManager.isConnected()) {
-      bleManager.sendAudioChunk((const uint8_t*)out_buf, num_samples * 2);
-    }
+  if (beepRequested) {
+    beepRequested = false;
+    playThinkingBeep();
   }
 
-  // 3. Procesamiento Local (Edge AI Vision) - 1 vez por segundo
-  static unsigned long lastVisionTime = 0;
-  if (millis() - lastVisionTime > 1000) {
-    lastVisionTime = millis();
-    
-    camera_fb_t* fb = capturePhoto();
-    if (fb) {
-      runVisionInference(fb->buf, fb->len);
-      esp_camera_fb_return(fb);
-    }
+  // Si el telefono se desconecta con el boton apretado, no quedarse "transmitiendo"
+  if (isTransmitting && !bleManager.isConnected()) {
+    isTransmitting = false;
+    setVisionPaused(false);
+  }
+
+  int16_t samples[kMicMaxSamples];
+  size_t sampleCount = readMicSamples(samples, kMicMaxSamples);
+  if (sampleCount == 0) return;
+
+  const size_t byteCount = sampleCount * sizeof(int16_t);
+
+  // 1. Procesamiento local (Edge AI audio)
+  processAudioFrame(samples, byteCount);
+
+  // 2. Transmision Bluetooth
+  if (isTransmitting) {
+    bleManager.sendAudioChunk((const uint8_t*)samples, byteCount);
   }
 }

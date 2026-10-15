@@ -16,20 +16,18 @@ dependencies:
   # Síntesis de voz nativa (Text-to-Speech)
   flutter_tts: ^4.2.0
 
-  # Peticiones HTTP para la API de visión
+  # Peticiones HTTP a las APIs de IA
   http: ^1.3.0
 
   # Retroalimentación háptica (vibración)
   vibration: ^3.1.8
 
-  # Codificación de imágenes a base64
-  image: ^4.5.3
-  flutter_image_compress: ^2.4.0
   speech_to_text: ^7.4.0
   permission_handler: ^12.0.1
   flutter_dotenv: ^6.0.1
   geolocator: ^14.0.3
   flutter_blue_plus: ^2.3.12
+
 dev_dependencies:
   flutter_test:
     sdk: flutter
@@ -41,6 +39,8 @@ flutter:
 
   assets:
     - assets/
+    # OJO: todo lo que esté en .env queda dentro del APK y se puede extraer.
+    # Para producción mover las llamadas a Azure/HuggingFace a un backend propio.
     - .env
 
 flutter_launcher_icons:

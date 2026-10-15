@@ -3,31 +3,50 @@
 
 #include <Arduino.h>
 
-// BLE Configuration
+// ==========================================
+// BLE
+// ==========================================
 #define BLE_DEVICE_NAME "Iris_ESP32"
 #define SERVICE_UUID           "6E400001-B5A3-F393-E0A9-E50E24DCCA9E"
-#define CHAR_UUID_RX           "6E400002-B5A3-F393-E0A9-E50E24DCCA9E" // ESP32 receives data
-#define CHAR_UUID_TX           "6E400003-B5A3-F393-E0A9-E50E24DCCA9E" // ESP32 sends audio
-#define CHAR_UUID_CMD_TX       "6E400004-B5A3-F393-E0A9-E50E24DCCA9E" // ESP32 sends commands (button)
-#define CHAR_UUID_PHOTO_TX     "6E400005-B5A3-F393-E0A9-E50E24DCCA9E" // ESP32 sends photo
+#define CHAR_UUID_RX           "6E400002-B5A3-F393-E0A9-E50E24DCCA9E" // ESP32 recibe audio TTS (solo PCM)
+#define CHAR_UUID_TX           "6E400003-B5A3-F393-E0A9-E50E24DCCA9E" // ESP32 envia audio del microfono
+#define CHAR_UUID_CMD_TX       "6E400004-B5A3-F393-E0A9-E50E24DCCA9E" // Comandos en ambos sentidos (boton, foto, beep)
+#define CHAR_UUID_PHOTO_TX     "6E400005-B5A3-F393-E0A9-E50E24DCCA9E" // ESP32 envia la foto JPEG
 
+#define BLE_DEFAULT_MTU        23   // MTU de ATT antes de negociar
+#define BLE_ATT_HEADER_BYTES   3    // Payload real por notificacion = MTU - 3
+#define BLE_REQUESTED_MTU      512
+
+// ==========================================
+// Audio
+// ==========================================
 #define AUDIO_SAMPLE_RATE 16000
+
+// ==========================================
+// Foto (JPEG hacia GPT) y vision local (Edge AI)
+// ==========================================
+#define PHOTO_FRAME_SIZE        FRAMESIZE_VGA // 640x480
+#define PHOTO_JPEG_QUALITY      12            // 0-63, menor = mejor calidad
+#define PHOTO_SETTLE_FRAMES     3             // Frames descartados para que la autoexposicion se estabilice
+#define PHOTO_CHUNK_DELAY_MS    20            // Backpressure entre notificaciones de foto
+#define VISION_INTERVAL_MS      1000
 
 #ifdef IRIS_XIAO
 // ==========================================
 // PINES XIAO ESP32S3 SENSE (PROTOTIPO 2)
+// Mapa XIAO: D0=GPIO1, D1=GPIO2, D2=GPIO3, D3=GPIO4
 // ==========================================
 #define I2S_MIC_PORT  I2S_NUM_0
-#define I2S_MIC_SCK   42 // PDM CLK
+#define I2S_MIC_SCK   42 // PDM CLK (en PDM el reloj sale por el pin WS del driver)
 #define I2S_MIC_WS    -1 // PDM no usa WS
 #define I2S_MIC_SD    41 // PDM DATA
 
 #define I2S_AMP_PORT  I2S_NUM_1
-#define I2S_AMP_LRC   1  // D1 (Asegurate de rutear esto en la placa)
-#define I2S_AMP_BCLK  2  // D2
-#define I2S_AMP_DIN   3  // D3
+#define I2S_AMP_LRC   1  // D0 (rutear en la placa)
+#define I2S_AMP_BCLK  2  // D1
+#define I2S_AMP_DIN   3  // D2
 
-#define BUTTON_PIN    4  // D4
+#define BUTTON_PIN    4  // D3
 
 #define PWDN_GPIO_NUM     -1
 #define RESET_GPIO_NUM    -1
@@ -49,11 +68,13 @@
 #else
 // ==========================================
 // PINES ESP32-S3 DEVKIT (PROTOTIPO GRANDE)
+// Coinciden con el README: microfono INMP441 en 42/41/40 y
+// amplificador MAX98357A en 1/2/21 (no pueden compartir pines).
 // ==========================================
 #define I2S_MIC_PORT  I2S_NUM_0
-#define I2S_MIC_SCK   2
-#define I2S_MIC_WS    1
-#define I2S_MIC_SD    21
+#define I2S_MIC_SCK   42
+#define I2S_MIC_WS    41
+#define I2S_MIC_SD    40
 
 #define I2S_AMP_PORT  I2S_NUM_1
 #define I2S_AMP_LRC   1
@@ -62,8 +83,8 @@
 
 #define BUTTON_PIN    14
 
-#define PWDN_GPIO_NUM     -1 
-#define RESET_GPIO_NUM    -1 
+#define PWDN_GPIO_NUM     -1
+#define RESET_GPIO_NUM    -1
 #define XCLK_GPIO_NUM     15
 #define SIOD_GPIO_NUM      4
 #define SIOC_GPIO_NUM      5

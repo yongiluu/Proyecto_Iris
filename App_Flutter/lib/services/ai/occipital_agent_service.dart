@@ -1,8 +1,11 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:typed_data';
+
 import 'package:flutter/foundation.dart';
-import 'package:http/http.dart' as http;
 import 'package:geolocator/geolocator.dart';
+import 'package:http/http.dart' as http;
+
 import '../../core/constants/env_config.dart';
 
 class OccipitalAgentService {
@@ -12,30 +15,88 @@ class OccipitalAgentService {
 
   OccipitalAgentService._internal();
 
+  static const Duration _requestTimeout = Duration(seconds: 30);
+  static const Duration _toolTimeout = Duration(seconds: 15);
+  static const int _maxTokens = 300;
+
   static const String systemPrompt = '''
 Eres Occipital, un asistente visual y de razonamiento avanzado y altamente confiable. ERES LOS OJOS DE UNA PERSONA CIEGA.
-Tu directiva principal es la seguridad del usuario y la precision absoluta. 
+Tu directiva principal es la seguridad del usuario y la precision absoluta.
 TIENES ACCESO A HERRAMIENTAS Y ES OBLIGATORIO USARLAS CUANDO EL USUARIO PREGUNTE POR SU ENTORNO.
-REGLA DE ORO: Si el usuario dice "Que ves aqui­?", "Describe esto", o cualquier cosa sobre su vision o entorno, DEBES LLAMAR INMEDIATAMENTE a `analyze_surroundings`. NO preguntes que quiere ver! Llama a la herramienta de inmediato!
+REGLA DE ORO: Si el usuario dice "Que ves aqui?", "Describe esto", o cualquier cosa sobre su vision o entorno, DEBES LLAMAR INMEDIATAMENTE a `analyze_surroundings`. NO preguntes que quiere ver! Llama a la herramienta de inmediato!
 1. Entorno/vision -> LLAMA A `analyze_surroundings`.
 2. Ubicacion/Clima -> LLAMA A `get_weather_and_location`.
 3. Salud/Medicinas -> LLAMA A `search_medical_database`.
 4. Charla general -> RESPONDE DIRECTAMENTE.
 
+SEGURIDAD: Si la imagen esta borrosa, oscura o no puedes distinguir algo con certeza, dilo en lugar de adivinar. En temas de salud no inventes dosis ni indicaciones: usa solo lo que entregue la base de datos y, si no hay informacion, recomienda consultar a un medico o farmaceutico.
+
 RESPONDE SIEMPRE EN ESPANOL Y DE FORMA MUY BREVE, CORTA Y CONCISA. No des explicaciones largas.
 ''';
 
-  bool _isInitialized = false;
+  static const List<Map<String, dynamic>> _tools = [
+    {
+      'type': 'function',
+      'function': {
+        'name': 'analyze_surroundings',
+        'description': "Capture an image from the camera and analyze the user's surroundings.",
+        'parameters': {'type': 'object', 'properties': {}},
+      },
+    },
+    {
+      'type': 'function',
+      'function': {
+        'name': 'get_weather_and_location',
+        'description': 'Get the current weather and GPS location of the user.',
+        'parameters': {'type': 'object', 'properties': {}},
+      },
+    },
+    {
+      'type': 'function',
+      'function': {
+        'name': 'search_medical_database',
+        'description': 'Search the medical database for FDA guidelines or health info.',
+        'parameters': {
+          'type': 'object',
+          'properties': {
+            'query': {'type': 'string', 'description': 'The medical query'},
+          },
+          'required': ['query'],
+        },
+      },
+    },
+  ];
 
-  final double mockLat = -36.8282;
-  final double mockLon = -73.0366;
+  bool _isInitialized = false;
 
   Future<void> initialize() async {
     if (_isInitialized) return;
     _isInitialized = true;
   }
 
-  /// Sends the prompt to the reasoning agent which decides whether to use a tool or answer directly.
+  /// Endpoint de chat completions a partir de AZURE_FOUNDRY_ENDPOINT (acepta la URL base o la completa).
+  Uri? _chatCompletionsUri() {
+    var base = EnvConfig.azureFoundryEndpoint;
+    if (base.isEmpty) return null;
+    while (base.endsWith('/')) {
+      base = base.substring(0, base.length - 1);
+    }
+    if (base.endsWith('/chat/completions')) return Uri.parse(base);
+    if (base.endsWith('/openai/v1')) return Uri.parse('$base/chat/completions');
+    return Uri.parse('$base/openai/v1/chat/completions');
+  }
+
+  Future<http.Response> _postChat(Uri url, Map<String, dynamic> body) {
+    return http
+        .post(
+          url,
+          headers: {'Content-Type': 'application/json', 'api-key': EnvConfig.azureFoundryKey},
+          body: jsonEncode(body),
+        )
+        .timeout(_requestTimeout);
+  }
+
+  /// Envia el prompt al agente, que decide si usar una herramienta o responder directo.
   Future<String?> processWithAgenticReasoning({
     required String userPrompt,
     required Future<Uint8List?> Function() captureImageCallback,
@@ -44,190 +105,161 @@ RESPONDE SIEMPRE EN ESPANOL Y DE FORMA MUY BREVE, CORTA Y CONCISA. No des explic
     debugPrint('ðŸ§  OccipitalAgentService: Thinking about prompt: $userPrompt');
     onStatusUpdate?.call('Pensando...');
 
-    final endpoint = EnvConfig.azureFoundryEndpoint;
-    final key = EnvConfig.azureFoundryKey;
-    final deploymentName = 'gpt-4.1-mini';
-
-    if (endpoint.isEmpty || key.isEmpty) {
-      return "Las claves de API para Azure OpenAI no estan configuradas.";
+    final url = _chatCompletionsUri();
+    if (url == null || EnvConfig.azureFoundryKey.isEmpty) {
+      return 'Las claves de API para Azure OpenAI no estan configuradas.';
     }
 
-    final url = Uri.parse('https://occipital-east-resource.services.ai.azure.com/openai/v1/chat/completions');
-
-    List<Map<String, dynamic>> messages = [
-      {"role": "system", "content": systemPrompt},
-      {"role": "user", "content": userPrompt}
-    ];
-
-    final tools = [
-      {
-        "type": "function",
-        "function": {
-          "name": "analyze_surroundings",
-          "description": "Capture an image from the camera and analyze the user's surroundings.",
-          "parameters": {"type": "object", "properties": {}}
-        }
-      },
-      {
-        "type": "function",
-        "function": {
-          "name": "get_weather_and_location",
-          "description": "Get the current weather and GPS location of the user.",
-          "parameters": {"type": "object", "properties": {}}
-        }
-      },
-      {
-        "type": "function",
-        "function": {
-          "name": "search_medical_database",
-          "description": "Search the medical database for FDA guidelines or health info.",
-          "parameters": {
-            "type": "object",
-            "properties": {
-              "query": {"type": "string", "description": "The medical query"}
-            },
-            "required": ["query"]
-          }
-        }
-      }
+    final deployment = EnvConfig.azureFoundryDeployment;
+    final messages = <Map<String, dynamic>>[
+      {'role': 'system', 'content': systemPrompt},
+      {'role': 'user', 'content': userPrompt},
     ];
 
     try {
-      // FIRST PASS: Let the model decide if it needs tools
-      final response1 = await http.post(
-        url,
-        headers: {'Content-Type': 'application/json', 'api-key': key},
-        body: jsonEncode({
-          "model": deploymentName,
-          "messages": messages,
-          "tools": tools,
-          "tool_choice": "auto",
-          "max_tokens": 300,
-        }),
-      );
+      // PRIMERA PASADA: el modelo decide si necesita herramientas
+      final firstResponse = await _postChat(url, {
+        'model': deployment,
+        'messages': messages,
+        'tools': _tools,
+        'tool_choice': 'auto',
+        'max_tokens': _maxTokens,
+      });
 
-      if (response1.statusCode != 200) {
-        debugPrint('Azure Error: ${response1.body}');
-        return "Error al contactar al cerebro de Iris.";
+      if (firstResponse.statusCode != 200) {
+        debugPrint('Azure Error ${firstResponse.statusCode}: ${firstResponse.body}');
+        return 'Error al contactar al cerebro de Iris.';
       }
 
-      final data1 = jsonDecode(response1.body);
-      final choice = data1['choices'][0];
-      final message = choice['message'];
-      
-      // If the model decides not to use tools, return its response
-      if (message['tool_calls'] == null || (message['tool_calls'] as List).isEmpty) {
-        return message['content'];
-      }
+      final message = jsonDecode(firstResponse.body)['choices'][0]['message'] as Map<String, dynamic>;
+      final toolCalls = (message['tool_calls'] as List?) ?? const [];
+      if (toolCalls.isEmpty) return message['content']?.toString();
 
-      // Model wants to use a tool
-      final toolCall = message['tool_calls'][0];
-      final functionName = toolCall['function']['name'];
-      final toolCallId = toolCall['id'];
-
-      messages.add(message); // Add assistant's tool call to history
-
-      String toolResult = "";
-
-      if (functionName == 'analyze_surroundings') {
-        onStatusUpdate?.call('Analizando vision...');
-        final imageBytes = await captureImageCallback();
-        if (imageBytes != null) {
-          final base64Image = base64Encode(imageBytes);
-          // For vision, we inject the image into the tool response
-          messages.add({
-            "role": "tool",
-            "tool_call_id": toolCallId,
-            "name": functionName,
-            "content": "Imagen capturada exitosamente."
-          });
-          // We must append the image to the user message or as a new user message
-          messages.add({
-            "role": "user",
-            "content": [
-              {"type": "text", "text": "aqui­ tienes la imagen capturada para tu analisis:"},
-              {"type": "image_url", "image_url": {"url": "data:image/jpeg;base64,$base64Image"}}
-            ]
-          });
-        } else {
-          messages.add({
-             "role": "tool",
-             "tool_call_id": toolCallId,
-             "name": functionName,
-             "content": "Error: No se pudo capturar la imagen."
-          });
-        }
-      } else if (functionName == 'get_weather_and_location') {
-        onStatusUpdate?.call('Obteniendo Clima y GPS...');
-        toolResult = await _fetchLocationAndWeather();
+      // Cada tool_call necesita su propio mensaje "tool"; si falta alguno la API responde 400.
+      messages.add(message);
+      Map<String, dynamic>? imageMessage;
+      for (final call in toolCalls) {
+        final result = await _runTool(
+          call as Map<String, dynamic>,
+          userPrompt: userPrompt,
+          captureImageCallback: captureImageCallback,
+          onStatusUpdate: onStatusUpdate,
+        );
         messages.add({
-           "role": "tool",
-           "tool_call_id": toolCallId,
-           "name": functionName,
-           "content": toolResult
+          'role': 'tool',
+          'tool_call_id': call['id'],
+          'name': call['function']['name'],
+          'content': result.text,
         });
-      } else if (functionName == 'search_medical_database') {
-        onStatusUpdate?.call('Consultando Base de Datos Medica...');
-        final args = jsonDecode(toolCall['function']['arguments']);
-        toolResult = await _searchMedicalDB(args['query'] ?? userPrompt);
-        messages.add({
-           "role": "tool",
-           "tool_call_id": toolCallId,
-           "name": functionName,
-           "content": toolResult
-        });
+        imageMessage ??= result.imageMessage;
       }
+      // El mensaje con la imagen va despues de todos los mensajes "tool".
+      if (imageMessage != null) messages.add(imageMessage);
 
-      // SECOND PASS: Send the tool result back to the model for final answer
-      final response2 = await http.post(
-        url,
-        headers: {'Content-Type': 'application/json', 'api-key': key},
-        body: jsonEncode({
-          "model": deploymentName,
-          "messages": messages,
-          "max_tokens": 300,
-        }),
-      );
+      // SEGUNDA PASADA: respuesta final con los resultados
+      final secondResponse = await _postChat(url, {
+        'model': deployment,
+        'messages': messages,
+        'max_tokens': _maxTokens,
+      });
 
-      if (response2.statusCode == 200) {
-        final data2 = jsonDecode(response2.body);
-        return data2['choices'][0]['message']['content'];
-      } else {
-        return "Error al analizar los resultados de las herramientas.";
+      if (secondResponse.statusCode != 200) {
+        debugPrint('Azure Error ${secondResponse.statusCode}: ${secondResponse.body}');
+        return 'Error al analizar los resultados de las herramientas.';
       }
-
+      return jsonDecode(secondResponse.body)['choices'][0]['message']['content']?.toString();
+    } on TimeoutException {
+      return 'La conexion tardo demasiado. Intentalo de nuevo.';
     } catch (e) {
       debugPrint('Exception in OccipitalAgentService: $e');
-      return "Hubo un problema de conexion. Intentalo de nuevo.";
+      return 'Hubo un problema de conexion. Intentalo de nuevo.';
+    }
+  }
+
+  Future<({String text, Map<String, dynamic>? imageMessage})> _runTool(
+    Map<String, dynamic> call, {
+    required String userPrompt,
+    required Future<Uint8List?> Function() captureImageCallback,
+    Function(String status)? onStatusUpdate,
+  }) async {
+    final name = call['function']['name'];
+
+    switch (name) {
+      case 'analyze_surroundings':
+        onStatusUpdate?.call('Analizando vision...');
+        final imageBytes = await captureImageCallback();
+        if (imageBytes == null) {
+          return (text: 'Error: No se pudo capturar la imagen.', imageMessage: null);
+        }
+        return (
+          text: 'Imagen capturada exitosamente.',
+          imageMessage: {
+            'role': 'user',
+            'content': [
+              {'type': 'text', 'text': 'Aqui tienes la imagen capturada para tu analisis:'},
+              {'type': 'image_url', 'image_url': {'url': 'data:image/jpeg;base64,${base64Encode(imageBytes)}'}},
+            ],
+          },
+        );
+
+      case 'get_weather_and_location':
+        onStatusUpdate?.call('Obteniendo Clima y GPS...');
+        return (text: await _fetchLocationAndWeather(), imageMessage: null);
+
+      case 'search_medical_database':
+        onStatusUpdate?.call('Consultando Base de Datos Medica...');
+        String query = userPrompt;
+        try {
+          final args = jsonDecode(call['function']['arguments'] ?? '{}');
+          query = (args['query'] ?? userPrompt).toString();
+        } catch (e) {
+          debugPrint('Argumentos invalidos para search_medical_database: $e');
+        }
+        return (text: await _searchMedicalDB(query), imageMessage: null);
+
+      default:
+        return (text: 'Herramienta desconocida: $name', imageMessage: null);
+    }
+  }
+
+  /// Posicion GPS actual, o null si no hay servicio/permiso (nunca se inventa una ubicacion).
+  Future<Position?> _currentPosition() async {
+    try {
+      if (!await Geolocator.isLocationServiceEnabled()) return null;
+
+      var permission = await Geolocator.checkPermission();
+      if (permission == LocationPermission.denied) {
+        permission = await Geolocator.requestPermission();
+      }
+      if (permission != LocationPermission.whileInUse && permission != LocationPermission.always) {
+        return null;
+      }
+      return await Geolocator.getCurrentPosition().timeout(_toolTimeout);
+    } catch (e) {
+      debugPrint('Error GPS: $e');
+      return null;
     }
   }
 
   Future<String> _fetchLocationAndWeather() async {
-    String locationText = 'Unknown location';
-    String weatherText = 'Unknown weather';
-    double lat = mockLat;
-    double lon = mockLon;
+    final position = await _currentPosition();
+    if (position == null) {
+      return 'No se pudo obtener la ubicacion GPS del usuario. Dile que active la ubicacion; no inventes una.';
+    }
+    final lat = position.latitude;
+    final lon = position.longitude;
 
-    try {
-      bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
-      if (serviceEnabled) {
-        LocationPermission permission = await Geolocator.checkPermission();
-        if (permission == LocationPermission.denied) permission = await Geolocator.requestPermission();
-        if (permission == LocationPermission.whileInUse || permission == LocationPermission.always) {
-          Position position = await Geolocator.getCurrentPosition();
-          lat = position.latitude;
-          lon = position.longitude;
-        }
-      }
-    } catch (e) { debugPrint('Error GPS: $e'); }
+    String locationText = 'ubicacion desconocida';
+    String weatherText = 'clima desconocido';
 
     try {
       if (EnvConfig.locationIqKey.isNotEmpty) {
-        final locUrl = Uri.parse('https://us1.locationiq.com/v1/reverse?key=${EnvConfig.locationIqKey}&lat=$lat&lon=$lon&format=json');
-        final locRes = await http.get(locUrl);
-        if (locRes.statusCode == 200) {
-          final data = jsonDecode(locRes.body);
-          final address = data['address'];
+        final response = await http
+            .get(Uri.parse(
+                'https://us1.locationiq.com/v1/reverse?key=${EnvConfig.locationIqKey}&lat=$lat&lon=$lon&format=json'))
+            .timeout(_toolTimeout);
+        if (response.statusCode == 200) {
+          final address = jsonDecode(response.body)['address'] ?? {};
           final road = address['road'] ?? 'una calle desconocida';
           final city = address['city'] ?? address['town'] ?? address['village'] ?? '';
           locationText = '$road, $city';
@@ -235,43 +267,46 @@ RESPONDE SIEMPRE EN ESPANOL Y DE FORMA MUY BREVE, CORTA Y CONCISA. No des explic
       }
 
       if (EnvConfig.openWeatherKey.isNotEmpty) {
-        final weatherUrl = Uri.parse('https://api.openweathermap.org/data/2.5/weather?lat=$lat&lon=$lon&appid=${EnvConfig.openWeatherKey}&units=metric&lang=es');
-        final weatherRes = await http.get(weatherUrl);
-        if (weatherRes.statusCode == 200) {
-          final data = jsonDecode(weatherRes.body);
-          final temp = data['main']['temp'];
-          final tempRounded = (temp as num).round();
-          final description = data['weather'][0]['description'];
-          weatherText = '$tempRoundedÂ°C y $description';
+        final response = await http
+            .get(Uri.parse(
+                'https://api.openweathermap.org/data/2.5/weather?lat=$lat&lon=$lon&appid=${EnvConfig.openWeatherKey}&units=metric&lang=es'))
+            .timeout(_toolTimeout);
+        if (response.statusCode == 200) {
+          final data = jsonDecode(response.body);
+          final temperature = (data['main']['temp'] as num).round();
+          weatherText = '$temperatureÂ°C y ${data['weather'][0]['description']}';
         }
       }
-      return "Ubicacion: $locationText. Clima: $weatherText.";
+      return 'Ubicacion: $locationText. Clima: $weatherText.';
     } catch (e) {
-      return "No se pudo obtener el clima o Ubicacion.";
+      debugPrint('Error obteniendo clima/ubicacion: $e');
+      return 'No se pudo obtener el clima o la ubicacion.';
     }
   }
 
   Future<String> _searchMedicalDB(String query) async {
     if (EnvConfig.azureSearchEndpoint.isEmpty || EnvConfig.azureSearchKey.isEmpty) {
-      return "Base de datos Medica no configurada.";
+      return 'Base de datos Medica no configurada.';
     }
     try {
-      final searchUrl = Uri.parse('${EnvConfig.azureSearchEndpoint}/indexes/insulina-fda-kb/docs/search?api-version=2023-11-01');
-      final searchRes = await http.post(
-        searchUrl,
-        headers: {'Content-Type': 'application/json', 'api-key': EnvConfig.azureSearchKey},
-        body: jsonEncode({"search": query, "top": 3}),
-      );
-      if (searchRes.statusCode == 200) {
-        final data = jsonDecode(searchRes.body);
-        final values = data['value'] as List;
+      final response = await http
+          .post(
+            Uri.parse('${EnvConfig.azureSearchEndpoint}/indexes/insulina-fda-kb/docs/search?api-version=2023-11-01'),
+            headers: {'Content-Type': 'application/json', 'api-key': EnvConfig.azureSearchKey},
+            body: jsonEncode({'search': query, 'top': 3}),
+          )
+          .timeout(_toolTimeout);
+
+      if (response.statusCode == 200) {
+        final values = (jsonDecode(response.body)['value'] as List?) ?? const [];
         if (values.isNotEmpty) {
           return values.map((e) => e['content'] ?? '').join('\n');
         }
       }
-      return "No se encontraron resultados en la base de datos Medica para la consulta: $query.";
+      return 'No se encontraron resultados en la base de datos Medica para la consulta: $query.';
     } catch (e) {
-      return "Error al consultar la base de datos Medica.";
+      debugPrint('Error consultando base medica: $e');
+      return 'Error al consultar la base de datos Medica.';
     }
   }
 

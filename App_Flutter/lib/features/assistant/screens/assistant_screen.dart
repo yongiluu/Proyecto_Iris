@@ -13,7 +13,6 @@ import 'package:vibration/vibration.dart';
 import '../../../core/constants/app_constants.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../../services/hardware/camera_service.dart';
-import '../../../services/hardware/esp32_camera_service.dart';
 import '../../../services/hardware/esp32_speech_service.dart';
 import '../../../services/ai/speech_service.dart';
 import '../../../services/ai/occipital_agent_service.dart';
@@ -32,13 +31,9 @@ class AssistantScreen extends StatefulWidget {
 class _AssistantScreenState extends State<AssistantScreen>
     with TickerProviderStateMixin {
   
-  // IP DE LA ESP32 (Actualizala si cambia en el monitor serie)
-  static const String ESP32_IP = '10.215.241.172';
-
   // ─── Services ───
   final CameraService _nativeCameraService = CameraService();
   final SpeechService _nativeSpeechService = SpeechService();
-  final Esp32CameraService _esp32CameraService = Esp32CameraService(ESP32_IP);
   final Esp32SpeechService _esp32SpeechService = Esp32SpeechService();
   final OccipitalAgentService _agentService = OccipitalAgentService();
   final TtsService _ttsService = TtsService();
@@ -104,6 +99,7 @@ class _AssistantScreenState extends State<AssistantScreen>
       // Callbacks ESP32 WebSocket
       _esp32SpeechService.onRecordingStarted = () async {
         if (mounted && _hardwareMode == HardwareMode.esp32) {
+          _isNativeMicActive = false;
           _onRecordingStarted();
         }
       };
@@ -133,14 +129,15 @@ class _AssistantScreenState extends State<AssistantScreen>
         }
       };
 
+      // Un servicio que falla (ej. sin permiso de camara) no debe impedir usar los demas.
       await Future.wait<void>([
-        _nativeCameraService.initialize(),
-        _nativeSpeechService.initialize(),
-        _esp32CameraService.initialize(),
-        _esp32SpeechService.init(),
-        _ttsService.initialize(),
-        _hapticService.initialize(),
+        _initSafely('camara', _nativeCameraService.initialize()),
+        _initSafely('reconocimiento de voz', _nativeSpeechService.initialize()),
+        _initSafely('bluetooth', _esp32SpeechService.init()),
+        _initSafely('voz', _ttsService.initialize()),
+        _initSafely('vibracion', _hapticService.initialize()),
       ]);
+      if (!mounted) return;
 
       setState(() => _isInitialized = true);
       
@@ -150,14 +147,30 @@ class _AssistantScreenState extends State<AssistantScreen>
          });
       }
 
-      await _ttsService.speakStatus('Iris esta lista.', esp32Service: _hardwareMode == HardwareMode.esp32 ? _esp32SpeechService : null);
+      await _ttsService.speakStatus('Iris esta lista.', esp32Service: _activeEsp32);
     } catch (e) {
-      setState(() {
-        _statusText = 'Error de inicializacion: $e';
-      });
       debugPrint('⚠️ Error initializing services: $e');
+      if (mounted) setState(() => _statusText = 'Error de inicializacion: $e');
     }
   }
+
+  Future<void> _initSafely(String name, Future<void> initialization) async {
+    try {
+      await initialization;
+    } catch (e) {
+      debugPrint('⚠️ No se pudo inicializar $name: $e');
+    }
+  }
+
+  /// Foto para el analisis de vision, segun el hardware activo.
+  Future<Uint8List?> _captureImage() {
+    return _hardwareMode == HardwareMode.esp32
+        ? _esp32SpeechService.captureSingleFrame()
+        : _nativeCameraService.captureSingleFrame();
+  }
+
+  Esp32SpeechService? get _activeEsp32 =>
+      _hardwareMode == HardwareMode.esp32 ? _esp32SpeechService : null;
 
   bool _isNativeMicActive = false;
 
@@ -177,9 +190,9 @@ class _AssistantScreenState extends State<AssistantScreen>
     // Si estaba hablando, paramos
     if (_ttsService.isSpeaking) {
       await _ttsService.stop();
-      await _ttsService.speakStatus('Iris lista.', esp32Service: _hardwareMode == HardwareMode.esp32 ? _esp32SpeechService : null);
+      await _ttsService.speakStatus('Iris lista.', esp32Service: _activeEsp32);
     } else {
-      await _ttsService.speakStatus('Iris lista.', esp32Service: _hardwareMode == HardwareMode.esp32 ? _esp32SpeechService : null);
+      await _ttsService.speakStatus('Iris lista.', esp32Service: _activeEsp32);
     }
     
     // Activamos SIEMPRE el microfono nativo del celular (incluso en modo ESP32)
@@ -220,12 +233,12 @@ class _AssistantScreenState extends State<AssistantScreen>
     });
     if (_continuousMode) {
       _consecutiveCount = 0;
-      await _ttsService.speak('Modo continuo activado', esp32Service: _hardwareMode == HardwareMode.esp32 ? _esp32SpeechService : null);
+      await _ttsService.speak('Modo continuo activado', esp32Service: _activeEsp32);
       _startContinuousMode();
     } else {
       _continuousTimer?.cancel();
       _consecutiveCount = 0;
-      await _ttsService.speak('Modo continuo desactivado', esp32Service: _hardwareMode == HardwareMode.esp32 ? _esp32SpeechService : null);
+      await _ttsService.speak('Modo continuo desactivado', esp32Service: _activeEsp32);
     }
   }
 
@@ -265,21 +278,15 @@ class _AssistantScreenState extends State<AssistantScreen>
       onStatusUpdate: (status) {
         if (mounted) setState(() => _statusText = status);
       },
-      captureImageCallback: () async {
-        if (_hardwareMode == HardwareMode.esp32) {
-          return await _esp32CameraService.captureSingleFrame();
-        } else {
-          return await _nativeCameraService.captureSingleFrame();
-        }
-      },
+      captureImageCallback: _captureImage,
     );
     if (desc != null && mounted) {
       setState(() {
         _lastDescription = desc.replaceAll(RegExp(r'^\[(en|es)\]\s*', caseSensitive: false), '');
       });
-      await _ttsService.speak(desc, esp32Service: _hardwareMode == HardwareMode.esp32 ? _esp32SpeechService : null);
-      _resetState(null);
+      await _ttsService.speak(desc, esp32Service: _activeEsp32);
     }
+    _resetState(null);
   }
 
   // ─── Procesamiento de Audio STT ───
@@ -325,7 +332,7 @@ class _AssistantScreenState extends State<AssistantScreen>
     
     if (prompt.isEmpty) {
       _resetState('No entendi o hubo ruido, por favor intenta de nuevo');
-      await _ttsService.speak('No escuche claramente, puedes repetir?', esp32Service: _hardwareMode == HardwareMode.esp32 ? _esp32SpeechService : null);
+      await _ttsService.speak('No escuche claramente, puedes repetir?', esp32Service: _activeEsp32);
       return;
     }
 
@@ -357,13 +364,7 @@ class _AssistantScreenState extends State<AssistantScreen>
         onStatusUpdate: (status) {
           if (mounted) setState(() => _statusText = status);
         },
-        captureImageCallback: () async {
-          if (_hardwareMode == HardwareMode.esp32) {
-            return await _esp32SpeechService.captureSingleFrame();
-          } else {
-            return await _nativeCameraService.captureSingleFrame();
-          }
-        },
+        captureImageCallback: _captureImage,
       );
       
       if (_hardwareMode == HardwareMode.esp32) _esp32SpeechService.stopThinkingSound();
@@ -374,11 +375,13 @@ class _AssistantScreenState extends State<AssistantScreen>
       });
 
       if (description != null) {
-        await _ttsService.speak(description, esp32Service: _hardwareMode == HardwareMode.esp32 ? _esp32SpeechService : null);
+        await _ttsService.speak(description, esp32Service: _activeEsp32);
       }
     } catch (e) {
+      debugPrint('⚠️ Error del servicio AI: $e');
       if (_hardwareMode == HardwareMode.esp32) _esp32SpeechService.stopThinkingSound();
       _resetState('Error de servicio AI.');
+      await _ttsService.speak('Hubo un error, por favor intenta de nuevo.', esp32Service: _activeEsp32);
     }
 
     if (_continuousMode && _consecutiveCount < 2) {
@@ -402,7 +405,6 @@ class _AssistantScreenState extends State<AssistantScreen>
     _pulseController.dispose();
     _fadeController.dispose();
     _nativeCameraService.dispose();
-    _esp32CameraService.dispose();
     _ttsService.dispose();
     _esp32SpeechService.dispose();
     super.dispose();
@@ -606,10 +608,13 @@ class _AssistantScreenState extends State<AssistantScreen>
             if (_statusText.isNotEmpty)
               Padding(
                 padding: const EdgeInsets.only(top: 8.0),
-                child: Text(
-                  _statusText,
-                  style: const TextStyle(color: Colors.white70, fontSize: 14),
-                  textAlign: TextAlign.left,
+                child: Semantics(
+                  liveRegion: true,
+                  child: Text(
+                    _statusText,
+                    style: const TextStyle(color: Colors.white70, fontSize: 14),
+                    textAlign: TextAlign.left,
+                  ),
                 ),
               ),
             if (_isProcessing)
@@ -674,7 +679,12 @@ class _AssistantScreenState extends State<AssistantScreen>
   Widget _buildFloatingIndicator() {
     return Padding(
       padding: const EdgeInsets.only(bottom: 48.0),
-      child: GestureDetector(
+      child: Semantics(
+        button: true,
+        label: _isListening
+            ? 'Escuchando. Suelta para enviar tu pregunta'
+            : 'Mantén presionado para hablar con Iris',
+        child: GestureDetector(
         onTapDown: (_) {
            if (_hardwareMode == HardwareMode.standalone) _startNativeListening();
         },
@@ -714,6 +724,7 @@ class _AssistantScreenState extends State<AssistantScreen>
               ),
             ),
           ),
+        ),
         ),
       ),
     );

@@ -5,29 +5,41 @@
 #include <NimBLEDevice.h>
 #include "config.h"
 
-// Callback type for receiving audio from phone
+// Audio TTS recibido desde el telefono (PCM 16-bit mono)
 typedef void (*AudioReceiveCallback)(const uint8_t* data, size_t length);
+// Comando de texto recibido desde el telefono (ej. "CMD_TAKE_PHOTO"). Se ejecuta en el hilo BLE: no bloquear.
+typedef void (*CommandReceiveCallback)(const char* command);
 
 class BleManager {
 public:
     BleManager();
-    void init(AudioReceiveCallback audioCallback);
-    bool isConnected();
-    void sendAudioChunk(const uint8_t* data, size_t length);
-    void sendCommand(const char* cmd);
-    void sendPhotoChunk(const uint8_t* data, size_t length);
+    void init(AudioReceiveCallback audioCallback, CommandReceiveCallback commandCallback);
+    bool isConnected() const;
+
+    // Tamano maximo de datos por notificacion con el MTU negociado.
+    size_t payloadSize() const;
+
+    // Parten automaticamente el dato segun el MTU. Devuelven false si no hay conexion.
+    bool sendAudioChunk(const uint8_t* data, size_t length);
+    bool sendCommand(const char* command);
+    bool sendPhotoChunk(const uint8_t* data, size_t length);
 
 private:
+    bool notifyInChunks(NimBLECharacteristic* characteristic, const uint8_t* data, size_t length);
+
     NimBLEServer* pServer;
-    NimBLECharacteristic* pTxCharacteristic; // Mic audio
-    NimBLECharacteristic* pRxCharacteristic; // TTS audio
-    NimBLECharacteristic* pCmdCharacteristic; // Commands (PTT)
-    NimBLECharacteristic* pPhotoCharacteristic; // Photo data
-    bool deviceConnected;
+    NimBLECharacteristic* pTxCharacteristic;    // Audio del microfono
+    NimBLECharacteristic* pRxCharacteristic;    // Audio TTS
+    NimBLECharacteristic* pCmdCharacteristic;   // Comandos
+    NimBLECharacteristic* pPhotoCharacteristic; // Foto
+    volatile bool deviceConnected;
+    volatile uint16_t negotiatedMtu;
     AudioReceiveCallback onAudioReceived;
+    CommandReceiveCallback onCommandReceived;
 
     friend class ServerCallbacks;
     friend class RxCallbacks;
+    friend class CmdRxCallbacks;
 };
 
 extern BleManager bleManager;

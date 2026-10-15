@@ -2,116 +2,119 @@
 
 BleManager bleManager;
 
-class ServerCallbacks: public NimBLEServerCallbacks {
-    void onConnect(NimBLEServer* pServer) {
+class ServerCallbacks : public NimBLEServerCallbacks {
+    void onConnect(NimBLEServer* pServer) override {
         bleManager.deviceConnected = true;
     }
 
-    void onDisconnect(NimBLEServer* pServer) {
+    void onDisconnect(NimBLEServer* pServer) override {
         bleManager.deviceConnected = false;
+        bleManager.negotiatedMtu = BLE_DEFAULT_MTU;
         NimBLEDevice::startAdvertising();
     }
-};
 
-class RxCallbacks : public NimBLECharacteristicCallbacks {
-    void onWrite(NimBLECharacteristic *pCharacteristic) {
-        std::string value = pCharacteristic->getValue();
-        if (value.length() > 0) {
-            if (bleManager.onAudioReceived) {
-                bleManager.onAudioReceived((const uint8_t*)value.data(), value.length());
-            }
-        }
+    void onMTUChange(uint16_t mtu, ble_gap_conn_desc* desc) override {
+        bleManager.negotiatedMtu = mtu;
+        Serial.printf("[BLE] MTU negociado: %u\n", mtu);
     }
 };
 
-extern void triggerCameraCapture();
+// Esta caracteristica recibe SOLO audio PCM; los comandos van por CmdRxCallbacks.
+class RxCallbacks : public NimBLECharacteristicCallbacks {
+    void onWrite(NimBLECharacteristic* pCharacteristic) override {
+        std::string value = pCharacteristic->getValue();
+        if (!value.empty() && bleManager.onAudioReceived) {
+            bleManager.onAudioReceived((const uint8_t*)value.data(), value.length());
+        }
+    }
+};
 
 class CmdRxCallbacks : public NimBLECharacteristicCallbacks {
-    void onWrite(NimBLECharacteristic *pCharacteristic) {
+    void onWrite(NimBLECharacteristic* pCharacteristic) override {
         std::string value = pCharacteristic->getValue();
-        if (value.length() > 0) {
-            std::string cmd = value;
-            if (cmd == "CMD_TAKE_PHOTO") {
-                triggerCameraCapture();
-            }
+        if (!value.empty() && bleManager.onCommandReceived) {
+            bleManager.onCommandReceived(value.c_str());
         }
     }
 };
 
-BleManager::BleManager() : pServer(nullptr), pTxCharacteristic(nullptr), pRxCharacteristic(nullptr), pCmdCharacteristic(nullptr), pPhotoCharacteristic(nullptr), deviceConnected(false), onAudioReceived(nullptr) {}
+BleManager::BleManager()
+    : pServer(nullptr), pTxCharacteristic(nullptr), pRxCharacteristic(nullptr),
+      pCmdCharacteristic(nullptr), pPhotoCharacteristic(nullptr),
+      deviceConnected(false), negotiatedMtu(BLE_DEFAULT_MTU),
+      onAudioReceived(nullptr), onCommandReceived(nullptr) {}
 
-void BleManager::init(AudioReceiveCallback audioCallback) {
+void BleManager::init(AudioReceiveCallback audioCallback, CommandReceiveCallback commandCallback) {
     onAudioReceived = audioCallback;
+    onCommandReceived = commandCallback;
 
     NimBLEDevice::init(BLE_DEVICE_NAME);
-    
-    // Maximizar MTU a 512 (NimBLE soporta esto nativamente para BLE 4.2+)
-    NimBLEDevice::setMTU(512);
+    NimBLEDevice::setMTU(BLE_REQUESTED_MTU);
 
     pServer = NimBLEDevice::createServer();
     pServer->setCallbacks(new ServerCallbacks());
 
-    NimBLEService *pService = pServer->createService(SERVICE_UUID);
+    NimBLEService* pService = pServer->createService(SERVICE_UUID);
 
-    // TX Characteristic (Microphone Audio)
-    pTxCharacteristic = pService->createCharacteristic(
-        CHAR_UUID_TX,
-        NIMBLE_PROPERTY::NOTIFY
-    );
+    pTxCharacteristic = pService->createCharacteristic(CHAR_UUID_TX, NIMBLE_PROPERTY::NOTIFY);
 
-    // RX Characteristic (TTS Audio)
     pRxCharacteristic = pService->createCharacteristic(
         CHAR_UUID_RX,
         NIMBLE_PROPERTY::WRITE | NIMBLE_PROPERTY::WRITE_NR
     );
     pRxCharacteristic->setCallbacks(new RxCallbacks());
 
-    // CMD Characteristic (Button events and Incoming Commands)
     pCmdCharacteristic = pService->createCharacteristic(
         CHAR_UUID_CMD_TX,
         NIMBLE_PROPERTY::NOTIFY | NIMBLE_PROPERTY::WRITE | NIMBLE_PROPERTY::WRITE_NR
     );
     pCmdCharacteristic->setCallbacks(new CmdRxCallbacks());
-    
-    // PHOTO Characteristic
-    pPhotoCharacteristic = pService->createCharacteristic(
-        CHAR_UUID_PHOTO_TX,
-        NIMBLE_PROPERTY::NOTIFY
-    );
+
+    pPhotoCharacteristic = pService->createCharacteristic(CHAR_UUID_PHOTO_TX, NIMBLE_PROPERTY::NOTIFY);
 
     pService->start();
 
-    NimBLEAdvertising *pAdvertising = NimBLEDevice::getAdvertising();
+    NimBLEAdvertising* pAdvertising = NimBLEDevice::getAdvertising();
     pAdvertising->addServiceUUID(SERVICE_UUID);
     pAdvertising->setScanResponse(true);
-    // Min/Max interval para conexion rapida (streaming)
-    pAdvertising->setMinPreferred(0x06);  
+    pAdvertising->setMinPreferred(0x06);
     pAdvertising->setMaxPreferred(0x12);
     NimBLEDevice::startAdvertising();
 }
 
-bool BleManager::isConnected() {
+bool BleManager::isConnected() const {
     return deviceConnected;
 }
 
-void BleManager::sendAudioChunk(const uint8_t* data, size_t length) {
-    if (deviceConnected && pTxCharacteristic) {
-        // En BLE, el maximo payload real por paquete es MTU - 3. Si MTU es 512, enviamos max 509.
-        pTxCharacteristic->setValue(data, length);
-        pTxCharacteristic->notify();
-    }
+size_t BleManager::payloadSize() const {
+    uint16_t mtu = negotiatedMtu;
+    return mtu > BLE_ATT_HEADER_BYTES ? mtu - BLE_ATT_HEADER_BYTES : 1;
 }
 
-void BleManager::sendCommand(const char* cmd) {
-    if (deviceConnected && pCmdCharacteristic) {
-        pCmdCharacteristic->setValue((const uint8_t*)cmd, strlen(cmd));
-        pCmdCharacteristic->notify();
+// Una notificacion mas grande que MTU-3 se trunca en silencio, asi que se parte aqui.
+bool BleManager::notifyInChunks(NimBLECharacteristic* characteristic, const uint8_t* data, size_t length) {
+    if (!deviceConnected || characteristic == nullptr || data == nullptr) return false;
+
+    const size_t maxPayload = payloadSize();
+    size_t offset = 0;
+    while (offset < length) {
+        size_t chunk = length - offset;
+        if (chunk > maxPayload) chunk = maxPayload;
+        characteristic->notify(data + offset, chunk);
+        offset += chunk;
     }
+    return true;
 }
 
-void BleManager::sendPhotoChunk(const uint8_t* data, size_t length) {
-    if (deviceConnected && pPhotoCharacteristic) {
-        pPhotoCharacteristic->setValue(data, length);
-        pPhotoCharacteristic->notify();
-    }
+bool BleManager::sendAudioChunk(const uint8_t* data, size_t length) {
+    return notifyInChunks(pTxCharacteristic, data, length);
+}
+
+bool BleManager::sendCommand(const char* command) {
+    if (command == nullptr) return false;
+    return notifyInChunks(pCmdCharacteristic, (const uint8_t*)command, strlen(command));
+}
+
+bool BleManager::sendPhotoChunk(const uint8_t* data, size_t length) {
+    return notifyInChunks(pPhotoCharacteristic, data, length);
 }

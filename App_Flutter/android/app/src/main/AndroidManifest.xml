@@ -7,7 +7,7 @@
     <!-- Acceso a la cámara del dispositivo (captura de fotogramas) -->
     <uses-permission android:name="android.permission.CAMERA" />
 
-    <!-- Acceso a internet (envío de fotogramas a la API de visión) -->
+    <!-- Acceso a internet (APIs de IA, voz, clima) -->
     <uses-permission android:name="android.permission.INTERNET" />
 
     <!-- Permiso para grabar audio (Reconocimiento de voz) -->
@@ -19,25 +19,26 @@
     <!-- Mantener pantalla encendida durante la asistencia -->
     <uses-permission android:name="android.permission.WAKE_LOCK" />
 
-    <!-- Permisos de ubicación -->
+    <!-- Permisos de ubicación (GPS para clima/ubicación; escaneo BLE en Android 11 o menor) -->
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
 
-    <!-- Permisos Bluetooth para BLE -->
-    <uses-permission android:name="android.permission.BLUETOOTH" />
-    <uses-permission android:name="android.permission.BLUETOOTH_ADMIN" />
-    <uses-permission android:name="android.permission.BLUETOOTH_SCAN" />
+    <!-- Bluetooth: permisos antiguos solo hasta Android 11, nuevos desde Android 12 -->
+    <uses-permission android:name="android.permission.BLUETOOTH" android:maxSdkVersion="30" />
+    <uses-permission android:name="android.permission.BLUETOOTH_ADMIN" android:maxSdkVersion="30" />
+    <uses-permission android:name="android.permission.BLUETOOTH_SCAN" android:usesPermissionFlags="neverForLocation" />
     <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
 
-    <!-- Indicar que la app requiere hardware de cámara -->
+    <!-- Indicar que la app requiere hardware de cámara y BLE -->
     <uses-feature android:name="android.hardware.camera" android:required="true" />
     <uses-feature android:name="android.hardware.camera.autofocus" android:required="false" />
+    <uses-feature android:name="android.hardware.bluetooth_le" android:required="false" />
 
     <application
         android:label="Iris"
         android:name="${applicationName}"
         android:icon="@mipmap/launcher_icon"
-        android:usesCleartextTraffic="true"
+        android:usesCleartextTraffic="false"
         android:enableOnBackInvokedCallback="true">
 
         <activity

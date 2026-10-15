@@ -48,9 +48,15 @@ void initVisionAI() {
 
 void runVisionInference(uint8_t* image_data, size_t len) {
     if (!vision_interpreter) return;
-    
+
+    // El modelo espera exactamente 96x96x1 bytes; otro tamano indica una camara mal configurada.
+    if (len != (size_t)vision_input->bytes) {
+        Serial.printf("[Edge AI Vision] Tamano de imagen inesperado: %u (se esperaban %d)\n", (unsigned)len, vision_input->bytes);
+        return;
+    }
+
     // El input del modelo person_detection es INT8, 96x96x1
-    for (int i = 0; i < len && i < vision_input->bytes; i++) {
+    for (size_t i = 0; i < len; i++) {
         // El modelo de TensorFlow espera los pixeles normalizados y convertidos a int8 (-128 a 127)
         vision_input->data.int8[i] = image_data[i] - 128;
     }

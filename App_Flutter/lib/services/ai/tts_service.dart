@@ -1,7 +1,4 @@
 import 'dart:async';
-import 'dart:convert';
-import 'dart:io';
-import 'dart:typed_data';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter_tts/flutter_tts.dart';
@@ -12,9 +9,14 @@ import '../../core/constants/env_config.dart';
 import '../hardware/esp32_speech_service.dart';
 
 class TtsService {
+  static const Duration _cloudTtsTimeout = Duration(seconds: 20);
+  static const String _spanishVoice = 'es-CL-CatalinaNeural';
+  static const String _englishVoice = 'en-US-AriaNeural';
+
   final FlutterTts _tts = FlutterTts();
-  bool _isSpeaking = false;
   final Completer<void> _initCompleter = Completer<void>();
+  bool _isSpeaking = false;
+  Esp32SpeechService? _activeEsp32;
 
   bool get isSpeaking => _isSpeaking;
 
@@ -33,10 +35,9 @@ class TtsService {
         _isSpeaking = false;
         debugPrint('⚠️ TTS Error: $message');
       });
-
-      _initCompleter.complete();
     } catch (e) {
       debugPrint('⚠️ Error initializing TTS: $e');
+    } finally {
       if (!_initCompleter.isCompleted) _initCompleter.complete();
     }
   }
@@ -62,41 +63,61 @@ class TtsService {
     }
 
     if (esp32Service != null) {
-      // ─── MODO ESP32: Cloud TTS (Azure) directo a PCM 16kHz 16-bit Mono ───
-      _isSpeaking = true;
-      try {
-        if (EnvConfig.azureSpeechKey.isNotEmpty && EnvConfig.azureSpeechRegion.isNotEmpty) {
-          final voiceName = detectedLang == 'en-US' ? 'en-US-AriaNeural' : 'es-ES-ElviraNeural';
-          final response = await http.post(
+      _activeEsp32 = esp32Service;
+      await _speakThroughEsp32(textToSpeak, detectedLang, esp32Service);
+    } else {
+      // Modo nativo: altavoz del celular
+      await _tts.speak(textToSpeak);
+    }
+  }
+
+  /// Modo ESP32: Azure TTS en PCM 16 kHz 16-bit mono, enviado por BLE a la placa.
+  Future<void> _speakThroughEsp32(String text, String lang, Esp32SpeechService esp32Service) async {
+    if (EnvConfig.azureSpeechKey.isEmpty || EnvConfig.azureSpeechRegion.isEmpty) {
+      debugPrint('⚠️ No hay API Keys configuradas para Azure TTS en Modo ESP32');
+      return;
+    }
+
+    _isSpeaking = true;
+    try {
+      final voice = lang == 'en-US' ? _englishVoice : _spanishVoice;
+      final response = await http
+          .post(
             Uri.parse('https://${EnvConfig.azureSpeechRegion}.tts.speech.microsoft.com/cognitiveservices/v1'),
             headers: {
               'Ocp-Apim-Subscription-Key': EnvConfig.azureSpeechKey,
               'Content-Type': 'application/ssml+xml',
               'X-Microsoft-OutputFormat': 'raw-16khz-16bit-mono-pcm',
             },
-            body: '<speak version="1.0" xml:lang="$detectedLang"><voice xml:lang="$detectedLang" name="$voiceName">$textToSpeak</voice></speak>',
-          );
+            body: '<speak version="1.0" xml:lang="$lang"><voice xml:lang="$lang" name="$voice">'
+                '${_escapeXml(text)}</voice></speak>',
+          )
+          .timeout(_cloudTtsTimeout);
 
-          if (response.statusCode == 200) {
-            esp32Service.sendAudioToEsp32(response.bodyBytes);
-          } else {
-            debugPrint('⚠️ Azure TTS Error: ${response.statusCode} - ${response.body}');
-          }
-        } else {
-          debugPrint('⚠️ No hay API Keys configuradas para Azure TTS en Modo ESP32');
-        }
-      } catch (e) {
-        debugPrint('⚠️ Error enviando TTS a ESP32: $e');
+      if (response.statusCode == 200) {
+        // Sin await: el envio BLE esta dosificado a la velocidad de reproduccion.
+        unawaited(esp32Service.sendAudioToEsp32(response.bodyBytes));
+      } else {
+        debugPrint('⚠️ Azure TTS Error: ${response.statusCode} - ${response.body}');
       }
+    } catch (e) {
+      debugPrint('⚠️ Error enviando TTS a ESP32: $e');
+    } finally {
       _isSpeaking = false;
-    } else {
-      // ─── MODO NATIVO: Reproducir por el altavoz del celular ───
-      await _tts.speak(textToSpeak);
     }
   }
 
+  // El texto viene del modelo: sin escapar, un "&" o "<" invalida el SSML y Azure responde 400.
+  String _escapeXml(String text) => text
+      .replaceAll('&', '&amp;')
+      .replaceAll('<', '&lt;')
+      .replaceAll('>', '&gt;')
+      .replaceAll('"', '&quot;')
+      .replaceAll("'", '&apos;');
+
   Future<void> stop() async {
     await _tts.stop();
+    _activeEsp32?.stopAudio();
     _isSpeaking = false;
   }
 
