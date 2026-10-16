@@ -89,10 +89,11 @@ MAX_WINDOWS_PER_CLASS = {"fondo": 6000, "voz": 6000}
 # Fondos "dificiles": sonidos sostenidos o tonales que el modelo v1 confundia con sirena/perro.
 # Con HARD_NEGATIVE_FACTOR > 0 se agregan esas copias aumentadas extra al train: baja las falsas
 # alarmas (6% -> 2% en test) pero tambien las detecciones (72% -> 53%). Con los pocos ejemplos de
-# alertas de ESC-50 no convino; vale la pena reprobarlo con UrbanSound8K o datos de la placa.
+# alertas de ESC-50 no convino. Con UrbanSound8K (v3) si: con 2 copias mejora detecciones Y falsas
+# alarmas en todos los umbrales (umbral 0,7: 69,7% -> 71,4% detectadas, 3,5% -> 3,3% falsas).
 HARD_NEGATIVE_CATEGORIES = {
     "church_bells", "vacuum_cleaner", "rooster", "wind", "hen", "frog", "clock_tick", "crow",
     "washing_machine", "crickets", "insects", "engine", "airplane", "helicopter", "chainsaw",
     "hand_saw", "train", "chirping_birds", "cat",
 }
-HARD_NEGATIVE_FACTOR = 0
+HARD_NEGATIVE_FACTOR = 2

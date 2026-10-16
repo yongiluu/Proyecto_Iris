@@ -1,17 +1,17 @@
 == Test (int8, lo que corre en la placa) ==
-Exactitud: 88.3%  (4431 ejemplos)
+Exactitud: 87.9%  (4431 ejemplos)
 
 Real \ Predicho    fondo     voz  bocina  sirena   perro
-fondo               2256      20      64      69     112
-voz                   39    1033       0       0       6
-bocina                 8       0     120       1       1
-sirena                76       0      27     208      27
-perro                 48       2       6      14     294
+fondo               2209      27      27     176      82
+voz                   29    1048       0       0       1
+bocina                23       0     103       2       2
+sirena                85       0       2     238      13
+perro                 43       0       3      20     298
 
-fondo    precision= 93.0%  recall= 89.5%
-voz      precision= 97.9%  recall= 95.8%
-bocina   precision= 55.3%  recall= 92.3%
-sirena   precision= 71.2%  recall= 61.5%
-perro    precision= 66.8%  recall= 80.8%
+fondo    precision= 92.5%  recall= 87.6%
+voz      precision= 97.5%  recall= 97.2%
+bocina   precision= 76.3%  recall= 79.2%
+sirena   precision= 54.6%  recall= 70.4%
+perro    precision= 75.3%  recall= 81.9%
 
-Con umbral 0.7: alertas detectadas 69.7%, falsas alarmas sobre fondo/voz 3.5%
+Con umbral 0.7: alertas detectadas 71.4%, falsas alarmas sobre fondo/voz 3.3%

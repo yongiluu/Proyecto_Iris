@@ -4,7 +4,7 @@ Entrenamiento de los modelos TensorFlow Lite Micro que corren **dentro de la pla
 
 | Modelo | Estado | Qué detecta |
 |---|---|---|
-| Audio (`audio/`) | ✅ pipeline completo, modelo v2 (ESC-50 + UrbanSound8K + voz chilena) | `fondo`, `voz`, `bocina`, `sirena`, `perro` |
+| Audio (`audio/`) | ✅ pipeline completo, modelo v3 (ESC-50 + UrbanSound8K + voz chilena) | `fondo`, `voz`, `bocina`, `sirena`, `perro` |
 | Visión (`vision/`) | ✅ pipeline completo, modelo v2 entrenado con Open Images | `nada`, `persona`, `vehiculo`, `escalera`, `puerta` |
 
 ## Recolectar datos reales con la app (con o sin prototipo)
@@ -45,25 +45,24 @@ micrófono 16 kHz ─► log-mel 40 bandas cada 20 ms ─► ventana de 1 s (49�
 - Las tablas del firmware (ventana, filtros mel) y el modelo se **generan** con `export_model.py`. No se editan a mano.
 - La placa corre la red cada 0,5 s en su propia tarea, la pausa mientras se aprieta el botón y manda como alerta solo `bocina`, `sirena` y `perro` (umbral `ALERT_THRESHOLD` = 0,7 de `config.py`, sin repetir antes de 5 s). La app las usa como contexto silencioso (ver arriba).
 
-## Resultados del modelo de audio v2 (2026-10-15)
+## Resultados del modelo de audio v3 (2026-10-16)
 
-Entrenado en CPU con ESC-50, **UrbanSound8K** y voz chilena (OpenSLR 71), sin datos de la placa. UrbanSound8K multiplica por ~10 las bocinas, sirenas y perros reales. Se midió sobre el test nuevo: 4.431 ventanas de grabaciones que el modelo no vio (fold 10 de UrbanSound8K + ESC-50 + voz). Para comparar de forma justa, v1 se midió sobre ese mismo test. Ambos son el modelo int8 que corre en la placa:
+Entrenado en CPU con ESC-50, **UrbanSound8K** y voz chilena (OpenSLR 71), sin datos de la placa. UrbanSound8K multiplica por ~10 las bocinas, sirenas y perros reales. v3 además suma 2 copias aumentadas de los "fondos difíciles" (campanas, aspiradora, motores, viento: `HARD_NEGATIVE_FACTOR = 2`), que antes se confundían con sirena. Todo se midió sobre el mismo test: 4.431 ventanas que ningún modelo vio (fold 10 de UrbanSound8K + ESC-50 + voz), con el modelo int8 de la placa:
 
-| | v1 (solo ESC-50) | **v2 (actual)** |
-|---|---|---|
-| Exactitud general | 84,7 % | **88,3 %** |
-| Bocina / sirena / perro reconocidos | 66 / 56 / 66 % | **92 / 62 / 81 %** |
-| Voz / fondo | 96 / 87 % | 96 / 89 % |
-| Alertas detectadas con umbral 0,7 | 57,9 % | **69,7 %** |
-| Falsas alarmas sobre fondo/voz | 4,5 % | **3,5 %** |
-| Con umbral 0,8 | 52,9 % / 3,4 % | 64,2 % / 2,5 % |
+| | v1 (solo ESC-50) | v2 (+ UrbanSound8K) | **v3 (actual)** |
+|---|---|---|---|
+| Exactitud general | 84,7 % | 88,3 % | 87,9 % |
+| Alertas detectadas / falsas alarmas (umbral 0,7) | 57,9 % / 4,5 % | 69,7 % / 3,5 % | **71,4 % / 3,3 %** |
+| Ídem con umbral 0,8 | 52,9 % / 3,4 % | 64,2 % / 2,5 % | **67,7 % / 2,2 %** |
+| Bocina / sirena / perro detectados (umbral 0,7) | — | 86 / 56 / 77 % | 72 / 62 / 80 % |
+| Voz / fondo reconocidos | 96 / 87 % | 96 / 89 % | 97 / 88 % |
 
-Tamaño: 29 KB en flash, ~2,6 M multiplicaciones por inferencia, arena ~63 KB.
+v3 es mejor que v2 en todos los umbrales (detecta más **y** con menos falsas alarmas) y es más parejo entre clases. Pierde algo en bocinas y gana en sirenas. Tamaño: 29 KB en flash, ~2,6 M multiplicaciones, arena ~63 KB.
 
 **Limitaciones conocidas:**
-- La **sirena** es la clase más débil (62 %): se confunde con sonidos sostenidos o tonales.
-- Ahora hay ~130–360 ventanas de test por alerta (v1 tenía ~45), así que las cifras son bastante más confiables. Aun así, nunca escuchó el micrófono PDM de la XIAO.
-- En la app, el audio se usa como **contexto silencioso**, no como aviso hablado (ver arriba).
+- La **sirena** sigue siendo la clase más débil (62 %).
+- Hay ~130–360 ventanas de test por alerta (v1 tenía ~45), así que las cifras son bastante confiables. Aun así, nunca escuchó el micrófono PDM de la XIAO.
+- En la app el audio se usa como **contexto silencioso**, no como aviso hablado (ver arriba).
 
 ## Puesta en marcha (una vez)
 
