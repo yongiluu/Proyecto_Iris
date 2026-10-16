@@ -1,7 +1,7 @@
 // GENERADO por ML_Training/audio/export_model.py. No editar a mano.
 // == Test (int8, lo que corre en la placa) ==
 // Exactitud: 87.9%  (4431 ejemplos)
-// Con umbral 0.7: alertas detectadas 71.4%, falsas alarmas sobre fondo/voz 3.3%
+// Con umbral 0.7: alertas detectadas 71.5%, falsas alarmas sobre fondo/voz 3.2%
 #ifndef AUDIO_MODEL_DATA_H
 #define AUDIO_MODEL_DATA_H
 
@@ -15,5 +15,8 @@ extern const unsigned char g_audio_model_data[];
 extern const unsigned int g_audio_model_data_len;
 extern const char* const kAudioLabels[kAudioNumClasses];
 extern const bool kAudioIsAlert[kAudioNumClasses];   // se informa a la app como CMD_AUDIO_EVENT
+// Autotest al arrancar: una ventana de test ya cuantizada y la salida int8 que da el modelo en el PC.
+extern const int8_t kAudioSelfTestInput[1960];
+extern const int8_t kAudioSelfTestExpected[kAudioNumClasses];
 
 #endif

@@ -5,6 +5,7 @@
 #include <esp_heap_caps.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
+#include <esp_timer.h>
 #include <math.h>
 #include "tensorflow/lite/micro/all_ops_resolver.h"
 #include "tensorflow/lite/micro/micro_error_reporter.h"
@@ -57,6 +58,27 @@ void updateContext(const float* scores) {
     }
     if (total > 0 && onContext) onContext(kAudioLabels[best], contextCounts[best] * 100 / total);
     memset(contextCounts, 0, sizeof(contextCounts));
+}
+
+// Corre la ventana de prueba que dejo export_model.py y compara con la salida calculada en el PC.
+// Verifica la libreria TFLM (con o sin ESP-NN) en el chip real y mide cuanto tarda una inferencia.
+void runSelfTest() {
+    memcpy(input->data.int8, kAudioSelfTestInput, sizeof(kAudioSelfTestInput));
+    const int64_t start = esp_timer_get_time();
+    const bool invoked = interpreter->Invoke() == kTfLiteOk;
+    const int64_t elapsedUs = esp_timer_get_time() - start;
+
+    int maxDiff = 0, best = 0, expectedBest = 0;
+    for (int i = 0; i < kAudioNumClasses; i++) {
+        int diff = abs(output->data.int8[i] - kAudioSelfTestExpected[i]);
+        if (diff > maxDiff) maxDiff = diff;
+        if (output->data.int8[i] > output->data.int8[best]) best = i;
+        if (kAudioSelfTestExpected[i] > kAudioSelfTestExpected[expectedBest]) expectedBest = i;
+    }
+    // Unos LSB de diferencia son normales (redondeos de TFLM vs TensorFlow); la clase debe ser la misma.
+    const bool ok = invoked && best == expectedBest && maxDiff <= 8;
+    Serial.printf("[Audio IA] Autotest %s: %.1f ms por inferencia, clase %s, max dif %d\n",
+                  ok ? "OK" : "FALLO", elapsedUs / 1000.0, kAudioLabels[best], maxDiff);
 }
 
 void handleScores(const float* scores) {
@@ -172,6 +194,7 @@ bool startAudioEvents(AudioEventCallback callback, AudioEventCallback contextCal
     }
     inputScale = input->params.scale;
     inputZeroPoint = input->params.zero_point;
+    runSelfTest();
 
     if (xTaskCreatePinnedToCore(inferenceLoop, "audio_ia", 6144, nullptr, 1, &inferenceTask, 1) != pdPASS) {
         Serial.println("[Audio IA] No se pudo crear la tarea de inferencia");

@@ -40,31 +40,46 @@ def convert(model: tf.keras.Model, representative: np.ndarray) -> bytes:
     converter.target_spec.supported_ops = [tf.lite.OpsSet.TFLITE_BUILTINS_INT8]
     converter.inference_input_type = tf.int8
     converter.inference_output_type = tf.int8
+    # El TFLM del firmware (2022) solo sabe cuantizar FULLY_CONNECTED por tensor: con pesos por canal
+    # (lo que hace el convertidor nuevo por defecto) usa la primera escala para todas las clases y la
+    # placa calcula mal los puntajes. tests/test_tflm_kernels.py lo verifica contra la libreria real.
+    converter._experimental_disable_per_channel_quantization_for_dense_layers = True
     return converter.convert()
 
 
+def input_lut(interpreter: tf.lite.Interpreter) -> np.ndarray:
+    """Tabla pixel 0..255 -> int8 de entrada. El firmware usa ESTA tabla (kVisionInputLut), asi la
+    placa y el PC cuantizan igual. (Calcularla en la placa con float daba 1 de diferencia en la mitad
+    de los pixeles: con esta escala cada pixel cae justo en x,5 y lroundf/np.round redondean distinto.)"""
+    scale, zero = interpreter.get_input_details()[0]["quantization"]
+    x = to_model_input(np.arange(256, dtype=np.uint8))[:, 0]
+    return np.clip(np.round(x / scale + zero), -128, 127).astype(np.int8)
+
+
 def int8_predictor(tflite_model: bytes):
-    # Sin XNNPACK: asi se ven las ops reales del modelo (las mismas que ejecuta TFLM en la placa).
+    # Kernels de referencia sin XNNPACK: son los que imita TFLM en la placa (tests/test_tflm_kernels.py
+    # comprueba que la libreria del firmware da lo mismo).
     interpreter = tf.lite.Interpreter(
         model_content=tflite_model,
-        experimental_op_resolver_type=tf.lite.experimental.OpResolverType.BUILTIN_WITHOUT_DEFAULT_DELEGATES)
+        experimental_op_resolver_type=tf.lite.experimental.OpResolverType.BUILTIN_REF)
     interpreter.allocate_tensors()
     inp = interpreter.get_input_details()[0]
     out = interpreter.get_output_details()[0]
-    in_scale, in_zero = inp["quantization"]
     out_scale, out_zero = out["quantization"]
+    lut = input_lut(interpreter)
+
+    def predict_raw(image_uint8: np.ndarray) -> np.ndarray:
+        """Salida int8 cruda para una imagen 96x96 (como la placa)."""
+        interpreter.set_tensor(inp["index"], lut[image_uint8][np.newaxis, ..., np.newaxis])
+        interpreter.invoke()
+        return interpreter.get_tensor(out["index"])[0].copy()
 
     def predict(images_uint8: np.ndarray) -> np.ndarray:
         """Recibe pixeles 0..255 (como la camara) y cuantiza igual que el firmware."""
-        x = to_model_input(images_uint8)
-        results = []
-        for sample in x:
-            q = np.clip(np.round(sample / in_scale + in_zero), -128, 127).astype(np.int8)
-            interpreter.set_tensor(inp["index"], q[np.newaxis])
-            interpreter.invoke()
-            results.append((interpreter.get_tensor(out["index"])[0].astype(np.float32) - out_zero) * out_scale)
-        return np.stack(results)
+        return np.stack([(predict_raw(img).astype(np.float32) - out_zero) * out_scale for img in images_uint8])
 
+    predict.raw = predict_raw
+    predict.lut = lut
     return predict, interpreter
 
 
@@ -76,6 +91,13 @@ def check_ops_and_estimate_arena(interpreter: tf.lite.Interpreter) -> int:
     if unsupported:
         raise SystemExit(f"El modelo usa ops que el TFLM del firmware puede no soportar: {unsupported}")
     print("Ops del modelo:", sorted(names))
+    details = {t["index"]: t for t in interpreter.get_tensor_details()}
+    for op in ops:
+        if op["op_name"] == "FULLY_CONNECTED":
+            scales = details[op["inputs"][1]]["quantization_parameters"]["scales"]
+            if len(scales) > 1:
+                raise SystemExit("FULLY_CONNECTED con pesos cuantizados por canal: el TFLM del firmware no lo "
+                                 "soporta (calcularia mal la salida). Revisa convert().")
     shape = interpreter.get_input_details()[0]["shape"]
     if shape[0] != 1:
         raise SystemExit(f"La entrada debe tener batch fijo en 1 (tiene {shape})")
@@ -104,12 +126,18 @@ def _float_literal(value) -> str:
     return text + "f"
 
 
+def _int_array(values, per_line=24) -> str:
+    items = [str(int(v)) for v in values]
+    return "    " + ",\n    ".join(", ".join(items[i:i + per_line]) for i in range(0, len(items), per_line))
+
+
 def _byte_array(data: bytes, per_line=16) -> str:
     lines = [", ".join(f"0x{b:02x}" for b in data[i:i + per_line]) for i in range(0, len(data), per_line)]
     return "    " + ",\n    ".join(lines)
 
 
-def write_model_files(tflite_model: bytes, arena_bytes: int, metrics: str) -> None:
+def write_model_files(tflite_model: bytes, arena_bytes: int, metrics: str, lut: np.ndarray,
+                      selftest_image: np.ndarray, selftest_expected: np.ndarray) -> None:
     labels = ", ".join(f'"{c}"' for c in config.CLASSES)
     alerts = ", ".join("true" if c in config.ALERT_CLASSES else "false" for c in config.CLASSES)
     metric_lines = "".join(f"// {line}\n" for line in metrics.strip().splitlines())
@@ -123,9 +151,12 @@ constexpr int kVisionImageSize = {config.IMAGE_SIZE};       // entrada 96x96x1 e
 constexpr int kVisionNumClasses = {len(config.CLASSES)};
 constexpr int kVisionTensorArenaSize = {arena_bytes};
 constexpr float kVisionAlertThreshold = {_float_literal(config.ALERT_THRESHOLD)};  // config.ALERT_THRESHOLD
-// Pixel 0..255 -> entrada float del modelo: pixel * kVisionPixelScale + kVisionPixelOffset (augment.to_model_input)
-constexpr float kVisionPixelScale = {_float_literal(1 / 127.5)};
-constexpr float kVisionPixelOffset = -1.0f;
+
+// Pixel 0..255 de la camara -> int8 de entrada del modelo (calculada en el PC con la cuantizacion del modelo).
+extern const int8_t kVisionInputLut[256];
+// Autotest al arrancar: una imagen de test y la salida int8 que da el modelo en el PC (kernels de referencia).
+extern const uint8_t kVisionSelfTestImage[kVisionImageSize * kVisionImageSize];
+extern const int8_t kVisionSelfTestExpected[kVisionNumClasses];
 
 extern const unsigned char g_vision_model_data[];
 extern const unsigned int g_vision_model_data_len;
@@ -138,6 +169,16 @@ extern const bool kVisionIsAlert[kVisionNumClasses];   // se informa a la app co
 
 const char* const kVisionLabels[kVisionNumClasses] = {{{labels}}};
 const bool kVisionIsAlert[kVisionNumClasses] = {{{alerts}}};
+
+const int8_t kVisionInputLut[256] = {{
+{_int_array(lut)}
+}};
+
+const uint8_t kVisionSelfTestImage[kVisionImageSize * kVisionImageSize] = {{
+{_int_array(selftest_image.reshape(-1))}
+}};
+
+const int8_t kVisionSelfTestExpected[kVisionNumClasses] = {{{", ".join(str(int(v)) for v in selftest_expected)}}};
 
 alignas(16) const unsigned char g_vision_model_data[] = {{
 {_byte_array(tflite_model)}
@@ -192,7 +233,11 @@ def main() -> None:
 
     summary = "\n".join(line.strip() for line in text.splitlines()
                         if line.startswith(("==", "Exactitud")) or "avisos falsos" in line)
-    write_model_files(tflite_model, arena, summary)
+    # Autotest del firmware: la primera puerta del test (cualquier imagen sirve; asi el resultado es legible).
+    selftest = data["x_test"][int(np.argmax(data["y_test"] == config.CLASSES.index("puerta")))]
+    expected = predict.raw(selftest)
+    print(f"Autotest del firmware: salida esperada {expected.tolist()}")
+    write_model_files(tflite_model, arena, summary, predict.lut, selftest, expected)
     print("\nListo. Compila y sube el firmware: cd Hardware_ESP32 && pio run -e seeed_xiao_esp32s3 -t upload")
 
 

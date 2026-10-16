@@ -2,16 +2,16 @@
 Exactitud: 87.9%  (4431 ejemplos)
 
 Real \ Predicho    fondo     voz  bocina  sirena   perro
-fondo               2209      27      27     176      82
-voz                   29    1048       0       0       1
-bocina                23       0     103       2       2
+fondo               2207      29      26     176      83
+voz                   28    1049       0       0       1
+bocina                24       0     103       1       2
 sirena                85       0       2     238      13
-perro                 43       0       3      20     298
+perro                 42       0       3      20     299
 
-fondo    precision= 92.5%  recall= 87.6%
-voz      precision= 97.5%  recall= 97.2%
-bocina   precision= 76.3%  recall= 79.2%
-sirena   precision= 54.6%  recall= 70.4%
-perro    precision= 75.3%  recall= 81.9%
+fondo    precision= 92.5%  recall= 87.5%
+voz      precision= 97.3%  recall= 97.3%
+bocina   precision= 76.9%  recall= 79.2%
+sirena   precision= 54.7%  recall= 70.4%
+perro    precision= 75.1%  recall= 82.1%
 
-Con umbral 0.7: alertas detectadas 71.4%, falsas alarmas sobre fondo/voz 3.3%
+Con umbral 0.7: alertas detectadas 71.5%, falsas alarmas sobre fondo/voz 3.2%

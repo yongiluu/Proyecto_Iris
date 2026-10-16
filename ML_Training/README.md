@@ -31,9 +31,30 @@ Las misiones se editan en `App_Flutter/lib/features/data_collection/missions.dar
 
 ## Qué hace la app con lo que detecta la placa
 
-- **Visión:** aviso hablado y vibración ("Adelante hay una escalera").
+- **Visión:** aviso hablado y vibración ("Adelante hay una escalera"). En modo **Celular** el mismo modelo corre en el teléfono y avisa igual (ver "Probar visión sin el prototipo").
 - **Audio:** **contexto silencioso.** Una persona ciega suele oír la sirena antes que el modelo, así que por defecto no se avisa en voz alta (`_speakAudioAlerts` en `assistant_screen.dart`).
 - La placa manda cada 10 s un resumen de lo que más oyó y vio (`CMD_AUDIO_CONTEXT` / `CMD_VISION_CONTEXT`). Cuando el usuario pregunta algo, la app le pasa ese resumen y las alertas de los últimos 2 minutos a la IA de la nube como contexto (`SensorContext`). Por ejemplo, "se escuchan personas hablando", "puerta al frente", "se escuchó una sirena hace 20 s".
+
+## Velocidad en la placa: ESP-NN (2026-10-16)
+
+La librería TFLM que usaba el firmware no traía las optimizaciones del ESP32-S3. Ahora el firmware usa una copia local (`Hardware_ESP32/lib/TensorFlowLite_ESP32`, ver su `IRIS.md`) con los kernels **ESP-NN** de Espressif, que usan las instrucciones vectoriales del chip. Espressif mide su *person detection*, que es la misma red que nuestro modelo de visión (MobileNetV1 0,25 a 96×96), en el ESP32-S3: **2.300 ms → 54 ms por imagen**. Por eso la placa ahora mira cada 0,5 s (`VISION_INTERVAL_MS`). Antes, una sola inferencia tardaba más de 1 s.
+
+**Cómo se verificó, sin la placa:**
+- `python tests/test_tflm_kernels.py` compila la librería del firmware en el PC (versión C de ESP-NN) y corre 1.000 ejemplos de cada modelo. La clase coincide con TensorFlow en el 100 % y las salidas son idénticas en más del 99 %. Con `--reference`, los kernels originales dan exactamente lo mismo que ESP-NN.
+- Este test encontró **dos errores que afectaban a la placa desde antes**:
+  1. El convertidor nuevo cuantizaba la capa final por canal, y el TFLM de la placa solo entiende una escala. La placa calculaba mal los puntajes: cambiaba la clase en ~9 % de las imágenes. `export_model.py` ahora exporta esa capa por tensor y se niega a exportar si vuelve a pasar.
+  2. Un `buffer_idx` sin inicializar en el softmax de ESP-NN.
+- Además, la tabla píxel→int8 de la cámara ahora la genera el export (`kVisionInputLut`). Antes la calculaba la placa con `float` y redondeaba distinto que Python en la mitad de los píxeles.
+- Las métricas de este README ahora se miden con los kernels de referencia de TFLite (`BUILTIN_REF`), que son los que imita la placa.
+
+**En la placa:** al arrancar, cada modelo corre un ejemplo de prueba y lo compara con la salida esperada del PC. Así queda verificado también el ensamblador del S3, y además se mide el tiempo:
+
+```text
+[Vision IA] Autotest OK: 60 ms por imagen (ESP-NN optimizado), clase puerta, max dif 0
+[Audio IA] Autotest OK: 8.0 ms por inferencia, clase sirena, max dif 0
+```
+
+(Los tiempos son de ejemplo: los reales se verán con el prototipo.) Si sale `FALLO`, sube `pio run -e seeed_xiao_esp32s3_tflm_ref -t upload`, que usa los kernels sin optimizar, y compara.
 
 ## Cómo funciona el modelo de audio
 
@@ -238,6 +259,14 @@ python vision/live_demo.py              # webcam del notebook, recortada al cent
 python vision/live_demo.py --simulate   # además la degrada como la OV2640 (tecla S para alternar)
 python vision/live_demo.py --images carpeta/   # clasifica fotos sueltas
 ```
+
+**En el celular (modo Celular de la app, sin placa):** el mismo `vision_scenes_int8.tflite` corre dentro de la app con `tflite_flutter`, sin internet. Sirve para mostrar la detección local aunque el prototipo no esté listo (por ejemplo en la final de los eAwards).
+
+- Elige **Celular** en la pantalla principal y apunta la cámara trasera hacia adelante, a la altura del pecho. Al ver una puerta, dice "Adelante hay una puerta" y vibra.
+- Hace lo mismo que el firmware (`tflite_vision.cpp`): 1 foto por segundo, recorte cuadrado central a 96×96 grises (`PhoneCapture.jpegToGray`, igual que las misiones), cuantización con los parámetros del tensor de entrada, promedio de 2 frames, umbral 0,75 y sin repetir la misma clase antes de 8 s. La app además calla cada clase por 20 s. Cada 10 s guarda la clase más vista como contexto para la IA (`SensorContext`).
+- Se pausa mientras hablas con Iris o abres las misiones (la cámara saca una foto a la vez). Mientras corre, la cámara saca fotos seguidas: gasta más batería.
+- Código: `App_Flutter/lib/services/ai/phone_vision_service.dart`. **Al reentrenar**, copia el modelo nuevo a la app: `cp models/vision_scenes_int8.tflite ../App_Flutter/assets/`. Si cambian las clases o el umbral, actualiza también las constantes de ese archivo.
+- No es la cámara de la placa: el celular ve más nítido y con mejor luz, así que en la demo seguramente detecte mejor que la XIAO.
 
 ## Fotos reales de la placa (XIAO, prototipo 2)
 

@@ -29,7 +29,7 @@
 #define PHOTO_JPEG_QUALITY      12            // 0-63, menor = mejor calidad
 #define PHOTO_SETTLE_FRAMES     3             // Frames descartados para que la autoexposicion se estabilice
 #define PHOTO_CHUNK_DELAY_MS    20            // Backpressure entre notificaciones de foto
-#define VISION_INTERVAL_MS      1000
+#define VISION_INTERVAL_MS      500   // con ESP-NN una inferencia de vision toma ~50-100 ms (sin ESP-NN ~2,3 s)
 
 // ==========================================
 // Eventos de audio (Edge AI, modelo de ML_Training/audio)

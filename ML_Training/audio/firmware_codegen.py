@@ -94,7 +94,7 @@ const float kAfMelWeights[{len(weights)}] = {{
     print(f"Front-end escrito en {include_dir / 'audio_frontend_config.h'} y {src_dir / 'audio_frontend_tables.cpp'}")
 
 
-def write_model_files(tflite_model: bytes, arena_bytes: int, metrics: str,
+def write_model_files(tflite_model: bytes, arena_bytes: int, metrics: str, selftest_input, selftest_expected,
                       include_dir: Path = config.FIRMWARE_INCLUDE, src_dir: Path = config.FIRMWARE_SRC) -> None:
     note = HEADER_NOTE.format(script="export_model.py")
     labels = ", ".join(f'"{c}"' for c in config.CLASSES)
@@ -114,6 +114,9 @@ extern const unsigned char g_audio_model_data[];
 extern const unsigned int g_audio_model_data_len;
 extern const char* const kAudioLabels[kAudioNumClasses];
 extern const bool kAudioIsAlert[kAudioNumClasses];   // se informa a la app como CMD_AUDIO_EVENT
+// Autotest al arrancar: una ventana de test ya cuantizada y la salida int8 que da el modelo en el PC.
+extern const int8_t kAudioSelfTestInput[{len(selftest_input)}];
+extern const int8_t kAudioSelfTestExpected[kAudioNumClasses];
 
 #endif
 """
@@ -121,6 +124,11 @@ extern const bool kAudioIsAlert[kAudioNumClasses];   // se informa a la app como
 
 const char* const kAudioLabels[kAudioNumClasses] = {{{labels}}};
 const bool kAudioIsAlert[kAudioNumClasses] = {{{alerts}}};
+
+const int8_t kAudioSelfTestInput[{len(selftest_input)}] = {{
+{_int_array(selftest_input, per_line=24)}
+}};
+const int8_t kAudioSelfTestExpected[kAudioNumClasses] = {{{", ".join(str(int(v)) for v in selftest_expected)}}};
 
 alignas(16) const unsigned char g_audio_model_data[] = {{
 {_byte_array(tflite_model)}

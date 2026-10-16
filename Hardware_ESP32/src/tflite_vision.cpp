@@ -2,6 +2,7 @@
 
 #include <TensorFlowLite_ESP32.h>
 #include <esp_heap_caps.h>
+#include <esp_timer.h>
 #include <math.h>
 #include "tensorflow/lite/micro/all_ops_resolver.h"
 #include "tensorflow/lite/micro/micro_error_reporter.h"
@@ -18,8 +19,36 @@ TfLiteTensor* output = nullptr;
 VisionEventCallback onEvent = nullptr;
 VisionEventCallback onContext = nullptr;
 
-// Pixel 0..255 -> int8 de entrada, precalculado con la cuantizacion del modelo.
-int8_t pixelToInput[256];
+uint32_t lastInferenceMs = 0;
+
+// Corre la imagen de prueba que dejo export_model.py y compara con la salida calculada en el PC.
+// Verifica la libreria TFLM (con o sin ESP-NN) en el chip real y mide cuanto tarda una inferencia.
+void runSelfTest() {
+    for (int i = 0; i < kVisionImageSize * kVisionImageSize; i++) {
+        input->data.int8[i] = kVisionInputLut[kVisionSelfTestImage[i]];
+    }
+    const int64_t start = esp_timer_get_time();
+    const bool invoked = interpreter->Invoke() == kTfLiteOk;
+    const int64_t elapsedUs = esp_timer_get_time() - start;
+
+    int maxDiff = 0, best = 0, expectedBest = 0;
+    for (int i = 0; i < kVisionNumClasses; i++) {
+        int diff = abs(output->data.int8[i] - kVisionSelfTestExpected[i]);
+        if (diff > maxDiff) maxDiff = diff;
+        if (output->data.int8[i] > output->data.int8[best]) best = i;
+        if (kVisionSelfTestExpected[i] > kVisionSelfTestExpected[expectedBest]) expectedBest = i;
+    }
+    // Unos LSB de diferencia son normales (redondeos de TFLM vs TensorFlow); la clase debe ser la misma.
+    const bool ok = invoked && best == expectedBest && maxDiff <= 8;
+#if defined(ESP_NN) && defined(CONFIG_NN_OPTIMIZED)
+    const char* kernels = "ESP-NN optimizado";
+#else
+    const char* kernels = "kernels de referencia";
+#endif
+    Serial.printf("[Vision IA] Autotest %s: %.0f ms por imagen (%s), clase %s, max dif %d\n",
+                  ok ? "OK" : "FALLO", elapsedUs / 1000.0, kernels, kVisionLabels[best], maxDiff);
+    if (!ok) Serial.println("[Vision IA] La salida no coincide con el PC: probar el entorno *_tflm_ref y avisar");
+}
 
 float previousScores[kVisionNumClasses] = {};
 uint32_t lastEventMs[kVisionNumClasses] = {};
@@ -61,6 +90,7 @@ void handleScores(const float* scores) {
 #if VISION_EVENTS_DEBUG
     Serial.print("[Vision IA]");
     for (int i = 0; i < kVisionNumClasses; i++) Serial.printf(" %s=%.2f", kVisionLabels[i], scores[i]);
+    Serial.printf(" (%u ms)", (unsigned)lastInferenceMs);
     Serial.println();
 #endif
 
@@ -113,12 +143,7 @@ bool initVisionAI(VisionEventCallback callback, VisionEventCallback contextCallb
         return false;
     }
 
-    for (int p = 0; p < 256; p++) {
-        float value = p * kVisionPixelScale + kVisionPixelOffset;
-        long q = lroundf(value / input->params.scale) + input->params.zero_point;
-        pixelToInput[p] = (int8_t)(q < -128 ? -128 : q > 127 ? 127 : q);
-    }
-
+    runSelfTest();
     Serial.printf("[Vision IA] Listo: %d clases, arena %u/%d bytes\n", kVisionNumClasses,
                   (unsigned)interpreter->arena_used_bytes(), kVisionTensorArenaSize);
     return true;
@@ -134,12 +159,14 @@ void runVisionInference(const uint8_t* image_data, size_t len) {
         return;
     }
 
-    for (size_t i = 0; i < len; i++) input->data.int8[i] = pixelToInput[image_data[i]];
+    for (size_t i = 0; i < len; i++) input->data.int8[i] = kVisionInputLut[image_data[i]];
 
+    const uint32_t start = millis();
     if (interpreter->Invoke() != kTfLiteOk) {
         Serial.println("[Vision IA] Error en Invoke()");
         return;
     }
+    lastInferenceMs = millis() - start;
 
     float scores[kVisionNumClasses];
     const float scale = output->params.scale;

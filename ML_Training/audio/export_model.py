@@ -35,14 +35,19 @@ def convert(model: tf.keras.Model, representative: np.ndarray) -> bytes:
     converter.target_spec.supported_ops = [tf.lite.OpsSet.TFLITE_BUILTINS_INT8]
     converter.inference_input_type = tf.int8
     converter.inference_output_type = tf.int8
+    # El TFLM del firmware (2022) solo sabe cuantizar FULLY_CONNECTED por tensor: con pesos por canal
+    # (lo que hace el convertidor nuevo por defecto) usa la primera escala para todas las clases y la
+    # placa calcula mal los puntajes. tests/test_tflm_kernels.py lo verifica contra la libreria real.
+    converter._experimental_disable_per_channel_quantization_for_dense_layers = True
     return converter.convert()
 
 
 def int8_predictor(tflite_model: bytes):
-    # Sin XNNPACK: asi se ven las ops reales del modelo (las mismas que ejecuta TFLM en la placa).
+    # Kernels de referencia sin XNNPACK: son los que imita TFLM en la placa (tests/test_tflm_kernels.py
+    # comprueba que la libreria del firmware da lo mismo).
     interpreter = tf.lite.Interpreter(
         model_content=tflite_model,
-        experimental_op_resolver_type=tf.lite.experimental.OpResolverType.BUILTIN_WITHOUT_DEFAULT_DELEGATES)
+        experimental_op_resolver_type=tf.lite.experimental.OpResolverType.BUILTIN_REF)
     interpreter.allocate_tensors()
     inp = interpreter.get_input_details()[0]
     out = interpreter.get_output_details()[0]
@@ -73,6 +78,13 @@ def check_ops_and_estimate_arena(interpreter: tf.lite.Interpreter) -> int:
     if unsupported:
         raise SystemExit(f"El modelo usa ops que el TFLM del firmware puede no soportar: {unsupported}")
     print("Ops del modelo:", sorted(names))
+    details = {t["index"]: t for t in interpreter.get_tensor_details()}
+    for op in ops:
+        if op["op_name"] == "FULLY_CONNECTED":
+            scales = details[op["inputs"][1]]["quantization_parameters"]["scales"]
+            if len(scales) > 1:
+                raise SystemExit("FULLY_CONNECTED con pesos cuantizados por canal: el TFLM del firmware no lo "
+                                 "soporta (calcularia mal la salida). Revisa convert().")
 
     tensors = {t["index"]: t for t in interpreter.get_tensor_details()}
 
@@ -124,6 +136,25 @@ def convert_keras_model(data) -> bytes:
     return tflite_model
 
 
+def selftest_case(tflite_model: bytes, data):
+    """Una ventana de test (la primera sirena) ya cuantizada y la salida int8 que da el PC: el firmware
+    la corre al arrancar para verificar la libreria TFLM en el chip y medir el tiempo de inferencia."""
+    interpreter = tf.lite.Interpreter(
+        model_content=tflite_model,
+        experimental_op_resolver_type=tf.lite.experimental.OpResolverType.BUILTIN_REF)
+    interpreter.allocate_tensors()
+    inp = interpreter.get_input_details()[0]
+    out = interpreter.get_output_details()[0]
+    scale, zero = inp["quantization"]
+    sample = data["x_test"][int(np.argmax(data["y_test"] == config.CLASSES.index("sirena")))]
+    q = np.clip(np.round(sample / scale + zero), -128, 127).astype(np.int8)
+    interpreter.set_tensor(inp["index"], q[np.newaxis])
+    interpreter.invoke()
+    expected = interpreter.get_tensor(out["index"])[0].copy()
+    print(f"Autotest del firmware: salida esperada {expected.tolist()}")
+    return q.reshape(-1), expected
+
+
 def export(tflite_model: bytes, data) -> None:
     predict, interpreter = int8_predictor(tflite_model)
     arena = check_ops_and_estimate_arena(interpreter)
@@ -135,7 +166,8 @@ def export(tflite_model: bytes, data) -> None:
 
     summary = "\n".join(test_report.splitlines()[:2] + [test_report.splitlines()[-1]])
     write_frontend_files()
-    write_model_files(tflite_model, arena, summary)
+    selftest_input, selftest_expected = selftest_case(tflite_model, data)
+    write_model_files(tflite_model, arena, summary, selftest_input, selftest_expected)
     print("\nListo. Compila y sube el firmware: cd Hardware_ESP32 && pio run -t upload")
 
 
