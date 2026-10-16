@@ -4,7 +4,7 @@ Entrenamiento de los modelos TensorFlow Lite Micro que corren **dentro de la pla
 
 | Modelo | Estado | Qué detecta |
 |---|---|---|
-| Audio (`audio/`) | ✅ pipeline completo, modelo v1 entrenado con datos públicos | `fondo`, `voz`, `bocina`, `sirena`, `perro` |
+| Audio (`audio/`) | ✅ pipeline completo, modelo v2 (ESC-50 + UrbanSound8K + voz chilena) | `fondo`, `voz`, `bocina`, `sirena`, `perro` |
 | Visión (`vision/`) | ✅ pipeline completo, modelo v1 entrenado con Open Images | `nada`, `persona`, `vehiculo`, `escalera`, `puerta` |
 
 ## Recolectar datos reales con la app (con o sin prototipo)
@@ -45,24 +45,25 @@ micrófono 16 kHz ─► log-mel 40 bandas cada 20 ms ─► ventana de 1 s (49�
 - Las tablas del firmware (ventana, filtros mel) y el modelo se **generan** con `export_model.py`. No se editan a mano.
 - La placa corre la red cada 0,5 s en su propia tarea, la pausa mientras se aprieta el botón y manda como alerta solo `bocina`, `sirena` y `perro` (umbral `ALERT_THRESHOLD` = 0,7 de `config.py`, sin repetir antes de 5 s). La app las usa como contexto silencioso (ver arriba).
 
-## Resultados del modelo v1 (2026-10-14)
+## Resultados del modelo de audio v2 (2026-10-15)
 
-Entrenado en CPU con ESC-50 y voz chilena (OpenSLR 71), sin datos de la placa. Medido sobre el test (datos que no vio al entrenar) con el modelo int8, que es lo que corre en la placa:
+Entrenado en CPU con ESC-50, **UrbanSound8K** y voz chilena (OpenSLR 71), sin datos de la placa. UrbanSound8K multiplica por ~10 las bocinas, sirenas y perros reales. Se midió sobre el test nuevo: 4.431 ventanas de grabaciones que el modelo no vio (fold 10 de UrbanSound8K + ESC-50 + voz). Para comparar de forma justa, v1 se midió sobre ese mismo test. Ambos son el modelo int8 que corre en la placa:
 
-| | |
-|---|---|
-| Tamaño | 29 KB en flash, ~2,6 M multiplicaciones por inferencia |
-| Exactitud general | 89,5 % |
-| Voz / fondo | 96 % / 86 % de recall |
-| Sirena / perro / bocina detectados | 88 % / 94 % / **43 %** |
-| Con umbral 0,7 | se detecta el **70 %** de las alertas, con **4,9 %** de falsas alarmas sobre ventanas de fondo o voz |
+| | v1 (solo ESC-50) | **v2 (actual)** |
+|---|---|---|
+| Exactitud general | 84,7 % | **88,3 %** |
+| Bocina / sirena / perro reconocidos | 66 / 56 / 66 % | **92 / 62 / 81 %** |
+| Voz / fondo | 96 / 87 % | 96 / 89 % |
+| Alertas detectadas con umbral 0,7 | 57,9 % | **69,7 %** |
+| Falsas alarmas sobre fondo/voz | 4,5 % | **3,5 %** |
+| Con umbral 0,8 | 52,9 % / 3,4 % | 64,2 % / 2,5 % |
+
+Tamaño: 29 KB en flash, ~2,6 M multiplicaciones por inferencia, arena ~63 KB.
 
 **Limitaciones conocidas:**
-- Hay solo 40 grabaciones por alerta en ESC-50 (≈45 ventanas de test por clase), así que las cifras de alertas son aproximadas.
-- Las bocinas son la clase más débil.
-- Los sonidos sostenidos (campanas, aspiradora, viento, gallos) a veces se confunden con sirena.
-
-**Experimento v2 (descartado):** sumar copias extra de esos "fondos difíciles" (`HARD_NEGATIVE_FACTOR=4`) y pesos `--class-weight sqrt` bajó las falsas alarmas a 2,1 %, pero también las detecciones a 53 %. A igual nivel de falsas alarmas, v1 detecta más. Vale la pena repetirlo cuando haya más alertas (UrbanSound8K o datos de la placa).
+- La **sirena** es la clase más débil (62 %): se confunde con sonidos sostenidos o tonales.
+- Ahora hay ~130–360 ventanas de test por alerta (v1 tenía ~45), así que las cifras son bastante más confiables. Aun así, nunca escuchó el micrófono PDM de la XIAO.
+- En la app, el audio se usa como **contexto silencioso**, no como aviso hablado (ver arriba).
 
 ## Puesta en marcha (una vez)
 
@@ -78,7 +79,7 @@ pip install -r requirements.txt
 Todos los comandos se corren desde `ML_Training/`.
 
 ```bash
-python audio/download_datasets.py --cleanup   # ESC-50 + voz chilena (~1,9 GB de descarga)
+python audio/download_datasets.py --urbansound --cleanup   # ESC-50 + voz chilena + UrbanSound8K (~9 GB de descarga, ~1 h)
 python audio/prepare_dataset.py               # ventanas de 1 s + simulación del micrófono -> data/audio_dataset.npz
 python audio/train.py                         # ~20 min en CPU, ~2 min en GPU
 python audio/export_model.py                  # int8 + genera los archivos del firmware
@@ -90,6 +91,14 @@ Después, compila y sube el firmware normal (`cd Hardware_ESP32 && pio run -t up
 Los resultados quedan en `models/audio_report_float.txt` y `models/audio_report_int8.txt`. El número que más importa es la línea final: **alertas detectadas** contra **falsas alarmas sobre fondo/voz**.
 
 ## Probar sin el prototipo
+
+**Demo completa para presentar** (visión + sonido a la vez, con la webcam y el micrófono del notebook, los mismos modelos int8 y umbrales que la placa):
+
+```bash
+python demo_pc.py              # Q para salir, S para simular la cámara OV2640
+```
+
+Solo audio:
 
 ```bash
 python audio/live_demo.py                  # usa el micrófono del notebook
@@ -132,7 +141,6 @@ El modelo v1 nunca ha "oído" el micrófono real. Con 10–20 minutos de grabaci
 ## Entrenar en Lambda (NVIDIA Inception) o AWS
 
 Para estos modelos chicos **no hace falta**: el CPU alcanza. Conviene en estos casos:
-- Sumar **UrbanSound8K** (`download_datasets.py --urbansound`, ~6 GB): muchas más bocinas, sirenas y perros reales. Es la mejora más grande que se puede hacer sin el prototipo, pero no cabe en el disco local.
 - Probar modelos más grandes (`train.py --width 1.5`) o más épocas (`--epochs 80`).
 
 En una instancia de Lambda (Ubuntu, con GPU):

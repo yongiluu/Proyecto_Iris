@@ -1,35 +1,35 @@
 == Validacion (float32) ==
-Exactitud: 90.9%  (3546 ejemplos)
+Exactitud: 90.7%  (5002 ejemplos)
 
 Real \ Predicho    fondo     voz  bocina  sirena   perro
-fondo               1473      48      54      86      59
-voz                   52    1633       0       0       2
-bocina                 8       1      30       6       0
-sirena                 2       0       0      46       0
-perro                  0       4       0       0      42
+fondo               2209      35      83      53     110
+voz                   60    1611       3       0      13
+bocina                11       0      90       0       0
+sirena                 9       0       0     332       8
+perro                 66       5       6       2     296
 
-fondo    precision= 96.0%  recall= 85.6%
-voz      precision= 96.9%  recall= 96.8%
-bocina   precision= 35.7%  recall= 66.7%
-sirena   precision= 33.3%  recall= 95.8%
-perro    precision= 40.8%  recall= 91.3%
+fondo    precision= 93.8%  recall= 88.7%
+voz      precision= 97.6%  recall= 95.5%
+bocina   precision= 49.5%  recall= 89.1%
+sirena   precision= 85.8%  recall= 95.1%
+perro    precision= 69.3%  recall= 78.9%
 
-Con umbral 0.6: alertas detectadas 84.2%, falsas alarmas sobre fondo/voz 3.9%
+Con umbral 0.7: alertas detectadas 82.7%, falsas alarmas sobre fondo/voz 3.1%
 
 == Test (float32) ==
-Exactitud: 89.4%  (2933 ejemplos)
+Exactitud: 88.2%  (4431 ejemplos)
 
 Real \ Predicho    fondo     voz  bocina  sirena   perro
-fondo               1479      35      27     123      56
-voz                   33    1040       0       0       5
-bocina                20       0      17       3       0
-sirena                 6       0       0      42       0
-perro                  0       3       0       0      44
+fondo               2249      20      62      72     118
+voz                   38    1033       0       0       7
+bocina                 8       0     120       1       1
+sirena                74       0      27     211      26
+perro                 47       2       5      15     295
 
-fondo    precision= 96.2%  recall= 86.0%
-voz      precision= 96.5%  recall= 96.5%
-bocina   precision= 38.6%  recall= 42.5%
-sirena   precision= 25.0%  recall= 87.5%
-perro    precision= 41.9%  recall= 93.6%
+fondo    precision= 93.1%  recall= 89.2%
+voz      precision= 97.9%  recall= 95.8%
+bocina   precision= 56.1%  recall= 92.3%
+sirena   precision= 70.6%  recall= 62.4%
+perro    precision= 66.0%  recall= 81.0%
 
-Con umbral 0.6: alertas detectadas 72.6%, falsas alarmas sobre fondo/voz 5.8%
+Con umbral 0.7: alertas detectadas 69.6%, falsas alarmas sobre fondo/voz 3.5%
