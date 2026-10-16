@@ -1,45 +1,45 @@
 == Test limpio (int8, lo que corre en la placa) ==
-Exactitud: 82.7%  (3269 ejemplos)
+Exactitud: 83.8%  (6376 ejemplos)
 
 Real \ Predicho      nada  persona vehiculo escalera   puerta
-nada                  657       61       19       68       83
-persona                43      195        6       16       10
-vehiculo               14       14      255        2        3
-escalera               55       24        6      976       38
-puerta                 64        3        0       38      619
+nada                 2553       96       51      104      161
+persona               173      503       16       12       11
+vehiculo               64       23      633        5        3
+escalera              118       20       19      918       22
+puerta                 99        9        1       25      737
 
-nada      precision= 78.9%  recall= 74.0%
-persona   precision= 65.7%  recall= 72.2%
-vehiculo  precision= 89.2%  recall= 88.5%
-escalera  precision= 88.7%  recall= 88.8%
-puerta    precision= 82.2%  recall= 85.5%
+nada      precision= 84.9%  recall= 86.1%
+persona   precision= 77.3%  recall= 70.3%
+vehiculo  precision= 87.9%  recall= 87.0%
+escalera  precision= 86.3%  recall= 83.7%
+puerta    precision= 78.9%  recall= 84.6%
 
-Con umbral 0.8 (1 frame, sin promediar):
-  persona   avisada bien  54.1%
-  vehiculo  avisada bien  81.6%
-  escalera  avisada bien  78.2%
-  puerta    avisada bien  72.7%
-  avisos falsos sobre 'nada': 10.8%  |  aviso de clase equivocada: 1.8%
+Con umbral 0.7 (1 frame, sin promediar):
+  persona   avisada bien  55.8%
+  vehiculo  avisada bien  83.0%
+  escalera  avisada bien  74.3%
+  puerta    avisada bien  70.5%
+  avisos falsos sobre 'nada': 5.9%  |  aviso de clase equivocada: 2.0%
 
 == Test con simulacion OV2640 (int8) ==
-Exactitud: 78.4%  (3269 ejemplos)
+Exactitud: 81.6%  (6376 ejemplos)
 
 Real \ Predicho      nada  persona vehiculo escalera   puerta
-nada                  649       56       21       79       83
-persona                63      173        6       17       11
-vehiculo               21       17      237       12        1
-escalera              101       27        9      906       56
-puerta                 75        4        2       44      599
+nada                 2538       99       56      109      163
+persona               202      468       17       16       12
+vehiculo               82       23      613        7        3
+escalera              153       23       23      868       30
+puerta                114        8        1       31      717
 
-nada      precision= 71.4%  recall= 73.1%
-persona   precision= 62.5%  recall= 64.1%
-vehiculo  precision= 86.2%  recall= 82.3%
-escalera  precision= 85.6%  recall= 82.4%
-puerta    precision= 79.9%  recall= 82.7%
+nada      precision= 82.2%  recall= 85.6%
+persona   precision= 75.4%  recall= 65.5%
+vehiculo  precision= 86.3%  recall= 84.2%
+escalera  precision= 84.2%  recall= 79.1%
+puerta    precision= 77.5%  recall= 82.3%
 
-Con umbral 0.8 (1 frame, sin promediar):
-  persona   avisada bien  41.5%
-  vehiculo  avisada bien  74.0%
-  escalera  avisada bien  69.8%
-  puerta    avisada bien  68.6%
-  avisos falsos sobre 'nada': 9.6%  |  aviso de clase equivocada: 2.4%
+Con umbral 0.7 (1 frame, sin promediar):
+  persona   avisada bien  47.0%
+  vehiculo  avisada bien  78.2%
+  escalera  avisada bien  68.0%
+  puerta    avisada bien  67.0%
+  avisos falsos sobre 'nada': 5.7%  |  aviso de clase equivocada: 1.9%

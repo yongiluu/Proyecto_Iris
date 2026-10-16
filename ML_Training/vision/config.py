@@ -32,8 +32,9 @@ CLASSES = ["nada", "persona", "vehiculo", "escalera", "puerta"]
 # Clases que la placa informa a la app (CMD_VISION_EVENT:<clase>:<porcentaje>).
 ALERT_CLASSES = {"persona", "vehiculo", "escalera", "puerta"}
 # Puntaje minimo (promedio de 2 frames seguidos, ~1 s cada uno) para avisar. Se copia al firmware.
-# v1: con 0.7 habia ~14% de avisos falsos por frame sobre "nada" en el test; con 0.8, ~10%.
-ALERT_THRESHOLD = 0.8
+# v1 usaba 0.8 (~9% de avisos falsos por frame sobre "nada"). v2, con negativos dificiles, a 0.7
+# detecta lo mismo que v1 con 0.8 (71%) con ~6% de avisos falsos. Subirlo baja falsos y detecciones.
+ALERT_THRESHOLD = 0.7
 
 # Open Images (nombres de clase con caja) -> clase de Iris.
 OPENIMAGES_MAP = {
