@@ -7,9 +7,14 @@ Entrenamiento de los modelos TensorFlow Lite Micro que corren **dentro de la pla
 | Audio (`audio/`) | ✅ pipeline completo, modelo v1 entrenado con datos públicos | `fondo`, `voz`, `bocina`, `sirena`, `perro` |
 | Visión (`vision/`) | ✅ pipeline completo, modelo v1 entrenado con Open Images | `nada`, `persona`, `vehiculo`, `escalera`, `puerta` |
 
-## Cuando llegue el prototipo: recolectar datos con el celular (recomendado)
+## Recolectar datos reales con la app (con o sin prototipo)
 
-La app tiene una pantalla **Misiones de datos** (ícono 📋 arriba a la derecha en la pantalla principal). Con la placa conectada por Bluetooth, te guía misión por misión ("Audio de calle 3/8", "Puertas 50/100") y guarda los audios y fotos en el celular. Así puedes grabar en la calle sin PC.
+La app tiene una pantalla **Misiones de datos** (ícono 📋 arriba a la derecha en la pantalla principal). Te guía misión por misión ("Audio de calle 3/8", "Puertas 50/100") y guarda los audios y fotos en el celular, así que puedes grabar en la calle sin PC. En cada misión eliges la fuente:
+
+- **Placa** (cuando llegue el prototipo): el micrófono y la cámara reales por Bluetooth. Es lo mejor.
+- **Celular** (ya, sin prototipo): la cámara del celular convertida a 96×96 grises, igual que la placa, y el micrófono a 16 kHz sin filtros. No es el mismo sensor, pero sí tus calles, puertas, escaleras y micros. El modelo aprende esas escenas y después basta poco fine-tuning con la placa. Lleva el celular a la altura del pecho.
+
+El origen queda en el nombre de cada archivo (`...__placa-<fecha>` o `...__cel-<fecha>`).
 
 1. Sube una vez el firmware normal a la XIAO: `cd Hardware_ESP32 && pio run -e seeed_xiao_esp32s3 -t upload`.
 2. En la app, elige el modo **Placa ESP32**, abre **Misiones de datos** y completa las misiones (~15 min de audio y ~750 fotos). Lleva la placa donde la usaría la persona. Cada grabación avisa si se perdió audio por Bluetooth, y puedes borrar la última toma si salió mal.

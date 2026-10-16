@@ -81,6 +81,9 @@ SEED = 1234
 # Cuantos ejemplos aumentados se generan por cada ventana original de una clase de alerta
 # (hay pocas en ESC-50, asi que se multiplican con mezcla de ruido, ganancia, etc.).
 ALERT_AUGMENT_FACTOR = 12
+# Tope de ventanas aumentadas por clase de alerta en train. Con UrbanSound8K hay muchas mas alertas
+# originales: se hacen menos copias de cada una (cuida la RAM; el PC tiene ~7 GB).
+ALERT_MAX_TRAIN_WINDOWS = 9000
 MAX_WINDOWS_PER_CLASS = {"fondo": 6000, "voz": 6000}
 
 # Fondos "dificiles": sonidos sostenidos o tonales que el modelo v1 confundia con sirena/perro.

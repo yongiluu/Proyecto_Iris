@@ -56,12 +56,18 @@ MIN_COVERAGE = {"persona": 0.10, "vehiculo": 0.10, "escalera": 0.15, "puerta": 0
 # Si otra clase cubre al menos esta fraccion de lo que cubre la principal, el recorte es ambiguo y se descarta.
 AMBIGUITY_RATIO = 0.5
 
-# Cuantas imagenes descargar como maximo por clase (cuida disco y tiempo; en Lambda se puede subir).
-MAX_IMAGES_PER_CLASS = {"nada": 4000, "persona": 3000, "vehiculo": 3000, "escalera": 4000, "puerta": 4000}
+# Cuantas imagenes descargar como maximo por clase. v1 usaba 4000/3000/3000/4000/4000 (~17 mil fotos,
+# ~0,5 GB); v2 usa casi todo lo disponible de escaleras y puertas y mucho mas "nada" (~45 mil, ~1,4 GB).
+MAX_IMAGES_PER_CLASS = {"nada": 20000, "persona": 9000, "vehiculo": 8000, "escalera": 4000, "puerta": 10000}
 # Recortes por imagen (zoom distintos alrededor del objeto). Mas para las clases con pocas fotos.
-CROPS_PER_IMAGE = {"nada": 1, "persona": 1, "vehiculo": 1, "escalera": 3, "puerta": 2}
+CROPS_PER_IMAGE = {"nada": 1, "persona": 1, "vehiculo": 1, "escalera": 3, "puerta": 1}
 # Recortes de "nada" sacados de zonas sin objetos de fotos con objetos (calles sin autos, pasillos...).
 BACKGROUND_CROPS_PER_IMAGE = 1
+
+# Negativos dificiles (prepare_dataset.py --hard-negatives modelo.tflite): fotos de "nada" del train
+# en las que un modelo anterior avisaba algo con al menos este puntaje reciben recortes extra.
+HARD_NEGATIVE_MIN_SCORE = 0.4
+HARD_NEGATIVE_EXTRA_CROPS = 3
 
 # ─── Entrenamiento ───
 SEED = 1234

@@ -10,8 +10,8 @@ import 'missions.dart';
 /// Guarda en el celular lo que se recolecta, con la misma estructura que espera
 /// ML_Training/import_phone_data.py:
 /// ```text
-/// iris_dataset/audio/<clase>/<clase>__<ambiente>__<mision>__<fecha>.wav
-/// iris_dataset/vision/<clase>/<clase>__<ambiente>__<mision>__<fecha>_<n>.bmp
+/// iris_dataset/audio/<clase>/<clase>__<ambiente>__<mision>__<origen>-<fecha>.wav
+/// iris_dataset/vision/<clase>/<clase>__<ambiente>__<mision>__<origen>-<fecha>_<n>.bmp
 /// iris_dataset/registro.csv
 /// ```
 class DatasetStore {
@@ -51,13 +51,27 @@ class DatasetStore {
 
   Future<int> progress(Mission mission) async => (await files(mission)).length;
 
-  Future<File> saveAudio(Mission mission, Uint8List pcm, {required double receivedRatio}) async {
+  /// `source` queda en el nombre ('placa' o 'cel') para poder separar los datos al entrenar.
+  Future<File> saveAudio(Mission mission, Uint8List pcm,
+      {required double receivedRatio, String source = 'placa'}) async {
     final folder = _folder(mission);
     await folder.create(recursive: true);
-    final file = File('${folder.path}/${_prefix(mission)}${_stamp()}.wav');
+    final file = File('${folder.path}/${_prefix(mission)}$source-${_stamp()}.wav');
     await file.writeAsBytes(Esp32SpeechService.buildWav(pcm));
     await _log(mission, file, 'audio ${(pcm.length / 32000).toStringAsFixed(1)} s, '
         'recibido ${(receivedRatio * 100).round()}%');
+    return file;
+  }
+
+  /// Mueve un WAV ya grabado (microfono del celular) a la carpeta de la mision.
+  Future<File> saveAudioFile(Mission mission, String wavPath, {String source = 'cel'}) async {
+    final folder = _folder(mission);
+    await folder.create(recursive: true);
+    final target = '${folder.path}/${_prefix(mission)}$source-${_stamp()}.wav';
+    final file = await File(wavPath).copy(target);
+    await File(wavPath).delete();
+    final seconds = (await file.length() - 44) / 32000;
+    await _log(mission, file, 'audio ${seconds.toStringAsFixed(1)} s, microfono del celular');
     return file;
   }
 
@@ -70,7 +84,7 @@ class DatasetStore {
     return file;
   }
 
-  String newTakeStamp() => _stamp();
+  String newTakeStamp({String source = 'placa'}) => '$source-${_stamp()}';
 
   Future<void> logPhotoTake(Mission mission, String take, int count) async {
     await _log(mission, File(take), '$count fotos');

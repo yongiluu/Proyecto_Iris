@@ -115,7 +115,7 @@ def collect_urbansound(pools):
             continue
         is_alert = label in config.ALERT_CLASSES
         pools[split][label].extend(windows(audio, hop=SR // 2 if is_alert else SR,
-                                           min_relative_rms=0.3 if is_alert else 0.0, max_count=4))
+                                           min_relative_rms=0.3 if is_alert else 0.0, max_count=4 if is_alert else 2))
 
 
 def collect_speech(pools, max_files: int):
@@ -242,7 +242,10 @@ def main() -> None:
                 if cap and len(source) > cap:
                     source = [source[i] for i in rng.choice(len(source), cap, replace=False)]
                 is_alert = label in config.ALERT_CLASSES
-                copies = args.alert_augment if is_alert else 1
+                copies = 1
+                if is_alert and source:
+                    copies = max(1, min(args.alert_augment, config.ALERT_MAX_TRAIN_WINDOWS // len(source)))
+                    print(f"  {label}: {len(source)} ventanas originales x {copies} copias")
                 for clip in tqdm(source, desc=f"Aumentando {label}", leave=False):
                     for _ in range(copies):
                         clips.append(simulator(clip, mix_background=label != "fondo"))
@@ -261,10 +264,14 @@ def main() -> None:
         if not clips:
             raise SystemExit(f"No hay datos para el split '{split}'. ¿Corriste download_datasets.py?")
         order = rng.permutation(len(clips))
-        clips = np.stack(clips)[order]
         output[f"y_{split}"] = np.asarray(labels, dtype=np.int64)[order]
         print(f"Calculando features de {split} ({len(clips)} ejemplos)...")
-        output[f"x_{split}"] = log_mel_batch(clips)
+        # Por bloques: apilar todo el audio crudo de una vez no cabe en la RAM del PC (~7 GB).
+        output[f"x_{split}"] = np.concatenate([
+            log_mel_batch(np.stack([clips[i] for i in order[start:start + 2000]]))
+            for start in range(0, len(order), 2000)
+        ])
+        del clips
         counts = Counter(output[f"y_{split}"].tolist())
         print(f"  {split}: " + ", ".join(f"{config.CLASSES[i]}={counts[i]}" for i in range(len(config.CLASSES))))
 

@@ -4,18 +4,22 @@ import 'dart:math' as math;
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
+import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:vibration/vibration.dart';
 
+import '../../services/hardware/camera_service.dart';
 import '../../services/hardware/esp32_speech_service.dart';
 import 'dataset_store.dart';
 import 'missions.dart';
+import 'phone_capture.dart';
 
 /// Lista de misiones de recoleccion con su progreso (ej. "Audio de calle 3/8").
 class MissionsScreen extends StatefulWidget {
   final Esp32SpeechService esp32;
+  final CameraService phoneCamera;
 
-  const MissionsScreen({super.key, required this.esp32});
+  const MissionsScreen({super.key, required this.esp32, required this.phoneCamera});
 
   @override
   State<MissionsScreen> createState() => _MissionsScreenState();
@@ -23,6 +27,7 @@ class MissionsScreen extends StatefulWidget {
 
 class _MissionsScreenState extends State<MissionsScreen> {
   final DatasetStore _store = DatasetStore();
+  late final PhoneCapture _phone = PhoneCapture(widget.phoneCamera);
   final Map<String, int> _progress = {};
   ({int audios, int photos, int bytes})? _totals;
   bool _ready = false;
@@ -42,6 +47,7 @@ class _MissionsScreenState extends State<MissionsScreen> {
   @override
   void dispose() {
     _connectionTimer?.cancel();
+    _phone.dispose();
     super.dispose();
   }
 
@@ -93,7 +99,9 @@ class _MissionsScreenState extends State<MissionsScreen> {
                 ListTile(
                   leading: Icon(connected ? Icons.bluetooth_connected : Icons.bluetooth_searching,
                       color: connected ? Colors.green : Colors.orange),
-                  title: Text(connected ? 'Placa conectada' : 'Buscando la placa... (debe estar el modo "Placa ESP32")'),
+                  title: Text(connected
+                      ? 'Placa conectada'
+                      : 'Sin placa: puedes usar la camara y el microfono del celular'),
                   subtitle: totals == null
                       ? null
                       : Text('${totals.audios} audios, ${totals.photos} fotos, '
@@ -126,7 +134,7 @@ class _MissionsScreenState extends State<MissionsScreen> {
       trailing: complete ? const Icon(Icons.check_circle, color: Colors.green) : const Icon(Icons.chevron_right),
       onTap: () async {
         await Navigator.of(context).push(MaterialPageRoute(
-          builder: (_) => MissionScreen(mission: mission, esp32: widget.esp32, store: _store),
+          builder: (_) => MissionScreen(mission: mission, esp32: widget.esp32, phone: _phone, store: _store),
         ));
         _load();
       },
@@ -138,9 +146,11 @@ class _MissionsScreenState extends State<MissionsScreen> {
 class MissionScreen extends StatefulWidget {
   final Mission mission;
   final Esp32SpeechService esp32;
+  final PhoneCapture phone;
   final DatasetStore store;
 
-  const MissionScreen({super.key, required this.mission, required this.esp32, required this.store});
+  const MissionScreen(
+      {super.key, required this.mission, required this.esp32, required this.phone, required this.store});
 
   @override
   State<MissionScreen> createState() => _MissionScreenState();
@@ -158,8 +168,11 @@ class _MissionScreenState extends State<MissionScreen> {
   double _levelDb = -90;
   int _photosThisTake = 0;
   Uint8List? _preview;
+  // true = camara/microfono del celular (sin placa). Con placa conectada se usa la placa.
+  late bool _usePhone = !widget.esp32.isConnected;
 
   Mission get _mission => widget.mission;
+  String get _source => _usePhone ? 'cel' : 'placa';
 
   @override
   void initState() {
@@ -198,6 +211,7 @@ class _MissionScreenState extends State<MissionScreen> {
   // ─── Audio ───
 
   Future<void> _recordAudio() async {
+    if (_usePhone) return _recordPhoneAudio();
     if (!widget.esp32.isConnected) return _show('La placa no esta conectada.');
     final seconds = _mission.secondsPerTake;
     final buffer = BytesBuilder(copy: false);
@@ -242,9 +256,44 @@ class _MissionScreenState extends State<MissionScreen> {
       return _show('Llego solo el ${(ratio * 100).round()}% del audio por Bluetooth. '
           'Acerca el celular a la placa y repite.');
     }
-    await widget.store.saveAudio(_mission, pcm, receivedRatio: ratio);
+    await widget.store.saveAudio(_mission, pcm, receivedRatio: ratio, source: 'placa');
     await _refresh();
     _show('Guardado (${(pcm.length / 32000).toStringAsFixed(1)} s, llego el ${(math.min(ratio, 1.0) * 100).round()}%).');
+  }
+
+  Future<void> _recordPhoneAudio() async {
+    final seconds = _mission.secondsPerTake;
+    final path = '${(await getTemporaryDirectory()).path}/mision_${DateTime.now().millisecondsSinceEpoch}.wav';
+    if (!await widget.phone.startAudio(path)) return _show('Sin permiso para usar el microfono.');
+
+    setState(() {
+      _busy = true;
+      _cancelRequested = false;
+      _status = 'Grabando con el celular...';
+    });
+    final levels = widget.phone.audioLevels().listen((db) => _levelDb = db);
+    await _buzz();
+
+    final stopwatch = Stopwatch()..start();
+    while (stopwatch.elapsedMilliseconds < seconds * 1000 && !_cancelRequested) {
+      await Future.delayed(const Duration(milliseconds: 200));
+      if (mounted) setState(() => _secondsLeft = seconds - stopwatch.elapsedMilliseconds / 1000);
+    }
+    await levels.cancel();
+    await _buzz();
+
+    if (_cancelRequested) {
+      await widget.phone.cancelAudio();
+      if (mounted) setState(() => _busy = false);
+      return _show('Grabacion cancelada (no se guardo).');
+    }
+    final recorded = await widget.phone.stopAudio();
+    if (!mounted) return;
+    setState(() => _busy = false);
+    if (recorded == null) return _show('No se pudo grabar.');
+    await widget.store.saveAudioFile(_mission, recorded, source: 'cel');
+    await _refresh();
+    _show('Guardado (microfono del celular).');
   }
 
   static double _rmsDb(List<int> chunk) {
@@ -262,8 +311,9 @@ class _MissionScreenState extends State<MissionScreen> {
   // ─── Fotos ───
 
   Future<void> _takePhotos() async {
-    if (!widget.esp32.isConnected) return _show('La placa no esta conectada.');
-    final take = widget.store.newTakeStamp();
+    if (_usePhone && !widget.phone.cameraReady) return _show('La camara del celular no esta lista.');
+    if (!_usePhone && !widget.esp32.isConnected) return _show('La placa no esta conectada.');
+    final take = widget.store.newTakeStamp(source: _source);
     int failures = 0;
 
     setState(() {
@@ -275,12 +325,16 @@ class _MissionScreenState extends State<MissionScreen> {
     widget.esp32.isCollectingData = true;
     await _buzz();
 
-    while (_photosThisTake < _mission.photosPerTake && !_cancelRequested && widget.esp32.isConnected) {
+    while (_photosThisTake < _mission.photosPerTake &&
+        !_cancelRequested &&
+        (_usePhone || widget.esp32.isConnected)) {
       final started = DateTime.now();
-      final frame = await widget.esp32.captureGrayFrame();
+      final frame = _usePhone ? await widget.phone.takeGrayFrame() : await widget.esp32.captureGrayFrame();
       if (frame == null) {
         if (++failures >= 5) {
-          _show('La placa no esta mandando fotos. ¿Firmware actualizado?');
+          _show(_usePhone
+              ? 'La camara del celular no esta respondiendo.'
+              : 'La placa no esta mandando fotos. ¿Firmware actualizado?');
           break;
         }
         continue;
@@ -355,6 +409,25 @@ class _MissionScreenState extends State<MissionScreen> {
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               Text(_mission.instructions, style: Theme.of(context).textTheme.bodyLarge),
+              const SizedBox(height: 12),
+              SegmentedButton<bool>(
+                segments: const [
+                  ButtonSegment(value: false, icon: Icon(Icons.developer_board), label: Text('Placa')),
+                  ButtonSegment(value: true, icon: Icon(Icons.smartphone), label: Text('Celular')),
+                ],
+                selected: {_usePhone},
+                onSelectionChanged: _busy ? null : (value) => setState(() => _usePhone = value.first),
+              ),
+              if (_usePhone)
+                Padding(
+                  padding: const EdgeInsets.only(top: 6),
+                  child: Text(
+                    isAudio
+                        ? 'Lleva el celular donde iria la placa (bolsillo del pecho o colgado).'
+                        : 'Celular a la altura del pecho, camara hacia adelante. Revisa que la vista previa salga derecha.',
+                    style: Theme.of(context).textTheme.bodySmall,
+                  ),
+                ),
               const SizedBox(height: 16),
               Text(
                 isAudio
@@ -426,7 +499,9 @@ class _MissionScreenState extends State<MissionScreen> {
         else
           Image.memory(preview, width: 288, height: 288, gaplessPlayback: true, filterQuality: FilterQuality.none),
         const SizedBox(height: 8),
-        Text(preview == null ? 'Aqui veras lo que ve la camara (96x96)' : 'Lo que ve la camara (96x96)'),
+        Text(preview == null
+            ? 'Aqui veras lo que ve el modelo (96x96)'
+            : 'Lo que ve el modelo (96x96, ${_usePhone ? 'celular' : 'placa'})'),
         if (_busy) Text('$_photosThisTake/${_mission.photosPerTake}'),
       ],
     );

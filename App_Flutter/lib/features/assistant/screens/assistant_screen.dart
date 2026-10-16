@@ -569,7 +569,7 @@ class _AssistantScreenState extends State<AssistantScreen>
         tooltip: 'Misiones de recoleccion de datos',
         icon: const Icon(Icons.assignment_outlined, color: Colors.white70),
         onPressed: () => Navigator.of(context).push(MaterialPageRoute(
-          builder: (_) => MissionsScreen(esp32: _esp32SpeechService),
+          builder: (_) => MissionsScreen(esp32: _esp32SpeechService, phoneCamera: _nativeCameraService),
         )),
       ),
     );

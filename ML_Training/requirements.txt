@@ -10,3 +10,4 @@ ziglang              # compilador C++ para tests/test_frontend.py
 pandas               # vision: anotaciones de Open Images
 pillow               # vision: imagenes y aumentacion
 opencv-python        # vision/live_demo.py (webcam) y vista previa de capture_photos.py
+pyarrow             # audio/download_datasets.py --urbansound (espejo en parquet de Hugging Face)

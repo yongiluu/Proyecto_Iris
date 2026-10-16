@@ -11,10 +11,13 @@ Que hace:
      pasillos sin puertas...), que son los negativos mas utiles.
   3. Suma las fotos reales de la placa en data/vision_board/<clase>/*.png (capture_photos.py).
   4. Separa train/val/test por foto (los recortes de una misma foto quedan juntos).
-  5. Guarda data/vision_dataset.npz: train/val en CROP_SIZE (el train hace el resto de la
+  5. Con --hard-negatives modelo.tflite, las fotos de "nada" del train que ese modelo confunde
+     (avisaria algo) reciben recortes extra: es lo que mas baja los avisos falsos.
+  6. Guarda data/vision_dataset.npz: train/val en CROP_SIZE (el train hace el resto de la
      aumentacion en cada epoca), test limpio en 96x96 y "test camara" = test con la
      simulacion de la OV2640 (augment.camera_degrade, semilla fija).
 """
+import argparse
 import hashlib
 from collections import Counter
 
@@ -111,13 +114,14 @@ def scene_crop(image, rng):
     return cut(image, square(w, h, rng.uniform(0, w), rng.uniform(0, h), side))
 
 
-def collect_openimages(pools):
+def collect_openimages(pools, hard_model=None):
     selection = pd.read_csv(config.SELECTION_FILE)
     boxes = load_boxes()
     boxes = boxes[boxes.ImageID.isin(set(selection.ImageID))]
     by_image = dict(tuple(boxes.groupby("ImageID")))
     rng = np.random.default_rng(config.SEED)
     missing = 0
+    nada_train = []  # (ImageID, recorte) para buscar negativos dificiles
     for row in tqdm(selection.itertuples(), total=len(selection), desc="recortes"):
         path = config.IMAGES_DIR / f"{row.ImageID}.jpg"
         if not path.exists():
@@ -127,12 +131,36 @@ def collect_openimages(pools):
         image_boxes = by_image.get(row.ImageID, boxes.iloc[:0])
         split = split_by_key(row.ImageID)
         if row.cls == "nada":
-            pools[split]["nada"].append(scene_crop(image, rng))
+            crop = scene_crop(image, rng)
+            pools[split]["nada"].append(crop)
+            if split == "train":
+                nada_train.append((row.ImageID, crop))
             continue
         pools[split][row.cls].extend(object_crops(image, image_boxes, row.cls, rng))
         pools[split]["nada"].extend(background_crops(image, image_boxes, rng, config.BACKGROUND_CROPS_PER_IMAGE))
     if missing:
         print(f"⚠ {missing} fotos elegidas no estan descargadas (se omiten)")
+    if hard_model and nada_train:
+        add_hard_negatives(pools, nada_train, hard_model, rng)
+
+
+def add_hard_negatives(pools, nada_train, model_path, rng):
+    """Solo en train (el test queda comparable): recortes extra de las fotos de "nada" que el
+    modelo anterior confunde con alguna clase de aviso."""
+    from export_model import int8_predictor  # importa TensorFlow: solo si se pide
+
+    predict, _ = int8_predictor(open(model_path, "rb").read())
+    images = np.stack([resize(crop) for _, crop in nada_train])
+    scores = predict(images)
+    alert_idx = [config.CLASSES.index(c) for c in config.CLASSES if c in config.ALERT_CLASSES]
+    worst = scores[:, alert_idx].max(axis=1)
+    hard = [image_id for (image_id, _), s in zip(nada_train, worst) if s >= config.HARD_NEGATIVE_MIN_SCORE]
+    for image_id in hard:
+        image = Image.open(config.IMAGES_DIR / f"{image_id}.jpg").convert("L")
+        for _ in range(config.HARD_NEGATIVE_EXTRA_CROPS):
+            pools["train"]["nada"].append(scene_crop(image, rng))
+    print(f"Negativos dificiles: {len(hard)} de {len(nada_train)} fotos de 'nada' del train "
+          f"(puntaje de aviso >= {config.HARD_NEGATIVE_MIN_SCORE}), +{len(hard) * config.HARD_NEGATIVE_EXTRA_CROPS} recortes")
 
 
 def collect_board(pools):
@@ -153,8 +181,13 @@ def collect_board(pools):
 
 
 def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("--hard-negatives", metavar="MODELO.tflite",
+                        help="modelo int8 anterior para buscar fotos de 'nada' que confunde")
+    args = parser.parse_args()
+
     pools = {s: {c: [] for c in config.CLASSES} for s in ("train", "val", "test")}
-    collect_openimages(pools)
+    collect_openimages(pools, args.hard_negatives)
     collect_board(pools)
 
     out = {"classes": np.array(config.CLASSES)}
