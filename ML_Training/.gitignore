@@ -4,4 +4,4 @@ __pycache__/
 models/checkpoints/
 tests/build/
 *.log
-models/*_v1/
+models/*_v[0-9]/   # respaldos locales de versiones anteriores
