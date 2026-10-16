@@ -5,7 +5,7 @@ Entrenamiento de los modelos TensorFlow Lite Micro que corren **dentro de la pla
 | Modelo | Estado | Qué detecta |
 |---|---|---|
 | Audio (`audio/`) | ✅ pipeline completo, modelo v3 (ESC-50 + UrbanSound8K + voz chilena) | `fondo`, `voz`, `bocina`, `sirena`, `perro` |
-| Visión (`vision/`) | ✅ pipeline completo, modelo v3 entrenado con Open Images | `nada`, `persona`, `vehiculo`, `escalera`, `puerta` |
+| Visión (`vision/`) | ✅ pipeline completo, modelo v4 (MobileNet 0,5) entrenado con Open Images | `nada`, `persona`, `vehiculo`, `escalera`, `puerta` |
 
 ## Recolectar datos reales con la app (con o sin prototipo)
 
@@ -196,9 +196,33 @@ cámara OV2640 96×96 grises ─► MobileNetV1 0.25 int8 (1 vez por segundo) �
 
 **Simulación de la OV2640** (`vision/augment.py`): poca luz con más ruido, exposición y gamma, viñeteado, desenfoque y movimiento, baja resolución, ruido de sensor, artefactos JPEG, inclinación leve y zoom. Se aplica al azar en cada época. El reporte mide el test limpio y también un "test cámara" degradado con semilla fija.
 
-## Resultados del modelo de visión v3 (2026-10-16)
+## Resultados del modelo de visión v4 (2026-10-16): red más grande
 
-Las tres versiones usan la misma red (MobileNetV1 0,25, 306 KB, ~87 KB de arena). Lo que cambia son los datos:
+Con ESP-NN la placa es ~40 veces más rápida, así que ya cabe una red más grande. v4 usa **MobileNetV1 0,5** en vez de 0,25 (los mismos datos de v3, pesos de ImageNet).
+
+| Mismo test v3 (8.199 recortes), umbral 0,75 | v3 (MobileNet 0,25) | **v4 (MobileNet 0,5, actual)** |
+|---|---|---|
+| Exactitud general | 82,9 % | **84,6 %** |
+| **Avisos falsos sobre "nada"** | 5,4 % | **4,8 %** |
+| Detección media de las 4 clases | 70,6 % | **73,9 %** |
+| Persona / vehículo / escalera / puerta | 57 / 82 / 72 / 71 % | **59 / 86 / 76 / 75 %** |
+| Con simulación OV2640: avisos falsos / detección media | 5,4 % / 64,2 % | **4,4 % / 65,5 %** |
+| Tamaño en flash / arena | 306 KB / ~87 KB | 968 KB / 170 KB |
+
+v4 es mejor en todos los umbrales. Hace ~4 veces más cálculo: Espressif mide 54 ms para la red 0,25 con ESP-NN, así que v4 debería andar en ~100–300 ms. Probablemente use PSRAM, porque sus 170 KB de arena no caben en la RAM interna junto a Bluetooth y audio. El autotest al arrancar muestra el tiempo real.
+
+**Si v4 resulta lenta en la placa**, se vuelve a v3 sin reentrenar:
+
+```bash
+python vision/export_model.py --tflite models/vision_v3/vision_scenes_int8.tflite
+```
+
+(`models/vision_v3/` es un respaldo local que no está en git. Si no lo tienes, `git show 96c026a:ML_Training/models/vision_scenes_int8.tflite > v3.tflite`. Ojo: ese archivo trae la capa final por canal y el export lo va a rechazar, así que hay que reconvertirlo desde `vision_scenes.keras` de ese commit.)
+
+### Historial: v1 → v3 (MobileNet 0,25)
+
+
+v1 a v3 usan la misma red (MobileNetV1 0,25, 306 KB, ~87 KB de arena). Lo que cambia son los datos:
 
 - **v1:** ~17 mil fotos de Open Images.
 - **v2:** ~48 mil fotos, rotación de Open Images corregida y **negativos difíciles**. El modelo v1 se confundía con el 26 % de las fotos de "nada" del train, y esas reciben recortes extra.
@@ -245,7 +269,7 @@ Desde `ML_Training/` (con el mismo `.venv` del audio):
 ```bash
 python vision/download_datasets.py --skip-train-rotations   # ~63 mil fotos: ~4 GB de descarga, ~2 GB en disco, ~1,5 h
 python vision/prepare_dataset.py --hard-negatives models/vision_scenes_int8.tflite   # recortes -> data/vision_dataset.npz (~40 min)
-python vision/train.py --epochs 25 --workers 4   # ~1 h 45 min en CPU, ~10 min en GPU (no corras otra cosa pesada: usa ~3 GB de RAM)
+python vision/train.py --epochs 25 --workers 4   # MobileNet 0,5: ~3 h 45 min en CPU, ~20 min en GPU (no corras otra cosa pesada)
 python vision/export_model.py             # int8 + valida ops + genera vision_model_data.h/.cpp
 cd ../Hardware_ESP32 && pio run -e seeed_xiao_esp32s3 -t upload
 ```

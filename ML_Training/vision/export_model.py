@@ -115,7 +115,8 @@ def check_ops_and_estimate_arena(interpreter: tf.lite.Interpreter) -> int:
     for op in ops:
         live = sum(nbytes(i) for i in list(op["inputs"]) + list(op["outputs"]) if i in activations)
         worst = max(worst, live)
-    estimate = int(worst * 1.3) + 16 * 1024
+    # Margen amplio: con v4 (MobileNet 0,5) TFLM uso 162 KB frente a 157 KB estimados con 1,3x+16 KB.
+    estimate = int(worst * 1.35) + 24 * 1024
     return (estimate + 1023) // 1024 * 1024
 
 

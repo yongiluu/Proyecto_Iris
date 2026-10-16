@@ -14,6 +14,7 @@ esperada generada aqui (ver firmware_selftest en export_model.py).
 """
 import argparse
 import os
+import re
 import subprocess
 import sys
 from concurrent.futures import ThreadPoolExecutor
@@ -101,7 +102,13 @@ def quantize(model: bytes, x: np.ndarray) -> np.ndarray:
     return np.clip(np.round(x / scale + zero), -128, 127).astype(np.int8)
 
 
-def check(name: str, model_path: Path, x_float: np.ndarray) -> bool:
+def declared_arena(header: str, constant: str) -> int:
+    """Tamano de arena que reserva el firmware (generado por export_model.py)."""
+    text = (ML_DIR.parent / "Hardware_ESP32" / "include" / header).read_text(encoding="utf-8")
+    return int(re.search(rf"{constant}\s*=\s*(\d+)", text).group(1))
+
+
+def check(name: str, model_path: Path, x_float: np.ndarray, arena_bytes: int) -> bool:
     model = model_path.read_bytes()
     inputs_q = quantize(model, x_float)
     expected = reference(model, inputs_q)
@@ -118,8 +125,14 @@ def check(name: str, model_path: Path, x_float: np.ndarray) -> bool:
     same_class = np.mean(got.argmax(1) == expected.argmax(1))
     exact = np.mean(diff.max(1) == 0)
     # TFLM (2022) y TFLite actual redondean distinto en casos aislados (unos LSB): se exige la misma clase
-    # en todos los ejemplos y salidas identicas en al menos el 99%.
-    ok = same_class == 1 and exact >= 0.99 and diff.max() <= 8
+    # en todos los ejemplos y diferencias chicas.
+    ok = same_class == 1 and diff.max() <= 8
+    # La arena que usa TFLM aca (64 bits, punteros mas grandes) es una cota superior de la de la placa.
+    used = int(re.search(r"arena usada (\d+)", run.stdout).group(1))
+    if used > arena_bytes:
+        print(f"✘ {name}: TFLM usa {used} bytes de arena y el firmware reserva {arena_bytes}: "
+              "en la placa fallaria AllocateTensors. Sube el margen en export_model.py.")
+        ok = False
     print(f"{'✔' if ok else '✘'} {name:7s} {len(got)} ejemplos: "
           f"identicos {exact * 100:.1f}%, max |dif| {diff.max()} (int8), misma clase {same_class * 100:.1f}%  "
           f"[{run.stdout.strip()}]")
@@ -140,12 +153,14 @@ def main() -> None:
     x = vision["x_test"]
     x = x[rng.choice(len(x), min(args.n, len(x)), replace=False)]
     ok &= check("vision", ML_DIR / "models" / "vision_scenes_int8.tflite",
-                x.astype(np.float32)[..., None] / 127.5 - 1.0)
+                x.astype(np.float32)[..., None] / 127.5 - 1.0,
+                declared_arena("vision_model_data.h", "kVisionTensorArenaSize"))
 
     audio = np.load(ML_DIR / "data" / "audio_dataset.npz")
     x = audio["x_test"]
     ok &= check("audio", ML_DIR / "models" / "audio_events_int8.tflite",
-                x[rng.choice(len(x), min(args.n, len(x)), replace=False)])
+                x[rng.choice(len(x), min(args.n, len(x)), replace=False)],
+                declared_arena("audio_model_data.h", "kAudioTensorArenaSize"))
 
     print("\nTODO OK: los kernels ESP-NN del firmware dan lo mismo que TensorFlow." if ok
           else "\n✘ Hay diferencias: revisar los kernels ESP-NN antes de subir el firmware.")

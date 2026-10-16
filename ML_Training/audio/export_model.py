@@ -101,7 +101,7 @@ def check_ops_and_estimate_arena(interpreter: tf.lite.Interpreter) -> int:
     for op in ops:
         live = sum(nbytes(i) for i in list(op["inputs"]) + list(op["outputs"]) if i in activations)
         worst = max(worst, live)
-    estimate = int(worst * 1.3) + 12 * 1024
+    estimate = int(worst * 1.35) + 16 * 1024
     return (estimate + 1023) // 1024 * 1024
 
 

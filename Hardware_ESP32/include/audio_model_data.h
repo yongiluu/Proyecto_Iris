@@ -8,7 +8,7 @@
 #include <stdint.h>
 
 constexpr int kAudioNumClasses = 5;
-constexpr int kAudioTensorArenaSize = 64512;
+constexpr int kAudioTensorArenaSize = 70656;
 constexpr float kAudioAlertThreshold = 0.7f;  // config.ALERT_THRESHOLD
 
 extern const unsigned char g_audio_model_data[];

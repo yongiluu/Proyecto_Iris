@@ -134,7 +134,8 @@ def main() -> None:
     parser.add_argument("--epochs", type=int, default=30)
     parser.add_argument("--batch-size", type=int, default=64)
     parser.add_argument("--lr", type=float, default=2e-3)
-    parser.add_argument("--alpha", type=float, default=0.25, help="ancho de MobileNet (0.25 = como person_detection)")
+    parser.add_argument("--alpha", type=float, default=0.5,
+                        help="ancho de MobileNet: 0.5 = v4 (con ESP-NN); 0.25 = v1-v3, como person_detection")
     parser.add_argument("--finetune", action="store_true", help="partir de models/vision_scenes.keras")
     parser.add_argument("--no-pretrained", action="store_true", help="no usar pesos de ImageNet")
     parser.add_argument("--workers", type=int, default=8, help="hilos que generan la aumentacion")
