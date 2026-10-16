@@ -1,4 +1,5 @@
-/// Contexto silencioso de los modelos Edge AI de la placa (audio y vision).
+/// Contexto silencioso de los modelos Edge AI de la placa (audio y vision) o, en modo Celular, de la
+/// vision local del celular (PhoneVisionService, mismo modelo).
 ///
 /// La placa manda cada ~10 s lo que mas oyo y vio (CMD_AUDIO_CONTEXT / CMD_VISION_CONTEXT) y,
 /// al momento, las alertas (CMD_AUDIO_EVENT / CMD_VISION_EVENT). Aqui se guarda lo reciente
@@ -32,7 +33,7 @@ class SensorContext {
   void onAudioEvent(String label) => _audioEvents[label] = DateTime.now();
   void onVisionEvent(String label) => _visionEvents[label] = DateTime.now();
 
-  /// Texto para la IA, o null si no hay nada reciente (ej. sin placa conectada).
+  /// Texto para la IA, o null si no hay nada reciente.
   String? describe() {
     final now = DateTime.now();
     final lines = <String>[];
@@ -55,7 +56,7 @@ class SensorContext {
     }
     if (lines.isEmpty) return null;
 
-    return 'Contexto de los sensores de la placa del usuario (modelos pequenos, pueden equivocarse; '
+    return 'Contexto de los sensores del usuario (placa o celular; modelos pequenos, pueden equivocarse; '
         'usalo solo si ayuda a responder y no lo menciones si no es relevante):\n${lines.join('\n')}';
   }
 }

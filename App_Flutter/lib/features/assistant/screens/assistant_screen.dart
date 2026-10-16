@@ -16,6 +16,7 @@ import '../../../services/hardware/camera_service.dart';
 import '../../../services/hardware/esp32_speech_service.dart';
 import '../../../services/ai/speech_service.dart';
 import '../../../services/ai/occipital_agent_service.dart';
+import '../../../services/ai/phone_vision_service.dart';
 import '../../../services/hardware/sensor_context.dart';
 import '../../data_collection/missions_screen.dart';
 import '../../../services/ai/tts_service.dart';
@@ -41,6 +42,7 @@ class _AssistantScreenState extends State<AssistantScreen>
   final TtsService _ttsService = TtsService();
   final HapticService _hapticService = HapticService();
   final SensorContext _sensorContext = SensorContext();
+  final PhoneVisionService _phoneVision = PhoneVisionService();
 
   // ─── State ───
   HardwareMode _hardwareMode = HardwareMode.standalone;
@@ -136,6 +138,8 @@ class _AssistantScreenState extends State<AssistantScreen>
       _esp32SpeechService.onVisionEvent = _onVisionEvent;
       _esp32SpeechService.onAudioContext = _sensorContext.onAudioContext;
       _esp32SpeechService.onVisionContext = _sensorContext.onVisionContext;
+      _phoneVision.onEvent = (label, percent) => _onVisionEvent(label, percent, fromPhone: true);
+      _phoneVision.onContext = _sensorContext.onVisionContext;
 
       // Un servicio que falla (ej. sin permiso de camara) no debe impedir usar los demas.
       await Future.wait<void>([
@@ -144,10 +148,12 @@ class _AssistantScreenState extends State<AssistantScreen>
         _initSafely('bluetooth', _esp32SpeechService.init()),
         _initSafely('voz', _ttsService.initialize()),
         _initSafely('vibracion', _hapticService.initialize()),
+        _initSafely('vision local', _phoneVision.load()),
       ]);
       if (!mounted) return;
 
       setState(() => _isInitialized = true);
+      _updatePhoneVision();
       
       if (_hardwareMode == HardwareMode.esp32) {
          setState(() {
@@ -171,11 +177,38 @@ class _AssistantScreenState extends State<AssistantScreen>
   }
 
   /// Foto para el analisis de vision, segun el hardware activo.
-  Future<Uint8List?> _captureImage() {
-    return _hardwareMode == HardwareMode.esp32
-        ? _esp32SpeechService.captureSingleFrame()
-        : _nativeCameraService.captureSingleFrame();
+  Future<Uint8List?> _captureImage() async {
+    if (_hardwareMode == HardwareMode.esp32) return _esp32SpeechService.captureSingleFrame();
+    // La camara saca una foto a la vez: esperar a la de la vision local si hay una en curso.
+    _cloudCaptureBusy = true;
+    try {
+      await _phoneVision.waitIdle();
+      return await _nativeCameraService.captureSingleFrame();
+    } finally {
+      _cloudCaptureBusy = false;
+    }
   }
+
+  // ─── Vision local en el celular (modo Celular, mismo modelo Edge AI que la placa) ───
+  bool _cloudCaptureBusy = false;
+
+  /// Enciende la vision local solo en modo Celular; la placa corre su propio modelo.
+  void _updatePhoneVision() {
+    if (_hardwareMode == HardwareMode.standalone) {
+      _phoneVision.start(_nativeCameraService, _phoneVisionCanCapture);
+    } else {
+      _phoneVision.stop();
+    }
+  }
+
+  bool _phoneVisionCanCapture() =>
+      mounted &&
+      _hardwareMode == HardwareMode.standalone &&
+      !_isListening &&
+      !_isProcessing &&
+      !_cloudCaptureBusy &&
+      // Las misiones de datos usan la misma camara.
+      (ModalRoute.of(context)?.isCurrent ?? true);
 
   Esp32SpeechService? get _activeEsp32 =>
       _hardwareMode == HardwareMode.esp32 ? _esp32SpeechService : null;
@@ -223,9 +256,14 @@ class _AssistantScreenState extends State<AssistantScreen>
   static const Duration _visionAlertCooldown = Duration(seconds: 20);
   final Map<String, DateTime> _lastVisionAlert = {};
 
-  Future<void> _onVisionEvent(String label, int confidence) async {
+  /// Avisos de la placa o, en modo Celular, del mismo modelo corriendo en el celular.
+  Future<void> _onVisionEvent(String label, int confidence, {bool fromPhone = false}) async {
     _sensorContext.onVisionEvent(label);
-    if (!mounted || _hardwareMode != HardwareMode.esp32 || _esp32SpeechService.isCollectingData) return;
+    if (!mounted) return;
+    final active = fromPhone
+        ? _hardwareMode == HardwareMode.standalone
+        : _hardwareMode == HardwareMode.esp32 && !_esp32SpeechService.isCollectingData;
+    if (!active) return;
     if (_isListening || _isProcessing || _ttsService.isSpeaking) return;
 
     final now = DateTime.now();
@@ -344,7 +382,7 @@ class _AssistantScreenState extends State<AssistantScreen>
         if (mounted) setState(() => _statusText = status);
       },
       captureImageCallback: _captureImage,
-      sensorContext: _hardwareMode == HardwareMode.esp32 ? _sensorContext.describe() : null,
+      sensorContext: _sensorContext.describe(),
     );
     if (desc != null && mounted) {
       setState(() {
@@ -431,7 +469,7 @@ class _AssistantScreenState extends State<AssistantScreen>
           if (mounted) setState(() => _statusText = status);
         },
         captureImageCallback: _captureImage,
-        sensorContext: _hardwareMode == HardwareMode.esp32 ? _sensorContext.describe() : null,
+        sensorContext: _sensorContext.describe(),
       );
       
       if (_hardwareMode == HardwareMode.esp32) _esp32SpeechService.stopThinkingSound();
@@ -469,6 +507,7 @@ class _AssistantScreenState extends State<AssistantScreen>
   @override
   void dispose() {
     _continuousTimer?.cancel();
+    _phoneVision.dispose();
     _pulseController.dispose();
     _fadeController.dispose();
     _nativeCameraService.dispose();
@@ -583,6 +622,7 @@ class _AssistantScreenState extends State<AssistantScreen>
          setState(() {
             _hardwareMode = mode;
          });
+         _updatePhoneVision();
          _ttsService.speakStatus(
            mode == HardwareMode.esp32 ? 'Modo ESP32 activado' : 'Modo Celular activado',
            esp32Service: mode == HardwareMode.esp32 ? _esp32SpeechService : null

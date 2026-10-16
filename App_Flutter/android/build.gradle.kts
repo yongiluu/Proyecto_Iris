@@ -35,6 +35,16 @@ subprojects {
     }
 }
 
+// tflite_flutter compila Java con target 11 pero no fija el de Kotlin (queda en el del JDK, 21):
+// "Inconsistent JVM-target compatibility". Se alinea Kotlin a 11 solo en ese plugin.
+subprojects {
+    if (name == "tflite_flutter") {
+        tasks.withType<org.jetbrains.kotlin.gradle.tasks.KotlinCompile>().configureEach {
+            compilerOptions.jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_11)
+        }
+    }
+}
+
 tasks.register<Delete>("clean") {
     delete(rootProject.layout.buildDirectory)
 }
