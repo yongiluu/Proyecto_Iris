@@ -5,7 +5,7 @@ Entrenamiento de los modelos TensorFlow Lite Micro que corren **dentro de la pla
 | Modelo | Estado | Qué detecta |
 |---|---|---|
 | Audio (`audio/`) | ✅ pipeline completo, modelo v3 (ESC-50 + UrbanSound8K + voz chilena) | `fondo`, `voz`, `bocina`, `sirena`, `perro` |
-| Visión (`vision/`) | ✅ pipeline completo, modelo v2 entrenado con Open Images | `nada`, `persona`, `vehiculo`, `escalera`, `puerta` |
+| Visión (`vision/`) | ✅ pipeline completo, modelo v3 entrenado con Open Images | `nada`, `persona`, `vehiculo`, `escalera`, `puerta` |
 
 ## Recolectar datos reales con la app (con o sin prototipo)
 
@@ -175,35 +175,43 @@ cámara OV2640 96×96 grises ─► MobileNetV1 0.25 int8 (1 vez por segundo) �
 
 **Simulación de la OV2640** (`vision/augment.py`): poca luz con más ruido, exposición y gamma, viñeteado, desenfoque y movimiento, baja resolución, ruido de sensor, artefactos JPEG, inclinación leve y zoom. Se aplica al azar en cada época. El reporte mide el test limpio y también un "test cámara" degradado con semilla fija.
 
-## Resultados del modelo de visión v2 (2026-10-16)
+## Resultados del modelo de visión v3 (2026-10-16)
 
-v2 usa la misma red (MobileNetV1 0,25, 306 KB, ~87 KB de arena), pero mejores datos:
-- **~48 mil fotos** (v1: ~17 mil), con casi todas las escaleras y puertas disponibles y 20 mil fotos de "nada".
-- La **rotación de Open Images corregida**.
-- **Negativos difíciles**: el modelo v1 se confundía con el 26 % de las fotos de "nada" del train, y esas reciben recortes extra.
+Las tres versiones usan la misma red (MobileNetV1 0,25, 306 KB, ~87 KB de arena). Lo que cambia son los datos:
 
-Entrenado en CPU (25 épocas, ~1 h 40 min). Se midió sobre el test nuevo: 6.376 recortes de fotos que ningún modelo vio. v1 se midió sobre el mismo test. Ambos son el modelo int8 de la placa, con 1 frame y sin promediar:
+- **v1:** ~17 mil fotos de Open Images.
+- **v2:** ~48 mil fotos, rotación de Open Images corregida y **negativos difíciles**. El modelo v1 se confundía con el 26 % de las fotos de "nada" del train, y esas reciben recortes extra.
+- **v3 (actual):** ~63 mil fotos, con el doble de personas (la clase más débil) y más vehículos, más una segunda ronda de negativos difíciles buscada con v2. v2 ya solo se confundía con el 12 % de las fotos de "nada".
 
-| | v1 (umbral 0,8) | **v2 (umbral 0,7, actual)** |
+Cada versión se comparó con la anterior **sobre el mismo test** (fotos que ningún modelo vio), con el modelo int8 de la placa, 1 frame y sin promediar.
+
+| Test v3 (8.199 recortes) | v2 (umbral 0,7) | **v3 (umbral 0,75, actual)** |
 |---|---|---|
-| Exactitud general | 80,2 % | **83,8 %** |
-| **Avisos falsos sobre "nada"** | 8,9 % | **5,9 %** |
-| Avisos correctos (persona / vehículo / escalera / puerta) | 55 / 78 / 78 / 74 % | 56 / 83 / 74 / 71 % |
-| Aviso de la clase equivocada | — | 2,0 % |
-| Con simulación OV2640: avisos falsos / exactitud | 7,4 % / 77,9 % | 5,7 % / 81,6 % |
+| Exactitud general | 82,0 % | **82,8 %** |
+| **Avisos falsos sobre "nada"** | 5,9 % | **5,4 %** |
+| Avisos correctos (persona / vehículo / escalera / puerta) | 55 / 80 / 75 / 72 % | **57 / 82** / 72 / 72 % |
+| Con simulación OV2640: avisos falsos / detección media | 5,7 % / 64,7 % | 5,5 % / 64,2 % |
 
-A igual tasa de avisos falsos, v2 detecta en promedio ~4–5 puntos más que v1. Con el umbral elegido, v2 detecta lo mismo que v1, pero con **un tercio menos de avisos falsos**. El umbral se cambia en `vision/config.py` (`ALERT_THRESHOLD`) y se aplica con `export_model.py --tflite models/vision_scenes_int8.tflite`. El barrido completo:
+| Test v2 (6.376 recortes) | v1 (umbral 0,8) | v2 (umbral 0,7) |
+|---|---|---|
+| Exactitud general | 80,2 % | 83,8 % |
+| Avisos falsos sobre "nada" | 8,9 % | 5,9 % |
+| Detección media de las 4 clases | 71 % | 71 % |
 
-| Umbral v2 | 0,5 | 0,6 | 0,7 | 0,8 | 0,9 |
+En resumen: de v1 a v3 los avisos falsos bajaron de ~9 % a ~5,4 % por frame con la misma detección (o +4–5 puntos de detección a igual nivel de avisos falsos). De v2 a v3 la mejora es chica (+2 puntos en personas y un poco menos de falsos). **Con datos públicos ya estamos cerca del techo: el próximo salto viene de fotos reales (misiones de la app).**
+
+Barrido de umbrales de v3 (test v3, imagen limpia):
+
+| Umbral | 0,6 | 0,7 | 0,75 | 0,8 | 0,9 |
 |---|---|---|---|---|---|
-| Avisos falsos sobre "nada" | 12,1 % | 8,8 % | 5,9 % | 4,3 % | 2,0 % |
-| Detección media de las 4 clases | 79 % | 75 % | 71 % | 66 % | 57 % |
+| Avisos falsos sobre "nada" | 9,9 % | 6,6 % | 5,4 % | 3,9 % | 1,9 % |
+| Detección media de las 4 clases | 78 % | 73 % | 71 % | 68 % | 59 % |
 
-La placa además promedia 2 frames, lo que debería bajar algo los falsos (no está medido).
+El umbral se cambia en `vision/config.py` (`ALERT_THRESHOLD`) y se aplica sin reentrenar con `python vision/export_model.py --tflite models/vision_scenes_int8.tflite`. La placa además promedia 2 frames, lo que debería bajar algo los falsos (no está medido).
 
 **Limitaciones conocidas (léelas antes de confiar en el modelo):**
 - **Nunca vio la cámara real.** Las cifras son sobre fotos de internet, encuadradas por fotógrafos. En la placa (altura del pecho, movimiento, OV2640) seguramente serán peores, hasta hacer el fine-tuning con las misiones de la app (con la placa o con el celular).
-- **Persona es la clase más débil** (56 % de avisos correctos, 47 % con la simulación): muchas fotos de "nada" tienen formas parecidas a personas.
+- **Persona sigue siendo la clase más débil** (57 % de avisos correctos, 49 % con la simulación): muchas fotos de "nada" tienen formas parecidas a personas.
 - **No es un detector de obstáculos ni de distancia**: reconoce si al frente hay una persona, un vehículo, una escalera o una puerta. Postes, hoyos o ramas no son ninguna de esas clases. Un sensor de distancia (VL53L1X) queda para el prototipo 3.
 - Las escaleras vienen de solo ~3.600 fotos (3 recortes cada una, correlacionados), así que su cifra es algo optimista. "Escalera" incluye escaleras mecánicas.
 - La rotación se corrigió en las fotos de validation/test. En las de train de Open Images se omitió (`--skip-train-rotations`, el CSV es de 640 MB): afecta a ~1 % de esas fotos.
@@ -214,9 +222,9 @@ La placa además promedia 2 frames, lo que debería bajar algo los falsos (no es
 Desde `ML_Training/` (con el mismo `.venv` del audio):
 
 ```bash
-python vision/download_datasets.py        # ~48 mil fotos: ~3 GB de descarga, ~1,5 GB en disco, ~1 h
+python vision/download_datasets.py --skip-train-rotations   # ~63 mil fotos: ~4 GB de descarga, ~2 GB en disco, ~1,5 h
 python vision/prepare_dataset.py --hard-negatives models/vision_scenes_int8.tflite   # recortes -> data/vision_dataset.npz (~40 min)
-python vision/train.py --epochs 25        # ~1 h 40 min en CPU, ~10 min en GPU (cierra otros programas: usa ~3 GB de RAM)
+python vision/train.py --epochs 25 --workers 4   # ~1 h 45 min en CPU, ~10 min en GPU (no corras otra cosa pesada: usa ~3 GB de RAM)
 python vision/export_model.py             # int8 + valida ops + genera vision_model_data.h/.cpp
 cd ../Hardware_ESP32 && pio run -e seeed_xiao_esp32s3 -t upload
 ```
