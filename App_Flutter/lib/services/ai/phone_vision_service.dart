@@ -10,11 +10,16 @@ import '../hardware/esp32_speech_service.dart' show GrayFrame;
 
 typedef VisionCallback = void Function(String label, int percent);
 
+/// Nivel de cercania: 0 = libre, 1 = cerca, 2 = muy cerca. `percent` = cerca + muy_cerca.
+typedef ProximityCallback = void Function(int level, int percent);
+
 /// El mismo modelo Edge AI de vision de la placa, corriendo en el celular (modo "Celular").
 ///
 /// Replica Hardware_ESP32/src/tflite_vision.cpp: foto 96x96 grises (PhoneCapture.jpegToGray), red
 /// int8 1 vez por segundo, promedio con el frame anterior, umbral 0,75 y sin repetir la misma clase
 /// antes de 8 s. Cada 10 s manda la clase mas vista como contexto, igual que CMD_VISION_CONTEXT.
+/// En cada foto corre tambien el modelo de CERCANIA (Hardware_ESP32/src/proximity.cpp): misma
+/// imagen, salida [libre, cerca, muy_cerca], promedio con el frame anterior y nivel por umbral 0,7.
 /// Todo es local: no usa internet.
 class PhoneVisionService {
   static const String modelAsset = 'assets/vision_scenes_int8.tflite';
@@ -26,13 +31,19 @@ class PhoneVisionService {
   static const Duration eventCooldown = Duration(seconds: 8); // VISION_EVENT_COOLDOWN_MS
   static const Duration contextPeriod = Duration(seconds: 10); // AMBIENT_CONTEXT_PERIOD_MS
 
+  static const String proximityAsset = 'assets/proximity_int8.tflite';
+  static const List<String> proximityLabels = ['libre', 'cerca', 'muy_cerca'];
+  static const double proximityThreshold = 0.7; // kProximityAlertThreshold
+
   VisionCallback? onEvent;
   VisionCallback? onContext;
+  /// Se llama solo cuando cambia el nivel (como CMD_PROXIMITY de la placa).
+  ProximityCallback? onProximity;
 
-  Interpreter? _interpreter;
-  final Uint8List _pixelToInput = Uint8List(256); // int8 guardado como byte
-  double _outputScale = 1;
-  int _outputZeroPoint = 0;
+  _Int8Classifier? _vision;
+  _Int8Classifier? _proximity;
+  final List<double> _previousProximity = List.filled(proximityLabels.length, 0);
+  int _proximityLevel = 0;
 
   final List<double> _previousScores = List.filled(labels.length, 0);
   final List<DateTime?> _lastEvent = List.filled(labels.length, null);
@@ -43,30 +54,20 @@ class PhoneVisionService {
   int _generation = 0; // un stop()+start() rapido no debe dejar dos ciclos corriendo
   Completer<void>? _inFlight;
 
-  bool get isLoaded => _interpreter != null;
+  bool get isLoaded => _vision != null;
   bool get isRunning => _running;
+  int get proximityLevel => _proximityLevel;
 
   Future<void> load() async {
-    final interpreter = await Interpreter.fromAsset(modelAsset, options: InterpreterOptions()..threads = 2);
-    final input = interpreter.getInputTensor(0);
-    final output = interpreter.getOutputTensor(0);
-    if (input.type != TensorType.int8 ||
-        input.numElements() != imageSize * imageSize ||
-        output.type != TensorType.int8 ||
-        output.shape.last != labels.length) {
-      interpreter.close();
-      throw StateError('El modelo de vision no calza con 96x96x1 int8 -> ${labels.length} clases');
-    }
-
-    final inScale = input.params.scale;
-    final inZero = input.params.zeroPoint;
-    for (int p = 0; p < 256; p++) {
-      _pixelToInput[p] = quantizePixel(p, inScale, inZero) & 0xFF;
-    }
-    _outputScale = output.params.scale;
-    _outputZeroPoint = output.params.zeroPoint;
-    _interpreter = interpreter;
+    _vision = await _Int8Classifier.load(modelAsset, labels.length);
     debugPrint('[Vision IA celular] Listo: ${labels.length} clases');
+    // La cercania es opcional: si su modelo falla, la vision sigue funcionando.
+    try {
+      _proximity = await _Int8Classifier.load(proximityAsset, proximityLabels.length);
+      debugPrint('[Cercania IA celular] Listo');
+    } catch (e) {
+      debugPrint('[Cercania IA celular] No se pudo cargar: $e');
+    }
   }
 
   /// Pixel 0..255 -> int8 de entrada, identico a kVisionInputLut de la placa (export_model.input_lut):
@@ -88,23 +89,12 @@ class PhoneVisionService {
     return q.toInt().clamp(-128, 127);
   }
 
-  /// Puntajes 0..1 de cada clase para una imagen 96x96 en grises.
-  List<double> classify(GrayFrame frame) {
-    final interpreter = _interpreter!;
-    final pixels = frame.pixels;
-    final input = Uint8List(pixels.length);
-    for (int i = 0; i < pixels.length; i++) {
-      input[i] = _pixelToInput[pixels[i]];
-    }
-    interpreter.getInputTensor(0).data = input;
-    interpreter.invoke();
-    final raw = Int8List.view(interpreter.getOutputTensor(0).data.buffer);
-    return [for (int i = 0; i < labels.length; i++) (raw[i] - _outputZeroPoint) * _outputScale];
-  }
+  /// Puntajes 0..1 de cada clase de vision para una imagen 96x96 en grises.
+  List<double> classify(GrayFrame frame) => _vision!.run(frame);
 
   /// Saca una foto por segundo mientras `canCapture()` sea true (ej. no mientras se habla con la IA).
   void start(CameraService camera, bool Function() canCapture) {
-    if (_running || _interpreter == null) return;
+    if (_running || _vision == null) return;
     _running = true;
     _resetSmoothing();
     _loop(camera, canCapture, ++_generation);
@@ -128,7 +118,11 @@ class PhoneVisionService {
           final jpeg = await camera.captureSingleFrame();
           if (jpeg != null && alive()) {
             final frame = await PhoneCapture.jpegToGray(jpeg, size: imageSize);
-            if (alive()) _handleScores(classify(frame));
+            if (alive()) {
+              _handleScores(classify(frame));
+              final proximity = _proximity;
+              if (proximity != null) _handleProximity(proximity.run(frame));
+            }
           }
         } catch (e) {
           debugPrint('[Vision IA celular] Error: $e');
@@ -190,11 +184,80 @@ class PhoneVisionService {
     _contextCounts.fillRange(0, _contextCounts.length, 0);
   }
 
-  void _resetSmoothing() => _previousScores.fillRange(0, _previousScores.length, 0);
+  void _handleProximity(List<double> scores) {
+    // Promedio con el frame anterior: un frame suelto no dispara ni apaga los pitidos.
+    final smoothed = <double>[];
+    for (int i = 0; i < scores.length; i++) {
+      smoothed.add(0.5 * (scores[i] + _previousProximity[i]));
+      _previousProximity[i] = scores[i];
+    }
+    final near = smoothed[1] + smoothed[2];
+    final level = near >= proximityThreshold ? (smoothed[2] > smoothed[1] ? 2 : 1) : 0;
+    _setProximityLevel(level, (near * 100).round());
+  }
+
+  void _setProximityLevel(int level, int percent) {
+    if (level == _proximityLevel) return;
+    _proximityLevel = level;
+    debugPrint('[Cercania IA celular] Nivel $level ($percent%)');
+    onProximity?.call(level, percent);
+  }
+
+  void _resetSmoothing() {
+    _previousScores.fillRange(0, _previousScores.length, 0);
+    _previousProximity.fillRange(0, _previousProximity.length, 0);
+    // Sin fotos no se sabe si hay algo cerca: callar los pitidos.
+    _setProximityLevel(0, 0);
+  }
 
   void dispose() {
     stop();
-    _interpreter?.close();
-    _interpreter = null;
+    _vision?.close();
+    _proximity?.close();
+    _vision = null;
+    _proximity = null;
   }
+}
+
+/// Red int8 de 96x96x1 grises -> N clases, con la tabla pixel -> int8 calculada del modelo.
+class _Int8Classifier {
+  final Interpreter _interpreter;
+  final Uint8List _pixelToInput; // int8 guardado como byte
+  final double _outputScale;
+  final int _outputZeroPoint;
+  final int _numClasses;
+
+  _Int8Classifier._(this._interpreter, this._pixelToInput, this._outputScale, this._outputZeroPoint, this._numClasses);
+
+  static Future<_Int8Classifier> load(String asset, int numClasses) async {
+    final interpreter = await Interpreter.fromAsset(asset, options: InterpreterOptions()..threads = 2);
+    final input = interpreter.getInputTensor(0);
+    final output = interpreter.getOutputTensor(0);
+    if (input.type != TensorType.int8 ||
+        input.numElements() != PhoneVisionService.imageSize * PhoneVisionService.imageSize ||
+        output.type != TensorType.int8 ||
+        output.shape.last != numClasses) {
+      interpreter.close();
+      throw StateError('$asset no calza con 96x96x1 int8 -> $numClasses clases');
+    }
+    final lut = Uint8List(256);
+    for (int p = 0; p < 256; p++) {
+      lut[p] = PhoneVisionService.quantizePixel(p, input.params.scale, input.params.zeroPoint) & 0xFF;
+    }
+    return _Int8Classifier._(interpreter, lut, output.params.scale, output.params.zeroPoint, numClasses);
+  }
+
+  List<double> run(GrayFrame frame) {
+    final pixels = frame.pixels;
+    final input = Uint8List(pixels.length);
+    for (int i = 0; i < pixels.length; i++) {
+      input[i] = _pixelToInput[pixels[i]];
+    }
+    _interpreter.getInputTensor(0).data = input;
+    _interpreter.invoke();
+    final raw = Int8List.view(_interpreter.getOutputTensor(0).data.buffer);
+    return [for (int i = 0; i < _numClasses; i++) (raw[i] - _outputZeroPoint) * _outputScale];
+  }
+
+  void close() => _interpreter.close();
 }

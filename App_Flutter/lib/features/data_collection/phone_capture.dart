@@ -4,6 +4,7 @@ import 'dart:typed_data';
 import 'dart:ui' as ui;
 
 import 'package:flutter/painting.dart';
+import 'package:image/image.dart' as img;
 import 'package:record/record.dart';
 
 import '../../services/hardware/camera_service.dart';
@@ -30,10 +31,33 @@ class PhoneCapture {
     return jpegToGray(jpeg, size: size);
   }
 
+  /// Foto 96x96 grises + la misma foto a color (JPEG de `colorShortSide` px de lado corto),
+  /// para las misiones de cercania que se etiquetan con un modelo de profundidad en el PC.
+  Future<({GrayFrame gray, Uint8List colorJpeg})?> takeGrayAndColor({int size = 96, int colorShortSide = 320}) async {
+    final jpeg = await camera.captureSingleFrame();
+    if (jpeg == null) return null;
+    final buffer = await ui.ImmutableBuffer.fromUint8List(jpeg);
+    final codec = await ui.instantiateImageCodecWithSize(buffer, getTargetSize: (w, h) {
+      final scale = colorShortSide / math.min(w, h);
+      return ui.TargetImageSize(width: (w * scale).round(), height: (h * scale).round());
+    });
+    final image = (await codec.getNextFrame()).image;
+    final rgba = (await image.toByteData(format: ui.ImageByteFormat.rawRgba))!.buffer;
+    final color = img.Image.fromBytes(
+        width: image.width, height: image.height, bytes: rgba, numChannels: 4, order: img.ChannelOrder.rgba);
+    final colorJpeg = img.encodeJpg(color, quality: 90);
+    final gray = await _grayFromImage(image, size);
+    return (gray: gray, colorJpeg: colorJpeg);
+  }
+
   static Future<GrayFrame> jpegToGray(Uint8List jpeg, {int size = 96}) async {
     // Decodificar ya reducido (solo ancho: se mantiene la proporcion) para no gastar memoria.
     final codec = await ui.instantiateImageCodec(jpeg, targetWidth: 320);
-    final image = (await codec.getNextFrame()).image;
+    return _grayFromImage((await codec.getNextFrame()).image, size);
+  }
+
+  /// Cuadrado central reducido a `size` x `size` en grises. Libera `image`.
+  static Future<GrayFrame> _grayFromImage(ui.Image image, int size) async {
     final side = math.min(image.width, image.height).toDouble();
     final source = Rect.fromLTWH((image.width - side) / 2, (image.height - side) / 2, side, side);
 

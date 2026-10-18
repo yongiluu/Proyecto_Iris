@@ -157,7 +157,6 @@ class MissionScreen extends StatefulWidget {
 }
 
 class _MissionScreenState extends State<MissionScreen> {
-  static const Duration _photoInterval = Duration(milliseconds: 500);
   static const double _minReceivedRatio = 0.7;
 
   int _done = 0;
@@ -329,7 +328,15 @@ class _MissionScreenState extends State<MissionScreen> {
         !_cancelRequested &&
         (_usePhone || widget.esp32.isConnected)) {
       final started = DateTime.now();
-      final frame = _usePhone ? await widget.phone.takeGrayFrame() : await widget.esp32.captureGrayFrame();
+      GrayFrame? frame;
+      Uint8List? colorJpeg;
+      if (_usePhone && _mission.saveColorJpeg) {
+        final shot = await widget.phone.takeGrayAndColor();
+        frame = shot?.gray;
+        colorJpeg = shot?.colorJpeg;
+      } else {
+        frame = _usePhone ? await widget.phone.takeGrayFrame() : await widget.esp32.captureGrayFrame();
+      }
       if (frame == null) {
         if (++failures >= 5) {
           _show(_usePhone
@@ -340,10 +347,11 @@ class _MissionScreenState extends State<MissionScreen> {
         continue;
       }
       failures = 0;
-      await widget.store.savePhoto(_mission, frame, take, _photosThisTake);
+      await widget.store.savePhoto(_mission, frame, take, _photosThisTake, colorJpeg: colorJpeg);
       _photosThisTake++;
-      if (mounted) setState(() => _preview = encodeGrayBmp(frame));
-      final wait = _photoInterval - DateTime.now().difference(started);
+      final preview = encodeGrayBmp(frame);
+      if (mounted) setState(() => _preview = preview);
+      final wait = Duration(milliseconds: _mission.photoIntervalMs) - DateTime.now().difference(started);
       if (wait > Duration.zero) await Future.delayed(wait);
     }
 
@@ -387,6 +395,9 @@ class _MissionScreenState extends State<MissionScreen> {
     if (ok != true) return;
     for (final file in toDelete) {
       await file.delete();
+      // El JPEG a color de las misiones de cercania va junto a su BMP.
+      final jpg = File(file.path.replaceAll(RegExp(r'\.bmp$'), '.jpg'));
+      if (jpg.path != file.path && await jpg.exists()) await jpg.delete();
     }
     await _refresh();
     _show('Borrado.');
@@ -412,7 +423,7 @@ class _MissionScreenState extends State<MissionScreen> {
               const SizedBox(height: 12),
               SegmentedButton<bool>(
                 segments: const [
-                  ButtonSegment(value: false, icon: Icon(Icons.developer_board), label: Text('Placa')),
+                  ButtonSegment(value: false, icon: Icon(Icons.memory), label: Text('Modulo')),
                   ButtonSegment(value: true, icon: Icon(Icons.smartphone), label: Text('Celular')),
                 ],
                 selected: {_usePhone},
@@ -491,17 +502,29 @@ class _MissionScreenState extends State<MissionScreen> {
 
   Widget _photoPanel() {
     final preview = _preview;
+    // La foto usa el espacio que dejen los textos: con letra grande del sistema no hay overflow.
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
         if (preview == null)
           const Icon(Icons.photo_camera, size: 96, color: Colors.grey)
         else
-          Image.memory(preview, width: 288, height: 288, gaplessPlayback: true, filterQuality: FilterQuality.none),
+          Flexible(
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 320, maxHeight: 320),
+              child: AspectRatio(
+                aspectRatio: 1,
+                child: Image.memory(preview, fit: BoxFit.contain, gaplessPlayback: true, filterQuality: FilterQuality.none),
+              ),
+            ),
+          ),
         const SizedBox(height: 8),
-        Text(preview == null
-            ? 'Aqui veras lo que ve el modelo (96x96)'
-            : 'Lo que ve el modelo (96x96, ${_usePhone ? 'celular' : 'placa'})'),
+        Text(
+          preview == null
+              ? 'Aqui veras lo que ve el modelo (96x96)'
+              : 'Lo que ve el modelo (96x96, ${_usePhone ? 'celular' : 'modulo'})',
+          textAlign: TextAlign.center,
+        ),
         if (_busy) Text('$_photosThisTake/${_mission.photosPerTake}'),
       ],
     );

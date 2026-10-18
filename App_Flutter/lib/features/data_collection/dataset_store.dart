@@ -12,6 +12,7 @@ import 'missions.dart';
 /// ```text
 /// iris_dataset/audio/<clase>/<clase>__<ambiente>__<mision>__<origen>-<fecha>.wav
 /// iris_dataset/vision/<clase>/<clase>__<ambiente>__<mision>__<origen>-<fecha>_<n>.bmp
+/// iris_dataset/vision/cercania/...<n>.jpg   (solo misiones de cercania en modo Celular)
 /// iris_dataset/registro.csv
 /// ```
 class DatasetStore {
@@ -35,14 +36,16 @@ class DatasetStore {
     return '${now.year}${two(now.month)}${two(now.day)}_${two(now.hour)}${two(now.minute)}${two(now.second)}';
   }
 
-  /// Archivos ya guardados de una mision (grabaciones o fotos).
+  /// Archivos ya guardados de una mision (grabaciones o fotos BMP; los JPEG a color acompanan
+  /// a su BMP y no cuentan aparte).
   Future<List<File>> files(Mission mission) async {
     final folder = _folder(mission);
     if (!await folder.exists()) return [];
     final prefix = _prefix(mission);
     final found = await folder
         .list()
-        .where((e) => e is File && e.uri.pathSegments.last.startsWith(prefix))
+        .where((e) =>
+            e is File && e.uri.pathSegments.last.startsWith(prefix) && !e.path.endsWith('.jpg'))
         .cast<File>()
         .toList();
     found.sort((a, b) => a.path.compareTo(b.path));
@@ -76,11 +79,13 @@ class DatasetStore {
   }
 
   /// Guarda una tanda de fotos. `take` = marca de tiempo comun a la tanda.
-  Future<File> savePhoto(Mission mission, GrayFrame frame, String take, int index) async {
+  Future<File> savePhoto(Mission mission, GrayFrame frame, String take, int index, {Uint8List? colorJpeg}) async {
     final folder = _folder(mission);
     await folder.create(recursive: true);
-    final file = File('${folder.path}/${_prefix(mission)}${take}_${index.toString().padLeft(3, '0')}.bmp');
+    final base = '${folder.path}/${_prefix(mission)}${take}_${index.toString().padLeft(3, '0')}';
+    final file = File('$base.bmp');
     await file.writeAsBytes(encodeGrayBmp(frame));
+    if (colorJpeg != null) await File('$base.jpg').writeAsBytes(colorJpeg);
     return file;
   }
 

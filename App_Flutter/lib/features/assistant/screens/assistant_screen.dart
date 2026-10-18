@@ -3,15 +3,16 @@
 /// ============================================================================
 
 import 'dart:async';
-import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:camera/camera.dart';
 import 'package:vibration/vibration.dart';
 
-import '../../../core/constants/app_constants.dart';
 import '../../../core/theme/app_theme.dart';
+import '../widgets/iris_logo.dart';
+import '../widgets/shimmer_text.dart';
+import '../widgets/vision_alert_banner.dart';
 import '../../../services/hardware/camera_service.dart';
 import '../../../services/hardware/esp32_speech_service.dart';
 import '../../../services/ai/speech_service.dart';
@@ -65,6 +66,7 @@ class _AssistantScreenState extends State<AssistantScreen>
 
   // ─── Volume Button ───
   static const MethodChannel _volumeChannel = MethodChannel('com.iris.visual.iris_app/volume');
+  static const MethodChannel _soundChannel = MethodChannel('com.iris.visual.iris_app/sound');
   DateTime? _lastVolumeUpTime;
 
   @override
@@ -117,7 +119,8 @@ class _AssistantScreenState extends State<AssistantScreen>
       
       // Callback Nativo
       _nativeSpeechService.onSpeechDone = () {
-        if (mounted && _hardwareMode == HardwareMode.standalone && _isListening) {
+        // Tambien en modo Modulo: ahi el microfono del celular se activa con el doble toque de volumen.
+        if (mounted && _isListening && _isNativeMicActive) {
           _processAudio();
         }
       };
@@ -125,8 +128,9 @@ class _AssistantScreenState extends State<AssistantScreen>
       _esp32SpeechService.onConnectionChanged = (bool connected) {
         if (mounted && _hardwareMode == HardwareMode.esp32) {
           setState(() {
-            _statusText = connected ? 'Conectado a ESP32 (BLE)' : 'Buscando Iris_ESP32 por Bluetooth...';
+            _statusText = connected ? 'Modulo conectado (Bluetooth)' : 'Buscando el modulo por Bluetooth...';
           });
+          if (!connected) _setProximityAlert(0, fromPhone: false);
           if (connected) {
             _hapticService.vibrateStart();
             _ttsService.speakStatus('Bluetooth conectado');
@@ -140,6 +144,8 @@ class _AssistantScreenState extends State<AssistantScreen>
       _esp32SpeechService.onVisionContext = _sensorContext.onVisionContext;
       _phoneVision.onEvent = (label, percent) => _onVisionEvent(label, percent, fromPhone: true);
       _phoneVision.onContext = _sensorContext.onVisionContext;
+      _phoneVision.onProximity = (level, _) => _setProximityAlert(level, fromPhone: true);
+      _esp32SpeechService.onProximity = (level, _) => _setProximityAlert(level, fromPhone: false);
 
       // Un servicio que falla (ej. sin permiso de camara) no debe impedir usar los demas.
       await Future.wait<void>([
@@ -157,7 +163,7 @@ class _AssistantScreenState extends State<AssistantScreen>
       
       if (_hardwareMode == HardwareMode.esp32) {
          setState(() {
-            _statusText = _esp32SpeechService.isConnected ? 'Conectado a ESP32 (BLE)' : 'Buscando Iris_ESP32 por Bluetooth...';
+            _statusText = _esp32SpeechService.isConnected ? 'Modulo conectado (Bluetooth)' : 'Buscando el modulo por Bluetooth...';
          });
       }
 
@@ -277,6 +283,46 @@ class _AssistantScreenState extends State<AssistantScreen>
     await _ttsService.speakStatus('Adelante hay $what', esp32Service: _activeEsp32);
   }
 
+  /// Doble pitido al mandar una consulta a la IA: una persona ciega no ve la pantalla y necesita
+  /// saber por audio que la pregunta salio (pedido del profesor Raul).
+  Future<void> _playQuerySentCue() => _playCue('querySent');
+
+  // ─── Cercania ("voy a chocar con algo?"), como el sensor de retroceso de un auto ───
+  // Sin voz: tiene que ser inmediato. En modo Celular pita y vibra; en modo Modulo la placa pita
+  // por su parlante y el celular solo vibra al mismo ritmo.
+  static const Duration _proximityNearPeriod = Duration(milliseconds: 800);
+  static const Duration _proximityVeryNearPeriod = Duration(milliseconds: 250);
+  Timer? _proximityTimer;
+  int _proximityAlertLevel = 0;
+
+  void _setProximityAlert(int level, {required bool fromPhone}) {
+    _sensorContext.onProximity(level);
+    final active = fromPhone ? _hardwareMode == HardwareMode.standalone : _hardwareMode == HardwareMode.esp32;
+    if (!active) level = 0;
+    if (level == _proximityAlertLevel) return;
+    _proximityAlertLevel = level;
+    _proximityTimer?.cancel();
+    _proximityTimer = null;
+    if (level == 0 || !mounted) return;
+
+    void tick() {
+      if (fromPhone) _soundChannel.invokeMethod('proximity', {'level': level}).catchError((_) {});
+      Vibration.vibrate(duration: level >= 2 ? 80 : 40, amplitude: level >= 2 ? 255 : 160).catchError((_) {});
+    }
+
+    tick();
+    _proximityTimer = Timer.periodic(level >= 2 ? _proximityVeryNearPeriod : _proximityNearPeriod, (_) => tick());
+  }
+
+  /// 'querySent' = doble pitido (consulta enviada); 'listening' = pitido agudo (Iris escucha).
+  Future<void> _playCue(String cue) async {
+    try {
+      await _soundChannel.invokeMethod(cue);
+    } catch (e) {
+      debugPrint('⚠️ No se pudo tocar el aviso $cue: $e');
+    }
+  }
+
   // ─── Volume Button Handler ───
   void _handleVolumeUpPress() {
     final now = DateTime.now();
@@ -290,14 +336,12 @@ class _AssistantScreenState extends State<AssistantScreen>
   }
 
   Future<void> _interruptAndStartListening() async {
-    // Si estaba hablando, paramos
-    if (_ttsService.isSpeaking) {
-      await _ttsService.stop();
-      await _ttsService.speakStatus('Iris lista.', esp32Service: _activeEsp32);
-    } else {
-      await _ttsService.speakStatus('Iris lista.', esp32Service: _activeEsp32);
-    }
-    
+    if (_isListening || _isProcessing) return;
+    // Si estaba hablando, paramos. Un pitido (distinto al de "consulta enviada") avisa que Iris
+    // ya escucha; es mas rapido que decir "Iris lista" y el microfono no se graba a si mismo.
+    if (_ttsService.isSpeaking) await _ttsService.stop();
+    await _playCue('listening');
+
     // Activamos SIEMPRE el microfono nativo del celular (incluso en modo ESP32)
     // Esto es muy util porque el usuario tiene el celular en el bolsillo/mano.
     _startNativeListening();
@@ -376,6 +420,7 @@ class _AssistantScreenState extends State<AssistantScreen>
   }
 
   Future<void> _captureAndDescribeContinuous() async {
+    await _playQuerySentCue();
     final String? desc = await _agentService.processWithAgenticReasoning(
       userPrompt: "Describe la vista actual.",
       onStatusUpdate: (status) {
@@ -458,6 +503,7 @@ class _AssistantScreenState extends State<AssistantScreen>
     setState(() {
       _statusText = 'Analizando con Occipital...';
     });
+    await _playQuerySentCue();
     
     // Si la ESP32 va a analizar la imagen, que vuelva a sonar "Pensando..." durante el GPT
     if (_hardwareMode == HardwareMode.esp32) _esp32SpeechService.startThinkingSound();
@@ -507,6 +553,7 @@ class _AssistantScreenState extends State<AssistantScreen>
   @override
   void dispose() {
     _continuousTimer?.cancel();
+    _proximityTimer?.cancel();
     _phoneVision.dispose();
     _pulseController.dispose();
     _fadeController.dispose();
@@ -516,85 +563,139 @@ class _AssistantScreenState extends State<AssistantScreen>
     super.dispose();
   }
 
+  // ══════════════════════════════════════════════════════════════════════════
+  // UI
+  // ══════════════════════════════════════════════════════════════════════════
+
+  bool get _isBusy => _isListening || _isProcessing;
+
+  /// true si el sistema pidio quitar animaciones (accesibilidad).
+  bool get _reduceMotion => MediaQuery.maybeDisableAnimationsOf(context) ?? false;
+
+  Duration get _uiAnim => _reduceMotion ? Duration.zero : const Duration(milliseconds: 250);
+
+  /// Fondo de pantalla. Solo imagen: nada de texto aca, porque queda detras de las
+  /// tarjetas (antes "Buscando el modulo..." se superponia con la descripcion).
+  /// El estado de conexion del modulo se muestra dentro de la tarjeta de estado.
   Widget _buildCameraPreview() {
+    const emptyBackground = DecoratedBox(
+      decoration: BoxDecoration(
+        gradient: RadialGradient(
+          center: Alignment(0, -0.3),
+          radius: 1.2,
+          colors: [Color(0xFF0A1A20), Colors.black],
+        ),
+      ),
+    );
+
     if (_hardwareMode == HardwareMode.esp32) {
       return ValueListenableBuilder<Uint8List?>(
         valueListenable: _esp32SpeechService.lastPhotoNotifier,
         builder: (context, photoData, child) {
-          if (photoData != null) {
-            return SizedBox.expand(
-              child: Image.memory(
-                photoData,
-                fit: BoxFit.cover,
-                gaplessPlayback: true,
-              ),
-            );
-          }
-          return Container(
-            color: Colors.black87,
-            child: Center(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Icon(
-                    _esp32SpeechService.isConnected ? Icons.bluetooth_connected : Icons.bluetooth_searching,
-                    color: _esp32SpeechService.isConnected ? AppTheme.primaryCyan : Colors.grey,
-                    size: 64,
-                  ),
-                  const SizedBox(height: 16),
-                  Text(
-                    _esp32SpeechService.isConnected ? 'Camara ESP32 (Lista para captura)' : 'Buscando Iris_ESP32 por Bluetooth...',
-                    style: const TextStyle(color: Colors.white70),
-                  ),
-                ],
-              ),
-            ),
+          if (photoData == null) return emptyBackground;
+          return Image.memory(
+            photoData,
+            fit: BoxFit.cover,
+            gaplessPlayback: true,
+            excludeFromSemantics: true,
           );
         },
       );
-    } else {
-      if (!_nativeCameraService.isInitialized || _nativeCameraService.controller == null) {
-        return const Center(child: CircularProgressIndicator(color: AppTheme.primaryCyan));
-      }
-      return SizedBox.expand(
-        child: FittedBox(
-          fit: BoxFit.cover,
-          child: SizedBox(
-            width: _nativeCameraService.controller!.value.previewSize!.height,
-            height: _nativeCameraService.controller!.value.previewSize!.width,
-            child: CameraPreview(_nativeCameraService.controller!),
-          ),
-        ),
-      );
     }
+
+    final controller = _nativeCameraService.controller;
+    final previewSize = controller?.value.previewSize;
+    if (!_nativeCameraService.isInitialized || controller == null || previewSize == null) {
+      return emptyBackground;
+    }
+    return ExcludeSemantics(
+      child: FittedBox(
+        fit: BoxFit.cover,
+        clipBehavior: Clip.hardEdge,
+        child: SizedBox(
+          width: previewSize.height,
+          height: previewSize.width,
+          child: CameraPreview(controller),
+        ),
+      ),
+    );
+  }
+
+  /// Velos oscuros arriba y abajo: el selector y el boton se leen aunque la camara
+  /// muestre algo claro.
+  Widget _buildScrims() {
+    return const IgnorePointer(
+      child: Stack(
+        fit: StackFit.expand,
+        children: [
+          Align(
+            alignment: Alignment.topCenter,
+            child: FractionallySizedBox(
+              heightFactor: 0.22,
+              widthFactor: 1,
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    begin: Alignment.topCenter,
+                    end: Alignment.bottomCenter,
+                    colors: [Color(0xB3000000), Color(0x00000000)],
+                  ),
+                ),
+              ),
+            ),
+          ),
+          Align(
+            alignment: Alignment.bottomCenter,
+            child: FractionallySizedBox(
+              heightFactor: 0.35,
+              widthFactor: 1,
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    begin: Alignment.topCenter,
+                    end: Alignment.bottomCenter,
+                    colors: [Color(0x00000000), Color(0xCC000000)],
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
   }
 
   Widget _buildHardwareToggle() {
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
+      padding: const EdgeInsets.fromLTRB(16, 8, 4, 8),
       child: Container(
+        padding: const EdgeInsets.all(4),
         decoration: BoxDecoration(
-          color: Colors.black.withValues(alpha: 0.7),
-          borderRadius: BorderRadius.circular(30),
-          border: Border.all(color: AppTheme.accentCyan.withValues(alpha: 0.5)),
+          color: AppTheme.cardDark,
+          borderRadius: BorderRadius.circular(32),
         ),
-        child: FittedBox(
-          fit: BoxFit.scaleDown,
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              _buildToggleOption(
+        child: Row(
+          children: [
+            Expanded(
+              child: _buildToggleOption(
                 icon: Icons.smartphone,
                 label: 'Celular',
+                semanticLabel: 'Modo Celular',
+                semanticHint: 'Usa la cámara y el micrófono del teléfono',
                 mode: HardwareMode.standalone,
               ),
-              _buildToggleOption(
-                icon: Icons.developer_board,
-                label: 'Placa ESP32',
+            ),
+            const SizedBox(width: 4),
+            Expanded(
+              child: _buildToggleOption(
+                icon: Icons.memory,
+                label: 'Modulo',
+                semanticLabel: 'Modo Módulo',
+                semanticHint: 'Usa la cámara y el micrófono de la placa',
                 mode: HardwareMode.esp32,
               ),
-            ],
-          ),
+            ),
+          ],
         ),
       ),
     );
@@ -603,10 +704,13 @@ class _AssistantScreenState extends State<AssistantScreen>
   /// Pantalla de recoleccion de datos (para el equipo, no para el usuario final).
   Widget _buildMissionsButton() {
     return Padding(
-      padding: const EdgeInsets.only(right: 12),
+      padding: const EdgeInsets.only(right: 8),
       child: IconButton(
-        tooltip: 'Misiones de recoleccion de datos',
-        icon: const Icon(Icons.assignment_outlined, color: Colors.white70),
+        tooltip: 'Misiones de recolección de datos',
+        iconSize: 26,
+        constraints: const BoxConstraints(minWidth: 48, minHeight: 48),
+        style: IconButton.styleFrom(backgroundColor: AppTheme.cardDark),
+        icon: const Icon(Icons.assignment_outlined, color: AppTheme.textOnDarkMuted),
         onPressed: () => Navigator.of(context).push(MaterialPageRoute(
           builder: (_) => MissionsScreen(esp32: _esp32SpeechService, phoneCamera: _nativeCameraService),
         )),
@@ -614,32 +718,87 @@ class _AssistantScreenState extends State<AssistantScreen>
     );
   }
 
-  Widget _buildToggleOption({required IconData icon, required String label, required HardwareMode mode}) {
+  /// Cambio de modo (misma logica de siempre, solo se saco del onTap).
+  void _selectHardwareMode(HardwareMode mode) {
+    if (_isListening || _isProcessing) return; // Bloquear cambio si esta ocupado
+    setState(() {
+      _hardwareMode = mode;
+      // La respuesta era de la otra camara: no dejarla como si fuera de esta.
+      _lastDescription = '';
+      _statusText = mode == HardwareMode.standalone
+          ? 'Presiona el boton para hablar'
+          : (_esp32SpeechService.isConnected
+              ? 'Modulo conectado (Bluetooth)'
+              : 'Buscando el modulo por Bluetooth...');
+    });
+    // Los pitidos de cercania eran del otro modo.
+    _proximityTimer?.cancel();
+    _proximityTimer = null;
+    _proximityAlertLevel = 0;
+    _updatePhoneVision();
+    _ttsService.speakStatus(
+      mode == HardwareMode.esp32 ? 'Modo modulo activado' : 'Modo Celular activado',
+      esp32Service: mode == HardwareMode.esp32 ? _esp32SpeechService : null,
+    );
+  }
+
+  Widget _buildToggleOption({
+    required IconData icon,
+    required String label,
+    required String semanticLabel,
+    required String semanticHint,
+    required HardwareMode mode,
+  }) {
     final isSelected = _hardwareMode == mode;
-    return GestureDetector(
-      onTap: () {
-         if (_isListening || _isProcessing) return; // Bloquear cambio si esta ocupado
-         setState(() {
-            _hardwareMode = mode;
-         });
-         _updatePhoneVision();
-         _ttsService.speakStatus(
-           mode == HardwareMode.esp32 ? 'Modo ESP32 activado' : 'Modo Celular activado',
-           esp32Service: mode == HardwareMode.esp32 ? _esp32SpeechService : null
-         );
-      },
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-        decoration: BoxDecoration(
-          color: isSelected ? AppTheme.accentCyan.withValues(alpha: 0.3) : Colors.transparent,
-          borderRadius: BorderRadius.circular(30),
-        ),
-        child: Row(
-          children: [
-            Icon(icon, color: isSelected ? AppTheme.accentCyan : Colors.white54, size: 20),
-            const SizedBox(width: 8),
-            Text(label, style: TextStyle(color: isSelected ? Colors.white : Colors.white54, fontWeight: isSelected ? FontWeight.bold : FontWeight.normal)),
-          ],
+    final enabled = !_isBusy;
+    final fg = isSelected ? AppTheme.textOnDark : AppTheme.textOnDarkMuted.withValues(alpha: 0.8);
+
+    return Semantics(
+      container: true,
+      inMutuallyExclusiveGroup: true,
+      checked: isSelected,
+      enabled: enabled,
+      label: semanticLabel,
+      hint: isSelected ? null : semanticHint,
+      onTap: enabled ? () => _selectHardwareMode(mode) : null,
+      child: ExcludeSemantics(
+        child: Material(
+          type: MaterialType.transparency,
+          child: InkWell(
+            borderRadius: BorderRadius.circular(28),
+            onTap: enabled ? () => _selectHardwareMode(mode) : null,
+            child: AnimatedContainer(
+              duration: _uiAnim,
+              constraints: const BoxConstraints(minHeight: 52),
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              decoration: BoxDecoration(
+                color: isSelected ? AppTheme.accentCyan.withValues(alpha: 0.28) : Colors.transparent,
+                borderRadius: BorderRadius.circular(28),
+              ),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Icon(icon, color: isSelected ? AppTheme.brightCyan : fg, size: 22),
+                  const SizedBox(width: 8),
+                  // Con fuente muy grande la etiqueta se achica en vez de desbordar.
+                  Flexible(
+                    child: FittedBox(
+                      fit: BoxFit.scaleDown,
+                      child: Text(
+                        label,
+                        maxLines: 1,
+                        style: TextStyle(
+                          color: fg,
+                          fontSize: 17,
+                          fontWeight: isSelected ? FontWeight.w800 : FontWeight.w500,
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
         ),
       ),
     );
@@ -647,18 +806,22 @@ class _AssistantScreenState extends State<AssistantScreen>
 
   @override
   Widget build(BuildContext context) {
+    // Avisos de vision local: misma fuente de datos (_statusText), pero en su propia tarjeta.
+    final visionAlert = VisionAlert.tryParse(_statusText);
+
     return Scaffold(
       backgroundColor: Colors.black,
       body: Stack(
+        fit: StackFit.expand,
         children: [
           // ─── VISOR DE CÁMARA ───
           _buildCameraPreview(),
+          _buildScrims(),
 
           SafeArea(
             child: FadeTransition(
               opacity: _fadeAnimation,
               child: Column(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
                   Row(
                     children: [
@@ -668,10 +831,19 @@ class _AssistantScreenState extends State<AssistantScreen>
                   ),
                   Expanded(
                     child: SingleChildScrollView(
+                      padding: const EdgeInsets.fromLTRB(16, 4, 16, 12),
                       child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
                         children: [
-                          _buildTopStatus(),
-                          if (_lastDescription.isNotEmpty) _buildDescriptionOverlay(),
+                          _buildTopStatus(visionAlert),
+                          if (visionAlert != null) ...[
+                            const SizedBox(height: 12),
+                            VisionAlertBanner(alert: visionAlert),
+                          ],
+                          if (_lastDescription.isNotEmpty) ...[
+                            const SizedBox(height: 12),
+                            _buildDescriptionOverlay(),
+                          ],
                         ],
                       ),
                     ),
@@ -686,71 +858,174 @@ class _AssistantScreenState extends State<AssistantScreen>
     );
   }
 
-  Widget _buildTopStatus() {
-    return Padding(
-      padding: const EdgeInsets.all(16.0),
-      child: Container(
-        width: double.infinity,
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
-        decoration: BoxDecoration(
-          color: Colors.black.withValues(alpha: 0.75),
-          borderRadius: BorderRadius.circular(16),
-          border: Border.all(
-            color: _isListening ? Colors.redAccent.withValues(alpha: 0.8) : Colors.transparent,
-            width: 2,
-          ),
-        ),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            FittedBox(
-              fit: BoxFit.scaleDown,
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  Text(
-                    _isListening ? 'ESCUCHANDO...' : 'IRIS LISTA',
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 16,
-                      fontWeight: FontWeight.w900,
-                      letterSpacing: 1.5,
-                    ),
-                  ),
-                  const SizedBox(width: 8), // Anadir un poco de espacio
-                  Row(
-                    children: [
-                      const Text('Continuo', style: TextStyle(color: Colors.white70, fontSize: 12)),
-                      Switch(
-                        value: _continuousMode,
-                        onChanged: _toggleContinuousMode,
-                        activeColor: AppTheme.accentCyan,
+  Widget _buildTopStatus(VisionAlert? visionAlert) {
+    final Color accent;
+    final String phase;
+    final String phaseSpoken;
+    final IconData phaseIcon;
+    if (!_isInitialized) {
+      accent = AppTheme.textOnDarkMuted;
+      phase = 'INICIANDO';
+      phaseSpoken = 'Iniciando';
+      phaseIcon = Icons.hourglass_top;
+    } else if (_isListening) {
+      accent = AppTheme.listeningRed;
+      phase = 'ESCUCHANDO';
+      phaseSpoken = 'Escuchando';
+      phaseIcon = Icons.mic;
+    } else if (_isProcessing) {
+      accent = AppTheme.brightCyan;
+      phase = 'PENSANDO';
+      phaseSpoken = 'Pensando';
+      phaseIcon = Icons.auto_awesome;
+    } else {
+      accent = AppTheme.accentCyan;
+      phase = 'IRIS LISTA';
+      phaseSpoken = 'Iris lista';
+      phaseIcon = Icons.check_circle_outline;
+    }
+
+    // Si hay aviso de vision, ese texto va en su tarjeta (con su propio liveRegion) y aca
+    // queda la indicacion de reposo, sin anunciarla.
+    final statusLine = visionAlert != null ? 'Presiona el boton para hablar' : _statusText;
+    // Borde solo mientras escucha o piensa; en reposo la tarjeta va limpia.
+    final borderColor = _isBusy ? accent.withValues(alpha: 0.7) : Colors.transparent;
+    final showModuleLink =
+        _hardwareMode == HardwareMode.esp32 && !_statusText.contains('Bluetooth');
+
+    return AnimatedContainer(
+      duration: _uiAnim,
+      padding: const EdgeInsets.fromLTRB(16, 12, 12, 16),
+      decoration: BoxDecoration(
+        color: AppTheme.cardDark,
+        borderRadius: BorderRadius.circular(AppTheme.cardRadius),
+        border: Border.all(color: borderColor, width: 1.5),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          // Con fuente grande el switch baja a otra linea en vez de achicar el texto.
+          Wrap(
+            alignment: WrapAlignment.spaceBetween,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            spacing: 8,
+            runSpacing: 4,
+            children: [
+              Semantics(
+                header: true,
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    if (_isListening)
+                      Icon(phaseIcon, color: accent, size: 24)
+                    else
+                      // Logo de Iris: quieto en reposo, girando mientras piensa o arranca.
+                      IrisLogo(
+                        size: 26,
+                        color: accent,
+                        spinning: _isProcessing || !_isInitialized,
+                        turnDuration: Duration(milliseconds: _isProcessing ? 1600 : 4000),
                       ),
-                    ],
-                  ),
-                ],
+                    const SizedBox(width: 8),
+                    Flexible(
+                      child: Text(
+                        phase,
+                        semanticsLabel: phaseSpoken,
+                        style: TextStyle(
+                          color: _isBusy ? accent : AppTheme.textOnDark,
+                          fontSize: 17,
+                          fontWeight: FontWeight.w900,
+                          letterSpacing: 1.5,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              _buildContinuousSwitch(),
+            ],
+          ),
+          if (statusLine.isNotEmpty) ...[
+            const SizedBox(height: 6),
+            // Solo se anuncia cuando cambia el texto; el brillo no afecta la semantica.
+            Semantics(
+              liveRegion: visionAlert == null,
+              child: ShimmerText(
+                statusLine,
+                active: _isBusy,
+                style: const TextStyle(fontSize: 19, fontWeight: FontWeight.w500, height: 1.35),
               ),
             ),
-            if (_statusText.isNotEmpty)
-              Padding(
-                padding: const EdgeInsets.only(top: 8.0),
-                child: Semantics(
-                  liveRegion: true,
-                  child: Text(
-                    _statusText,
-                    style: const TextStyle(color: Colors.white70, fontSize: 14),
-                    textAlign: TextAlign.left,
+          ],
+          if (showModuleLink) ...[
+            const SizedBox(height: 12),
+            _buildModuleLink(),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _buildContinuousSwitch() {
+    return MergeSemantics(
+      child: Semantics(
+        label: 'Modo continuo',
+        hint: 'Describe lo que ve la cámara de forma automática',
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Flexible(
+              child: GestureDetector(
+                excludeFromSemantics: true,
+                behavior: HitTestBehavior.opaque,
+                onTap: () => _toggleContinuousMode(!_continuousMode),
+                child: const ExcludeSemantics(
+                  child: Padding(
+                    padding: EdgeInsets.symmetric(vertical: 12),
+                    child: Text(
+                      'Continuo',
+                      style: TextStyle(color: AppTheme.textOnDarkMuted, fontSize: 15),
+                    ),
                   ),
                 ),
               ),
-            if (_isProcessing)
-              const Padding(
-                padding: EdgeInsets.only(top: 16.0),
-                child: LinearProgressIndicator(
-                  backgroundColor: Colors.white24,
-                  valueColor: AlwaysStoppedAnimation<Color>(AppTheme.accentCyan),
-                ),
+            ),
+            Switch(
+              value: _continuousMode,
+              onChanged: _toggleContinuousMode,
+              activeThumbColor: Colors.black,
+              activeTrackColor: AppTheme.accentCyan,
+              inactiveThumbColor: AppTheme.textOnDarkMuted,
+              inactiveTrackColor: Colors.white24,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// Estado de la conexion con el modulo (antes era un texto centrado en el fondo que
+  /// quedaba tapado por la tarjeta de descripcion).
+  Widget _buildModuleLink() {
+    final connected = _esp32SpeechService.isConnected;
+    return Semantics(
+      label: connected ? 'Módulo conectado por Bluetooth' : 'Buscando el módulo por Bluetooth',
+      child: ExcludeSemantics(
+        child: Row(
+          children: [
+            Icon(
+              connected ? Icons.bluetooth_connected : Icons.bluetooth_searching,
+              color: connected ? AppTheme.accentCyan : AppTheme.alertAmber,
+              size: 22,
+            ),
+            const SizedBox(width: 8),
+            Flexible(
+              child: Text(
+                connected ? 'Modulo conectado' : 'Buscando el modulo...',
+                style: const TextStyle(color: AppTheme.textOnDarkMuted, fontSize: 15),
               ),
+            ),
           ],
         ),
       ),
@@ -758,100 +1033,169 @@ class _AssistantScreenState extends State<AssistantScreen>
   }
 
   Widget _buildDescriptionOverlay() {
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 16.0),
-      child: Container(
-        width: double.infinity,
-        margin: const EdgeInsets.symmetric(vertical: 8.0),
-        padding: const EdgeInsets.all(16),
-        decoration: BoxDecoration(
-          color: Colors.black.withValues(alpha: 0.75),
-          borderRadius: BorderRadius.circular(16),
-          border: Border.all(color: AppTheme.accentCyan.withValues(alpha: 0.3)),
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const Row(
-              mainAxisAlignment: MainAxisAlignment.center,
+    return Container(
+      padding: const EdgeInsets.fromLTRB(18, 14, 18, 18),
+      decoration: BoxDecoration(
+        color: AppTheme.cardDark,
+        borderRadius: BorderRadius.circular(AppTheme.cardRadius),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Semantics(
+            header: true,
+            child: const Row(
               children: [
-                Icon(Icons.spatial_audio_off, color: AppTheme.accentCyan, size: 18),
+                Icon(Icons.spatial_audio_off, color: AppTheme.accentCyan, size: 20),
                 SizedBox(width: 8),
-                Text(
-                  'ULTIMA DESCRIPCION',
-                  style: TextStyle(
-                    color: AppTheme.accentCyan,
-                    fontSize: 12,
-                    fontWeight: FontWeight.bold,
-                    letterSpacing: 1.2,
+                Flexible(
+                  child: Text(
+                    'ULTIMA DESCRIPCION',
+                    semanticsLabel: 'Última descripción',
+                    style: TextStyle(
+                      color: AppTheme.accentCyan,
+                      fontSize: 13,
+                      fontWeight: FontWeight.w800,
+                      letterSpacing: 1.2,
+                    ),
                   ),
                 ),
               ],
             ),
-            const SizedBox(height: 12),
-            Text(
-              _lastDescription,
-              style: const TextStyle(color: Colors.white, fontSize: 16, height: 1.4),
-              maxLines: null,
-              textAlign: TextAlign.justify,
-            ),
-          ],
-        ),
+          ),
+          const SizedBox(height: 10),
+          // Alineado a la izquierda: el texto justificado deja huecos que cuestan con baja vision.
+          Text(
+            _lastDescription,
+            style: const TextStyle(color: AppTheme.textOnDark, fontSize: 18, height: 1.45),
+          ),
+        ],
       ),
     );
   }
 
   Widget _buildFloatingIndicator() {
+    final isModule = _hardwareMode == HardwareMode.esp32;
+    // En modo Modulo se habla con el boton de la placa: el de la pantalla no graba.
+    final canTalkHere = !isModule;
+    final Color fill = _isListening
+        ? AppTheme.listeningRed
+        : (canTalkHere ? AppTheme.primaryCyan : AppTheme.cardDark);
+    final IconData icon = _isListening ? Icons.graphic_eq : (canTalkHere ? Icons.mic : Icons.memory);
+    final Color iconColor = (_isListening || canTalkHere) ? const Color(0xFF00161A) : AppTheme.brightCyan;
+
+    final String caption;
+    if (_isListening) {
+      caption = canTalkHere ? 'Suelta para enviar' : 'Escuchando...';
+    } else {
+      caption = canTalkHere ? 'Manten presionado para hablar' : 'Habla con el boton del modulo';
+    }
+
+    final String semanticLabel;
+    final String? semanticHint;
+    if (!canTalkHere) {
+      semanticLabel = _isListening ? 'Escuchando' : 'Hablar con Iris';
+      semanticHint = 'En modo Módulo, habla con el botón de la placa, '
+          'o presiona dos veces el botón de subir volumen';
+    } else if (_isListening) {
+      semanticLabel = 'Escuchando';
+      semanticHint = 'Toca dos veces para enviar tu pregunta';
+    } else {
+      semanticLabel = _isProcessing ? 'Iris está pensando. Hablar con Iris' : 'Hablar con Iris';
+      semanticHint = 'Toca dos veces para empezar a escuchar y otra vez para enviar. '
+          'Sin lector de pantalla: mantén presionado mientras hablas';
+    }
+
     return Padding(
-      padding: const EdgeInsets.only(bottom: 48.0),
-      child: Semantics(
-        button: true,
-        label: _isListening
-            ? 'Escuchando. Suelta para enviar tu pregunta'
-            : 'Mantén presionado para hablar con Iris',
-        child: GestureDetector(
-        onTapDown: (_) {
-           if (_hardwareMode == HardwareMode.standalone) _startNativeListening();
-        },
-        onTapUp: (_) {
-           if (_hardwareMode == HardwareMode.standalone) _stopNativeListening();
-        },
-        onTapCancel: () {
-           if (_hardwareMode == HardwareMode.standalone) _stopNativeListening();
-        },
-        child: AnimatedBuilder(
-          animation: _pulseAnimation,
-          builder: (context, child) {
-            return Transform.scale(
-              scale: _isListening ? _pulseAnimation.value : 1.0,
-              child: child,
-            );
-          },
-          child: Container(
-            width: 90,
-            height: 90,
-            decoration: BoxDecoration(
-              shape: BoxShape.circle,
-              color: _isListening ? Colors.redAccent.withValues(alpha: 0.8) : AppTheme.primaryCyan.withValues(alpha: 0.8),
-              boxShadow: [
-                BoxShadow(
-                  color: _isListening ? Colors.redAccent.withValues(alpha: 0.4) : AppTheme.primaryCyan.withValues(alpha: 0.4),
-                  blurRadius: 30,
-                  spreadRadius: 8,
+      padding: const EdgeInsets.fromLTRB(16, 8, 16, 20),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          // Con TalkBack un toque doble llega como "tap" (bajar y soltar al instante): por eso
+          // el lector usa un toque para empezar y otro para enviar. Con el dedo sigue siendo
+          // mantener presionado, igual que antes.
+          Semantics(
+            container: true,
+            button: true,
+            enabled: canTalkHere,
+            label: semanticLabel,
+            hint: semanticHint,
+            onTap: canTalkHere || (_isListening && _isNativeMicActive)
+                ? () {
+                    if (_isListening) {
+                      _stopNativeListening();
+                    } else {
+                      _startNativeListening();
+                    }
+                  }
+                : null,
+            child: ExcludeSemantics(
+              child: GestureDetector(
+                onTapDown: (_) {
+                  if (_hardwareMode == HardwareMode.standalone) _startNativeListening();
+                },
+                onTapUp: (_) {
+                  // En modo Modulo solo sirve para enviar lo que escucha el microfono del celular.
+                  if (_hardwareMode == HardwareMode.standalone || _isNativeMicActive) _stopNativeListening();
+                },
+                onTapCancel: () {
+                  if (_hardwareMode == HardwareMode.standalone) _stopNativeListening();
+                },
+                child: AnimatedBuilder(
+                  animation: _pulseAnimation,
+                  builder: (context, child) {
+                    return Transform.scale(
+                      scale: _isListening && !_reduceMotion ? _pulseAnimation.value : 1.0,
+                      child: child,
+                    );
+                  },
+                  child: AnimatedContainer(
+                    duration: _uiAnim,
+                    width: 104,
+                    height: 104,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      color: fill,
+                      border: Border.all(
+                        color: canTalkHere || _isListening
+                            ? Colors.white.withValues(alpha: 0.6)
+                            : Colors.white24,
+                        width: 2,
+                      ),
+                      boxShadow: [
+                        BoxShadow(
+                          color: (_isListening ? AppTheme.listeningRed : AppTheme.primaryCyan)
+                              .withValues(alpha: canTalkHere || _isListening ? 0.45 : 0.2),
+                          blurRadius: 30,
+                          spreadRadius: 6,
+                        ),
+                      ],
+                    ),
+                    child: Center(
+                      // El boton es solo del microfono: el logo que gira va en la tarjeta de estado.
+                      child: Icon(icon, color: iconColor, size: 52),
+                    ),
+                  ),
                 ),
-              ],
-            ),
-            child: Center(
-              child: Icon(
-                _isListening ? Icons.mic : Icons.sensors,
-                color: Colors.white,
-                size: 48,
               ),
             ),
           ),
-        ),
-        ),
+          const SizedBox(height: 12),
+          ExcludeSemantics(
+            child: Text(
+              caption,
+              textAlign: TextAlign.center,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(
+                color: AppTheme.textOnDark,
+                fontSize: 16,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }

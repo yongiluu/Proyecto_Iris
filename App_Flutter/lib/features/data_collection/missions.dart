@@ -19,7 +19,11 @@ class Mission {
   final String instructions;
   final int takes;          // grabaciones (audio) o tandas de fotos
   final int secondsPerTake; // audio
-  final int photosPerTake;  // fotos, una cada ~0,5 s
+  final int photosPerTake;  // fotos
+  final int photoIntervalMs; // pausa entre fotos de una tanda
+  /// Ademas del BMP 96x96, guarda en modo Celular un JPEG a color de 320 px de lado corto
+  /// (lo etiqueta en el PC un modelo de profundidad: ML_Training/vision/depth_labels.py).
+  final bool saveColorJpeg;
 
   const Mission.audio({
     required this.id,
@@ -30,7 +34,9 @@ class Mission {
     required this.takes,
     this.secondsPerTake = 30,
   })  : kind = MissionKind.audio,
-        photosPerTake = 0;
+        photosPerTake = 0,
+        photoIntervalMs = 0,
+        saveColorJpeg = false;
 
   const Mission.photo({
     required this.id,
@@ -40,6 +46,8 @@ class Mission {
     required this.instructions,
     required this.takes,
     this.photosPerTake = 25,
+    this.photoIntervalMs = 500,
+    this.saveColorJpeg = false,
   })  : kind = MissionKind.photo,
         secondsPerTake = 0;
 
@@ -163,5 +171,31 @@ const List<Mission> missions = [
     instructions: 'Con permiso: alguien parado o caminando frente a ti, cerca y lejos.',
     takes: 4,
     photosPerTake: 15,
+  ),
+
+  // ─── Cercania: para un detector de "obstaculo muy cerca" (no es clase del modelo de 5 clases) ───
+  Mission.photo(
+    id: 'cercania_casa',
+    label: 'cercania',
+    scene: 'casa',
+    title: 'Acercarse a obstaculos (casa)',
+    instructions: 'Celular a la altura del pecho, camina despacio hasta quedar muy cerca. '
+        'Repite con paredes lisas, muebles, puertas cerradas, postes y personas.',
+    takes: 6,
+    photosPerTake: 40,
+    photoIntervalMs: 300,
+    saveColorJpeg: true,
+  ),
+  Mission.photo(
+    id: 'cercania_calle',
+    label: 'cercania',
+    scene: 'calle',
+    title: 'Acercarse a obstaculos (calle)',
+    instructions: 'Celular a la altura del pecho, camina despacio hasta quedar muy cerca. '
+        'Repite con paredes lisas, muebles, puertas cerradas, postes y personas.',
+    takes: 6,
+    photosPerTake: 40,
+    photoIntervalMs: 300,
+    saveColorJpeg: true,
   ),
 ];

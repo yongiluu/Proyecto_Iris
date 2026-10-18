@@ -16,6 +16,15 @@ class AppTheme {
   static const Color textDark = Color(0xFF121212);   // Dark text
   static const Color textMuted = Color(0xFF455A64);  // Muted dark text
 
+  // ─── Pantalla del asistente (oscura, sobre la camara) ───
+  static const Color brightCyan = Color(0xFF84FFFF);      // Brillo del shimmer / acentos sobre negro
+  static const Color cardDark = Color(0xE0080C10);        // Tarjetas sobre la camara (~88% opaco)
+  static const Color textOnDark = Color(0xFFFFFFFF);
+  static const Color textOnDarkMuted = Color(0xFFCFD8DC); // ~13:1 sobre cardDark
+  static const Color listeningRed = Color(0xFFFF5252);
+  static const Color alertAmber = Color(0xFFFFB74D);      // Avisos de vision: ambar calido, combina con el cian
+  static const double cardRadius = 18;
+
   // ─── Gradients ───
   static const LinearGradient activeGradient = LinearGradient(
     colors: [Color(0xFF00E5FF), Color(0xFF00B8D4)],

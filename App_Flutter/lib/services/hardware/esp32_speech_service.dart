@@ -78,6 +78,9 @@ class Esp32SpeechService {
   void Function(String label, int percent)? onAudioContext;
   void Function(String label, int percent)? onVisionContext;
 
+  /// Cercania de la placa (ella misma pita): 0 libre, 1 cerca, 2 muy cerca. Solo al cambiar.
+  void Function(int level, int percent)? onProximity;
+
   /// Audio crudo del microfono (PCM 16-bit, 16 kHz) para la recoleccion de datos.
   void Function(List<int> pcm)? onRawMicAudio;
 
@@ -296,6 +299,10 @@ class Esp32SpeechService {
       // CMD_VISION_EVENT:<clase>:<porcentaje>
       final parts = command.split(':');
       if (parts.length >= 3) onVisionEvent?.call(parts[1], int.tryParse(parts[2]) ?? 0);
+    } else if (command.startsWith('CMD_PROXIMITY:')) {
+      // CMD_PROXIMITY:<nivel>:<porcentaje>
+      final parts = command.split(':');
+      if (parts.length >= 3) onProximity?.call(int.tryParse(parts[1]) ?? 0, int.tryParse(parts[2]) ?? 0);
     } else if (command.startsWith('CMD_AUDIO_CONTEXT:')) {
       final parts = command.split(':');
       if (parts.length >= 3) onAudioContext?.call(parts[1], int.tryParse(parts[2]) ?? 0);

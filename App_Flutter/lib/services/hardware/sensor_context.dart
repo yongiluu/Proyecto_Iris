@@ -27,11 +27,17 @@ class SensorContext {
   _Reading? _vision;
   final Map<String, DateTime> _audioEvents = {};
   final Map<String, DateTime> _visionEvents = {};
+  int _proximityLevel = 0;
+  DateTime? _proximityTime;
 
   void onAudioContext(String label, int percent) => _audio = _Reading(label, percent, DateTime.now());
   void onVisionContext(String label, int percent) => _vision = _Reading(label, percent, DateTime.now());
   void onAudioEvent(String label) => _audioEvents[label] = DateTime.now();
   void onVisionEvent(String label) => _visionEvents[label] = DateTime.now();
+  void onProximity(int level) {
+    _proximityLevel = level;
+    _proximityTime = DateTime.now();
+  }
 
   /// Texto para la IA, o null si no hay nada reciente.
   String? describe() {
@@ -45,6 +51,10 @@ class SensorContext {
     final vision = _vision;
     if (vision != null && now.difference(vision.time) < _contextMaxAge) {
       lines.add('- Camara: ${_visionNames[vision.label] ?? vision.label} al frente (${vision.percent}% de los cuadros).');
+    }
+    final proximityTime = _proximityTime;
+    if (_proximityLevel > 0 && proximityTime != null && now.difference(proximityTime) < _contextMaxAge) {
+      lines.add('- Cercania: hay algo ${_proximityLevel >= 2 ? 'muy cerca' : 'cerca'} al frente (a menos de ~1 m).');
     }
     for (final entry in _audioEvents.entries) {
       final age = now.difference(entry.value);
