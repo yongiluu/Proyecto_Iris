@@ -109,9 +109,23 @@ class _MissionsScreenState extends State<MissionsScreen> {
                   isThreeLine: totals != null,
                 ),
                 const Divider(),
-                for (final mission in missions) _missionTile(mission),
+                for (final (i, mission) in missions.indexed) ...[
+                  if (mission.section != null && (i == 0 || missions[i - 1].section != mission.section))
+                    _sectionHeader(mission.section!),
+                  _missionTile(mission),
+                ],
               ],
             ),
+    );
+  }
+
+  Widget _sectionHeader(String title) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 16, 16, 4),
+      child: Semantics(
+        header: true,
+        child: Text(title, style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold)),
+      ),
     );
   }
 

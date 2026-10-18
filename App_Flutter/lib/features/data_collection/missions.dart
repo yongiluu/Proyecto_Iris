@@ -24,6 +24,8 @@ class Mission {
   /// Ademas del BMP 96x96, guarda en modo Celular un JPEG a color de 320 px de lado corto
   /// (lo etiqueta en el PC un modelo de profundidad: ML_Training/vision/depth_labels.py).
   final bool saveColorJpeg;
+  /// Titulo de seccion en la lista (null = sin seccion propia).
+  final String? section;
 
   const Mission.audio({
     required this.id,
@@ -33,6 +35,7 @@ class Mission {
     required this.instructions,
     required this.takes,
     this.secondsPerTake = 30,
+    this.section,
   })  : kind = MissionKind.audio,
         photosPerTake = 0,
         photoIntervalMs = 0,
@@ -48,6 +51,7 @@ class Mission {
     this.photosPerTake = 25,
     this.photoIntervalMs = 500,
     this.saveColorJpeg = false,
+    this.section,
   })  : kind = MissionKind.photo,
         secondsPerTake = 0;
 
@@ -118,6 +122,30 @@ const List<Mission> missions = [
     instructions: 'Un perro de verdad o videos de ladridos en un parlante.',
     takes: 3,
     secondsPerTake: 20,
+  ),
+
+  // ─── Wake word "Oye Iris": para que Iris empiece a escuchar sin tocar nada ───
+  // No son clases del modelo de audio: import_phone_data.py las copia a data/wakeword_board/.
+  Mission.audio(
+    id: 'wake_oye_iris',
+    label: 'oye_iris',
+    scene: 'varios',
+    title: 'Decir "Oye Iris"',
+    instructions: 'Di "Oye Iris" cada 2 o 3 segundos, con pausas entre medio. Cambia el tono, el volumen '
+        'y la distancia (cerca de la boca y a 1 m). Graba en casa y en la calle, y si puedes, que lo digan '
+        'otras personas.',
+    takes: 20,
+    section: 'Iris Wake Word',
+  ),
+  Mission.audio(
+    id: 'wake_parecidas',
+    label: 'no_wake',
+    scene: 'varios',
+    title: 'Frases parecidas (no deben activar)',
+    instructions: 'Di cosas que NO deben despertar a Iris: "oye", "Iris" sola, "oye Isis", "hoy es", '
+        '"oye, mira", nombres parecidos y conversacion normal.',
+    takes: 8,
+    section: 'Iris Wake Word',
   ),
 
   // ─── Fotos: la placa a la altura del pecho, caminando despacio ───

@@ -6,6 +6,8 @@
 Copia:
   audio/<clase>/*.wav   -> data/board/<clase>/         (lo usa audio/prepare_dataset.py)
   vision/<clase>/*.bmp  -> data/vision_board/<clase>/  como PNG (lo usa vision/prepare_dataset.py)
+  audio/oye_iris|no_wake/*.wav -> data/wakeword_board/<clase>/  (wake word "Oye Iris", no es clase del
+                           modelo de audio de 5 clases)
   vision/cercania/*     -> data/proximity_board/         BMP y JPEG a color tal cual (no es una clase del
                            modelo de 5 clases; los JPEG se etiquetan con vision/depth_labels.py)
 Los archivos ya importados se saltan, asi que se puede correr varias veces con exports nuevos.
@@ -28,6 +30,8 @@ from PIL import Image
 
 ML_DIR = Path(__file__).resolve().parent
 PROXIMITY_LABEL = "cercania"
+WAKEWORD_LABELS = {"oye_iris", "no_wake"}
+WAKEWORD_DIR = ML_DIR / "data" / "wakeword_board"
 PROXIMITY_DIR = ML_DIR / "data" / "proximity_board"
 
 
@@ -41,6 +45,15 @@ def load_config(name: str):
 def import_audio(source: Path, config, counts: Counter, skipped: Counter) -> None:
     for wav in sorted(source.glob("audio/*/*.wav")):
         label = wav.parent.name
+        if label in WAKEWORD_LABELS:
+            target = WAKEWORD_DIR / label / wav.name
+            if target.exists():
+                skipped["ya importados"] += 1
+                continue
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(wav, target)
+            counts[f"wake word/{label}"] += 1
+            continue
         if label not in config.CLASSES:
             skipped[f"audio/{label} (clase desconocida)"] += 1
             continue
