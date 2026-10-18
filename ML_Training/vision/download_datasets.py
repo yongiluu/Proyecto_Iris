@@ -222,7 +222,7 @@ def select_images(scale: float) -> pd.DataFrame:
 
     rows = []
     for cls in config.CLASSES:
-        if cls == "nada":
+        if cls in ("nada", "cruce"):
             continue
         big = real[(real.cls == cls) & (real.area >= config.MIN_COVERAGE[cls] * 0.5)]
         candidates = big.drop_duplicates("ImageID")[["ImageID", "folder"]]
@@ -231,11 +231,22 @@ def select_images(scale: float) -> pd.DataFrame:
         print(f"  {cls:9s} {len(candidates):5d} fotos (de {big.ImageID.nunique()} candidatas)")
         rows.append(candidates.assign(cls=cls))
 
+    # "cruce": etiquetas de foto completa (sin cajas), ver crosswalk_labels.py.
+    crosswalk_ids = set()
+    if config.CROSSWALK_FILE.exists():
+        crossings = pd.read_csv(config.CROSSWALK_FILE)
+        crosswalk_ids = set(crossings.ImageID)
+        crossings = _sample(crossings[~crossings.ImageID.isin(depiction_ids)][["ImageID", "folder"]],
+                            int(config.MAX_IMAGES_PER_CLASS["cruce"] * scale), rng)
+        print(f"  {'cruce':9s} {len(crossings):5d} fotos")
+        rows.append(crossings.assign(cls="cruce"))
+
     # "nada": fotos de validation/test sin ninguna clase relevante, ni en cajas ni en etiquetas verificadas.
     ids = label_ids()
     relevant = {ids[n] for n in config.OPENIMAGES_MAP} | {ids[n] for n in config.OPENIMAGES_AMBIGUOUS}
     labels = pd.concat([all_images("validation"), all_images("test")], ignore_index=True)
-    dirty = set(labels.ImageID[labels.LabelName.isin(relevant) & (labels.Confidence > 0)]) | set(boxes.ImageID)
+    dirty = set(labels.ImageID[labels.LabelName.isin(relevant) & (labels.Confidence > 0)]) | set(boxes.ImageID) | \
+        crosswalk_ids
     clean = labels[~labels.ImageID.isin(dirty)].drop_duplicates("ImageID")[["ImageID", "folder"]]
     limit = int(config.MAX_IMAGES_PER_CLASS["nada"] * scale)
     clean = _sample(clean, limit, rng)

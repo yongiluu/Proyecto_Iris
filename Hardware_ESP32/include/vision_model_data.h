@@ -1,17 +1,17 @@
 // GENERADO por ML_Training/vision/export_model.py. No editar a mano.
 // == Test limpio (int8, lo que corre en la placa) ==
-// Exactitud: 84.6%  (8199 ejemplos)
-// avisos falsos sobre 'nada': 4.8%  |  aviso de clase equivocada: 1.3%
+// Exactitud: 83.3%  (8358 ejemplos)
+// avisos falsos sobre 'nada': 6.8%  |  aviso de clase equivocada: 2.0%
 // == Test con simulacion OV2640 (int8) ==
-// Exactitud: 80.8%  (8199 ejemplos)
-// avisos falsos sobre 'nada': 4.4%  |  aviso de clase equivocada: 1.3%
+// Exactitud: 79.9%  (8358 ejemplos)
+// avisos falsos sobre 'nada': 5.5%  |  aviso de clase equivocada: 2.0%
 #ifndef VISION_MODEL_DATA_H
 #define VISION_MODEL_DATA_H
 
 #include <stdint.h>
 
 constexpr int kVisionImageSize = 96;       // entrada 96x96x1 en grises (FRAMESIZE_96X96)
-constexpr int kVisionNumClasses = 5;
+constexpr int kVisionNumClasses = 6;
 constexpr int kVisionTensorArenaSize = 174080;
 constexpr float kVisionAlertThreshold = 0.75f;  // config.ALERT_THRESHOLD
 

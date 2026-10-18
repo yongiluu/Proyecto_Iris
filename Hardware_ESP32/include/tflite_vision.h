@@ -4,7 +4,7 @@
 #include <Arduino.h>
 
 // Vision local (Edge AI): clasifica cada frame 96x96 en grises de la camara con el modelo
-// entrenado en ML_Training/vision (nada, persona, vehiculo, escalera, puerta).
+// entrenado en ML_Training/vision (nada, persona, vehiculo, escalera, puerta, cruce).
 
 // Se llama desde la tarea de vision cuando hay un aviso (ej. "escalera", 84).
 typedef void (*VisionEventCallback)(const char* label, int confidencePercent);

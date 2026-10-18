@@ -5,7 +5,7 @@ Entrenamiento de los modelos TensorFlow Lite Micro que corren **dentro de la pla
 | Modelo | Estado | Qué detecta |
 |---|---|---|
 | Audio (`audio/`) | ✅ pipeline completo, modelo v3 (ESC-50 + UrbanSound8K + voz chilena) | `fondo`, `voz`, `bocina`, `sirena`, `perro` |
-| Visión (`vision/`) | ✅ pipeline completo, modelo v4 (MobileNet 0,5) entrenado con Open Images | `nada`, `persona`, `vehiculo`, `escalera`, `puerta` |
+| Visión (`vision/`) | ✅ pipeline completo, modelo v5 (MobileNet 0,5) entrenado con Open Images | `nada`, `persona`, `vehiculo`, `escalera`, `puerta`, `cruce` |
 
 ## Recolectar datos reales con la app (con o sin prototipo)
 
@@ -203,17 +203,35 @@ Luego copia a tu PC los archivos generados (`Hardware_ESP32/include/audio_model_
 # Modelo de visión (`vision/`)
 
 ```text
-cámara OV2640 96×96 grises ─► MobileNetV1 0.25 int8 (1 vez por segundo) ─► promedio de 2 frames ─► CMD_VISION_EVENT por BLE ─► la app vibra y avisa
+cámara OV2640 96×96 grises ─► MobileNetV1 0.5 int8 (cada 0,5 s) ─► promedio de 2 frames ─► CMD_VISION_EVENT por BLE ─► la app vibra y avisa
 ```
 
-- Clases (en `vision/config.py`): `nada`, `persona`, `vehiculo`, `escalera`, `puerta`. Se avisa de todas menos `nada`, con umbral `ALERT_THRESHOLD` = 0,7 y sin repetir la misma clase antes de 8 s (`VISION_EVENT_COOLDOWN_MS`). La app además calla cada clase por 20 s.
+- Clases (en `vision/config.py`): `nada`, `persona`, `vehiculo`, `escalera`, `puerta`, `cruce` (paso de cebra). Se avisa de todas menos `nada`, con umbral `ALERT_THRESHOLD` = 0,75 y sin repetir la misma clase antes de 8 s (`VISION_EVENT_COOLDOWN_MS`). La app además calla cada clase por 20 s.
 - La entrada es exactamente lo que da la cámara (`FRAMESIZE_96X96`, `PIXFORMAT_GRAYSCALE`). El firmware convierte cada píxel con una tabla calculada de la cuantización del modelo, así que no hay que tocar código al reentrenar.
-- La red es MobileNetV1 0,25 (como el *person detection* de Google), partiendo de pesos de ImageNet pasados a un canal. Usa solo `CONV_2D`, `DEPTHWISE_CONV_2D`, `AVERAGE_POOL_2D`, `FULLY_CONNECTED` y `SOFTMAX`, sin PAD, MEAN, SHAPE, STRIDED_SLICE ni PACK. `export_model.py` falla si aparece otra op.
-- Pesa ~306 KB en flash, hace ~7,3 M MAC por imagen y usa ~87 KB de arena: la pide al heap, en RAM interna o, si no alcanza, en PSRAM.
+- La red es MobileNetV1 0,5 (v1–v3 usaban 0,25, como el *person detection* de Google), partiendo de pesos de ImageNet pasados a un canal. Usa solo `CONV_2D`, `DEPTHWISE_CONV_2D`, `AVERAGE_POOL_2D`, `FULLY_CONNECTED` y `SOFTMAX`, sin PAD, MEAN, SHAPE, STRIDED_SLICE ni PACK. `export_model.py` falla si aparece otra op.
+- Pesa ~968 KB en flash y usa ~170 KB de arena (v1–v3: 306 KB y ~87 KB): la pide al heap, en RAM interna o, si no alcanza, en PSRAM.
 
 **Datos:** subconjunto de **Open Images V7**. Se toman las cajas de validation y test (~100 MB de CSV) y, en streaming, las fotos de train con escaleras o puertas, que son raras. El CSV de 2,3 GB no se guarda. Cada foto se baja, se pasa a grises y se reduce a 256 px (~30 KB). De cada foto se sacan recortes cuadrados donde el objeto cubre al menos 10–15 % de la imagen. "Nada" son fotos sin esas clases más zonas vacías de las fotos con objetos (calles sin autos, paredes sin puertas).
 
 **Simulación de la OV2640** (`vision/augment.py`): poca luz con más ruido, exposición y gamma, viñeteado, desenfoque y movimiento, baja resolución, ruido de sensor, artefactos JPEG, inclinación leve y zoom. Se aplica al azar en cada época. El reporte mide el test limpio y también un "test cámara" degradado con semilla fija.
+
+## Visión v5 (2026-10-18): clase `cruce` (paso de cebra)
+
+v5 es la misma red de v4 (MobileNetV1 0,5) con una sexta clase, `cruce`. Hay pocas fotos públicas: Open Images tiene 848 fotos etiquetadas "zebra crossing"/"crosswalk" (`vision/crosswalk_labels.py`), pero solo 349 se pueden bajar. De cada una salen 4 recortes. Además, `nada` suma los errores de v4 (*hard negatives*). Entrenamiento desde ImageNet, 25 épocas.
+
+| Mismo test v5 (8.358 recortes), umbral 0,75, int8 | v4 | **v5 (actual)** |
+|---|---|---|
+| Exactitud (sin contar `cruce`, que v4 no conoce) | 84,0 % | 83,3 % (con `cruce`) |
+| Avisos falsos sobre "nada" (limpio / simulación OV2640) | 5,5 % / 5,1 % | 6,8 % / 5,5 % |
+| Persona / vehículo / escalera / puerta (limpio) | 58 / 85 / 75 / 75 % | 59 / 84 / **79** / 73 % |
+| Detección media de las 4 clases (limpio / OV2640) | 73,2 % / 65,8 % | 73,7 % / 65,9 % |
+| **Cruce detectado** (limpio / OV2640) | — | **66 % / 60 %** (avisos falsos de `cruce` sobre "nada": 0,2–0,3 %) |
+
+En las 4 clases de antes, v5 rinde igual que v4. Escalera mejora y puerta empeora un poco. Tiene ~1 punto más de avisos falsos en el test limpio y casi lo mismo con la simulación de la cámara. A cambio, reconoce pasos de cebra. **Ojo:** el test de `cruce` son solo 168 recortes de unas 40 fotos, así que ese 66 % es una estimación gruesa. Con las fotos de la misión "Cruces peatonales" de la app (`ciclo_datos_reales.py`) debería subir bastante.
+
+Para volver a v4 sin reentrenar (respaldo local en `models/vision_v4/`): `python vision/export_model.py --tflite models/vision_v4/vision_scenes_int8.tflite`. Además hay que dejar `CLASSES` sin `"cruce"` en `vision/config.py` y en la app.
+
+Los semáforos no se agregaron: en grises no se distingue rojo de verde. Esa pregunta la responde la IA en la nube con la foto a color del celular.
 
 ## Resultados del modelo de visión v4 (2026-10-16): red más grande
 

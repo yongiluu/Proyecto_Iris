@@ -28,9 +28,12 @@ STORE_SHORT_SIDE = 256   # las fotos descargadas se guardan reducidas para cuida
 
 # ─── Clases ───
 # El orden define el indice de salida del modelo. Si lo cambias, reentrena.
-CLASSES = ["nada", "persona", "vehiculo", "escalera", "puerta"]
+CLASSES = ["nada", "persona", "vehiculo", "escalera", "puerta", "cruce"]
 # Clases que la placa informa a la app (CMD_VISION_EVENT:<clase>:<porcentaje>).
-ALERT_CLASSES = {"persona", "vehiculo", "escalera", "puerta"}
+ALERT_CLASSES = {"persona", "vehiculo", "escalera", "puerta", "cruce"}
+# "cruce" (cruce de cebra / paso peatonal, desde v5) no tiene cajas en Open Images: viene de las
+# etiquetas de foto completa verificadas por personas (vision/crosswalk_labels.py).
+CROSSWALK_FILE = RAW_DIR / "crosswalk-images.csv"
 # Puntaje minimo (promedio de 2 frames seguidos, ~1 s cada uno) para avisar. Se copia al firmware.
 # Subirlo baja los avisos falsos y tambien las detecciones (ver la tabla del README).
 # v1: 0.8 (~9% de avisos falsos por frame sobre "nada"); v2: 0.7 (~6%); v3: 0.75 (~5,4%, misma deteccion que v2).
@@ -60,9 +63,10 @@ AMBIGUITY_RATIO = 0.5
 # Cuantas imagenes descargar como maximo por clase. v1 usaba 4000/3000/3000/4000/4000 (~17 mil fotos,
 # ~0,5 GB); v2 usa casi todo lo disponible de escaleras y puertas y mucho mas "nada" (~45 mil, ~1,4 GB);
 # v3 suma personas y vehiculos (la clase persona era la mas debil): ~65 mil fotos, ~2 GB.
-MAX_IMAGES_PER_CLASS = {"nada": 20000, "persona": 20000, "vehiculo": 14000, "escalera": 4000, "puerta": 10000}
+MAX_IMAGES_PER_CLASS = {"nada": 20000, "persona": 20000, "vehiculo": 14000, "escalera": 4000, "puerta": 10000,
+                        "cruce": 5000}
 # Recortes por imagen (zoom distintos alrededor del objeto). Mas para las clases con pocas fotos.
-CROPS_PER_IMAGE = {"nada": 1, "persona": 1, "vehiculo": 1, "escalera": 3, "puerta": 1}
+CROPS_PER_IMAGE = {"nada": 1, "persona": 1, "vehiculo": 1, "escalera": 3, "puerta": 1, "cruce": 4}  # cruce: solo ~350 fotos publicas
 # Recortes de "nada" sacados de zonas sin objetos de fotos con objetos (calles sin autos, pasillos...).
 BACKGROUND_CROPS_PER_IMAGE = 1
 

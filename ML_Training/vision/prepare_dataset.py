@@ -130,6 +130,11 @@ def collect_openimages(pools, hard_model=None):
         image = Image.open(path).convert("L")
         image_boxes = by_image.get(row.ImageID, boxes.iloc[:0])
         split = split_by_key(row.ImageID)
+        if row.cls == "cruce":
+            # Sin cajas: recortes de la escena completa (el cruce suele ocupar la parte de abajo).
+            for _ in range(config.CROPS_PER_IMAGE["cruce"]):
+                pools[split]["cruce"].append(scene_crop(image, rng))
+            continue
         if row.cls == "nada":
             crop = scene_crop(image, rng)
             pools[split]["nada"].append(crop)
@@ -152,7 +157,9 @@ def add_hard_negatives(pools, nada_train, model_path, rng):
     predict, _ = int8_predictor(open(model_path, "rb").read())
     images = np.stack([resize(crop) for _, crop in nada_train])
     scores = predict(images)
-    alert_idx = [config.CLASSES.index(c) for c in config.CLASSES if c in config.ALERT_CLASSES]
+    # El modelo anterior puede tener menos clases (v4 no tenia "cruce"): solo se miran las que conoce.
+    alert_idx = [config.CLASSES.index(c) for c in config.CLASSES
+                 if c in config.ALERT_CLASSES and config.CLASSES.index(c) < scores.shape[1]]
     worst = scores[:, alert_idx].max(axis=1)
     hard = [image_id for (image_id, _), s in zip(nada_train, worst) if s >= config.HARD_NEGATIVE_MIN_SCORE]
     for image_id in hard:
