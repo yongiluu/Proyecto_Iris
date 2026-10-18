@@ -193,6 +193,7 @@ def main() -> None:
     parser.add_argument("--alpha", type=float, default=0.25)
     parser.add_argument("--workers", type=int, default=4)
     parser.add_argument("--rebuild", action="store_true", help="rehacer data/proximity_dataset.npz")
+    parser.add_argument("--finetune", action="store_true", help="partir de models/proximity.keras (ej. con fotos nuevas)")
     args = parser.parse_args()
 
     tf.keras.utils.set_random_seed(config.SEED)
@@ -200,10 +201,16 @@ def main() -> None:
         build_dataset()
     data = dict(np.load(config.PROXIMITY_DATASET_FILE))
 
-    model = build_model(len(CLASSES), args.alpha)
-    load_imagenet_weights(model, args.alpha)
+    if args.finetune and KERAS_MODEL.exists():
+        print(f"Fine-tuning desde {KERAS_MODEL}")
+        model = tf.keras.models.load_model(KERAS_MODEL)
+        lr = args.lr / 10
+    else:
+        model = build_model(len(CLASSES), args.alpha)
+        load_imagenet_weights(model, args.alpha)
+        lr = args.lr
     steps = int(np.ceil(len(data["y_train"]) / args.batch_size)) * args.epochs
-    model.compile(optimizer=tf.keras.optimizers.Adam(tf.keras.optimizers.schedules.CosineDecay(args.lr, steps, alpha=0.02)),
+    model.compile(optimizer=tf.keras.optimizers.Adam(tf.keras.optimizers.schedules.CosineDecay(lr, steps, alpha=0.02)),
                   loss="sparse_categorical_crossentropy", metrics=["accuracy"])
     counts = np.bincount(data["y_train"], minlength=len(CLASSES))
     weights = np.sqrt(len(data["y_train"]) / (len(counts) * np.maximum(1, counts)))

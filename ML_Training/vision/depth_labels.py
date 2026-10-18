@@ -46,6 +46,10 @@ def main() -> None:
     torch.set_num_threads(args.threads)
 
     paths = sorted(p for p in Path(args.source).rglob("*") if p.suffix.lower() in {".jpg", ".jpeg", ".png", ".bmp"})
+    # Misiones de la app: la misma foto viene en BMP 96x96 grises y (modo Celular) en JPEG a color.
+    # El profesor ve mucho mejor el JPEG: si existe, se descarta el BMP con el mismo nombre.
+    color_stems = {p.with_suffix("") for p in paths if p.suffix.lower() in {".jpg", ".jpeg"}}
+    paths = [p for p in paths if not (p.suffix.lower() == ".bmp" and p.with_suffix("") in color_stems)]
     rng = np.random.default_rng(config.SEED)
     if args.n and len(paths) > args.n:
         paths = [paths[i] for i in sorted(rng.choice(len(paths), args.n, replace=False))]

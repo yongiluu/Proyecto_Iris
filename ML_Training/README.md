@@ -29,6 +29,25 @@ El origen queda en el nombre de cada archivo (`...__placa-<fecha>` o `...__cel-<
 
 Las misiones se editan en `App_Flutter/lib/features/data_collection/missions.dart`. El ambiente de cada grabación (casa, calle, transporte) queda en el nombre del archivo, para entrenar más adelante un modelo de ambiente. Los firmwares `*_audio_capture` y `*_photo_capture` con cable USB siguen sirviendo para pruebas en el escritorio.
 
+### Reentrenar todo con tus datos: un solo comando
+
+Después de exportar el zip desde la app (o con la carpeta copiada por USB):
+
+```bash
+python ciclo_datos_reales.py iris_dataset_XXXX.zip
+```
+
+Hace todo en orden, un trabajo pesado a la vez (~2–3 h en CPU):
+1. Respalda los modelos actuales en `models/antes_<fecha>/`.
+2. Importa los datos.
+3. Etiqueta las fotos de la misión de cercanía con el profesor de profundidad.
+4. Hace fine-tuning de los tres modelos desde los actuales.
+5. Exporta los archivos del firmware.
+6. **Compara cada modelo nuevo con el anterior sobre el mismo test** (`compare_models.py`).
+7. Verifica la librería del firmware (`tests/test_tflm_kernels.py`) y compila la XIAO.
+
+Todo queda en `ciclo_<fecha>.log`. Si un modelo nuevo salió peor, se vuelve al anterior con `export_model.py --tflite models/antes_<fecha>/<modelo>.tflite`. Con `--solo vision,cercania` se reentrena solo una parte.
+
 ## Qué hace la app con lo que detecta la placa
 
 - **Visión:** aviso hablado y vibración ("Adelante hay una escalera"). En modo **Celular** el mismo modelo corre en el teléfono y avisa igual (ver "Probar visión sin el prototipo").
