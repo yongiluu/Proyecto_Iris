@@ -283,15 +283,17 @@ python vision/proximity_export.py
 
 **Límites (importante para la demo):** es una estimación con una cámara de 96×96 en grises. Debería detectar paredes, puertas, muebles y personas al frente a menos de ~1 m. **No** detecta hoyos, escalones hacia abajo ni cosas delgadas (postes finos, ramas), y se equivoca más con poca luz. Un sensor de distancia (VL53L1X, prototipo 3) es la solución de fondo.
 
-**Resultados v1 (2026-10-18), primera versión:** ~3.500 fotos de Open Images etiquetadas por el profesor + NYU. Test de 497 fotos sin trucar, modelo int8, 1 frame y umbral 0,8 sobre (cerca + muy_cerca):
+**Resultados v2 (2026-10-18, actual):** ~15 mil fotos de Open Images etiquetadas por el profesor + NYU, con vistas acercadas. Test de 1.662 fotos sin trucar (ningún modelo las vio), modelo int8, 1 frame:
 
-| | Test limpio | Con simulación OV2640 |
+| | v1 (umbral 0,8) | **v2 (umbral 0,7)** |
 |---|---|---|
-| "Muy cerca" (< 0,7 m) avisado | 62 % | 81 % |
-| "Cerca" (0,7–1,5 m) avisado | 34 % | 41 % |
-| Pitidos falsos con el camino libre | 6,4 % | 12,8 % |
+| Test limpio: "muy cerca" (< 0,7 m) avisado | 73 % | **73 %** |
+| Test limpio: pitidos falsos con el camino libre | 7,9 % | **6,3 %** |
+| Con simulación OV2640: "muy cerca" avisado | 78 % | 69 % |
+| Con simulación OV2640: pitidos falsos | 15,1 % | **6,5 %** |
+| "Cerca" (0,7–1,5 m) avisado (limpio) | 40 % | 41 % |
 
-Es una primera versión. Con la simulación de cámara pita más, porque aprendió que "borroso" es "cerca": las vistas con zoom quedan más borrosas. La v2 corrige ese sesgo, usa las ~15 mil fotos y suma las grabaciones de la misión.
+La v1 pitaba el doble con la cámara mala, porque había aprendido que "borroso" es "cerca": las vistas con zoom quedaban más borrosas. La v2 pierde resolución al azar en todas las fotos, así que la cámara de la placa casi no cambia sus resultados. A igual nivel de pitidos falsos, la v2 detecta ~10 puntos más con la cámara simulada. La placa además promedia 2 frames (no medido).
 
 ## Entrenar visión
 
@@ -319,6 +321,7 @@ python vision/live_demo.py --images carpeta/   # clasifica fotos sueltas
 
 - Elige **Celular** en la pantalla principal y apunta la cámara trasera hacia adelante, a la altura del pecho. Al ver una puerta, dice "Adelante hay una puerta" y vibra.
 - Hace lo mismo que el firmware (`tflite_vision.cpp`): 1 foto por segundo, recorte cuadrado central a 96×96 grises (`PhoneCapture.jpegToGray`, igual que las misiones), cuantización con los parámetros del tensor de entrada, promedio de 2 frames, umbral 0,75 y sin repetir la misma clase antes de 8 s. La app además calla cada clase por 20 s. Cada 10 s guarda la clase más vista como contexto para la IA (`SensorContext`).
+- En cada foto corre también el modelo de **cercanía** (`assets/proximity_int8.tflite`, misma imagen, clases `libre`/`cerca`/`muy_cerca`, promedio de 2 frames, umbral 0,8 sobre cerca + muy cerca, igual que `proximity.cpp`). Avisa como sensor de retroceso, sin voz: pitido y vibración cada 800 ms (cerca) o cada 250 ms y más agudo (muy cerca). En modo Módulo la placa pita sola y manda `CMD_PROXIMITY:<nivel>:<%>`; el celular solo vibra al mismo ritmo. Al reentrenar, copia también `models/proximity_int8.tflite` a `../App_Flutter/assets/`.
 - Se pausa mientras hablas con Iris o abres las misiones (la cámara saca una foto a la vez). Mientras corre, la cámara saca fotos seguidas: gasta más batería.
 - Código: `App_Flutter/lib/services/ai/phone_vision_service.dart`. **Al reentrenar**, copia el modelo nuevo a la app: `cp models/vision_scenes_int8.tflite ../App_Flutter/assets/`. Si cambian las clases o el umbral, actualiza también las constantes de ese archivo.
 - No es la cámara de la placa: el celular ve más nítido y con mejor luz, así que en la demo seguramente detecte mejor que la XIAO.

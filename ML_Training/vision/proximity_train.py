@@ -130,6 +130,18 @@ def gentle_view(crop: np.ndarray, rng: np.random.Generator) -> np.ndarray:
     return out[:, ::-1] if rng.random() < 0.5 else out
 
 
+def random_softness(crop: np.ndarray, rng: np.random.Generator) -> np.ndarray:
+    """Las vistas acercadas con zoom quedan mas borrosas (se amplian pocos pixeles). Si solo ellas lo
+    estuvieran, el modelo aprenderia "borroso = cerca" y pitaria con desenfoque o poca luz (paso en v1).
+    Por eso se pierde resolucion al azar en CUALQUIER foto, con la misma intensidad que el zoom."""
+    if rng.random() >= 0.5:
+        return crop
+    full = crop.shape[0]
+    small = max(8, int(full * rng.uniform(0.35, 0.9)))
+    image = Image.fromarray(crop).resize((small, small), Image.BILINEAR)
+    return np.asarray(image.resize((full, full), Image.BILINEAR))
+
+
 class AugmentedImages(tf.keras.utils.PyDataset):
     def __init__(self, x, y, batch_size, **kwargs):
         super().__init__(**kwargs)
@@ -145,7 +157,7 @@ class AugmentedImages(tf.keras.utils.PyDataset):
         ids = self.order[index * self.batch_size:(index + 1) * self.batch_size]
         rng = np.random.default_rng([self.epoch, index, config.SEED])
         batch = np.stack([camera_degrade(view, rng) if rng.random() < 0.8 else view
-                          for view in (gentle_view(self.x[i], rng) for i in ids)])
+                          for view in (gentle_view(random_softness(self.x[i], rng), rng) for i in ids)])
         return to_model_input(batch), self.y[ids]
 
     def on_epoch_end(self):

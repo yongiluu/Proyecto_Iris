@@ -89,4 +89,4 @@ PROXIMITY_ROWS = (6, 24)
 PROXIMITY_COLS = (8, 24)
 PROXIMITY_PERCENTILE = 10     # distancia "mas cercana" robusta (no el pixel minimo, que es ruido)
 PROXIMITY_DATASET_FILE = DATA_DIR / "proximity_dataset.npz"
-PROXIMITY_ALERT_THRESHOLD = 0.8   # v1: muy_cerca 62% avisado, 6% de avisos falsos con el camino libre (test limpio)
+PROXIMITY_ALERT_THRESHOLD = 0.7   # v2: muy_cerca ~70% avisado con ~6% de pitidos falsos (test limpio y con simulacion OV2640)
