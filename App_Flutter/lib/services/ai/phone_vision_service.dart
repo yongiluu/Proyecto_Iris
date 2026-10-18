@@ -23,8 +23,8 @@ typedef ProximityCallback = void Function(int level, int percent);
 /// Todo es local: no usa internet.
 class PhoneVisionService {
   static const String modelAsset = 'assets/vision_scenes_int8.tflite';
-  static const List<String> labels = ['nada', 'persona', 'vehiculo', 'escalera', 'puerta'];
-  static const List<bool> isAlert = [false, true, true, true, true];
+  static const List<String> labels = ['nada', 'persona', 'vehiculo', 'escalera', 'puerta', 'cruce'];
+  static const List<bool> isAlert = [false, true, true, true, true, true];
   static const double alertThreshold = 0.75; // kVisionAlertThreshold
   static const int imageSize = 96;
   static const Duration framePeriod = Duration(seconds: 1);

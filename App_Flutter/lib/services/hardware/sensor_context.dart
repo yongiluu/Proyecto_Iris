@@ -21,6 +21,7 @@ class SensorContext {
     'vehiculo': 'un vehiculo',
     'escalera': 'una escalera',
     'puerta': 'una puerta',
+    'cruce': 'un cruce peatonal',
   };
 
   _Reading? _audio;

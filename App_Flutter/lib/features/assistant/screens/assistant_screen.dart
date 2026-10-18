@@ -257,6 +257,7 @@ class _AssistantScreenState extends State<AssistantScreen>
     'vehiculo': 'un vehiculo',
     'escalera': 'una escalera',
     'puerta': 'una puerta',
+    'cruce': 'un cruce peatonal',
   };
   // Por clase: una escalera no debe callar el aviso de un vehiculo.
   static const Duration _visionAlertCooldown = Duration(seconds: 20);

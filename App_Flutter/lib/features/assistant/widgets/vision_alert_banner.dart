@@ -32,6 +32,7 @@ class VisionAlert {
     if (w.contains('vehiculo')) return Icons.directions_car;
     if (w.contains('escalera')) return Icons.stairs;
     if (w.contains('puerta')) return Icons.door_front_door;
+    if (w.contains('cruce')) return Icons.directions_walk;
     return Icons.visibility;
   }
 }
