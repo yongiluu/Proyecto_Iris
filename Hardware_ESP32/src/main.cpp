@@ -9,6 +9,7 @@
 #include "ble_manager.h"
 #include "mic_driver.h"
 #include "photo_transfer.h"
+#include "proximity.h"
 #include "tflite_vision.h"
 #include "vision_task.h"
 
@@ -17,6 +18,9 @@ constexpr uint32_t kDebounceMs = 50;
 constexpr uint32_t kStopFlushDelayMs = 20;
 
 volatile bool beepRequested = false;
+// Cercania (0 libre, 1 cerca, 2 muy cerca): la escribe la tarea de vision, el loop pita.
+volatile int proximityLevel = 0;
+uint32_t lastProximityBeepMs = 0;
 bool isTransmitting = false;
 // Modo recoleccion de datos (pantalla "Misiones" de la app): manda el microfono crudo sin apretar el boton.
 volatile bool collectingAudio = false;
@@ -70,6 +74,25 @@ void onVisionContext(const char* label, int percent) {
   bleManager.sendCommand(command);
 }
 
+// Se ejecuta en la tarea de vision cuando cambia el nivel. Formato: CMD_PROXIMITY:<nivel>:<porcentaje>
+void onProximityChange(int level, int percent) {
+  proximityLevel = level;
+  char command[40];
+  snprintf(command, sizeof(command), "CMD_PROXIMITY:%d:%d", level, percent);
+  bleManager.sendCommand(command);
+  Serial.printf("[Cercania IA] Nivel %d (%d%%)\n", level, percent);
+}
+
+// Pitidos como el sensor de retroceso de un auto: mas rapidos y agudos mientras mas cerca.
+void handleProximityBeeps() {
+  const int level = proximityLevel;
+  if (level == 0 || isTransmitting) return;
+  const uint32_t interval = level == 2 ? PROXIMITY_BEEP_VERY_NEAR_MS : PROXIMITY_BEEP_NEAR_MS;
+  if (millis() - lastProximityBeepMs < interval) return;
+  lastProximityBeepMs = millis();
+  playTone(level == 2 ? 1760.0f : 1175.0f, 70);
+}
+
 void startPushToTalk() {
   Serial.println("Boton Presionado -> CMD_PTT_START");
   isTransmitting = true;
@@ -115,6 +138,7 @@ void setup() {
   if (!initMic()) Serial.println("Error al inicializar el microfono");
 
   if (!initVisionAI(onVisionEvent, onVisionContext)) Serial.println("Error al iniciar la vision local");
+  if (!initProximityAI(onProximityChange)) Serial.println("Error al iniciar la deteccion de cercania");
   if (!startAudioEvents(onAudioEvent, onAudioContext)) Serial.println("Error al iniciar la deteccion de audio");
 
   bleManager.init(onAudioReceived, onCommandReceived);
@@ -127,6 +151,8 @@ void setup() {
 
 void loop() {
   handleButton();
+
+  handleProximityBeeps();
 
   if (beepRequested) {
     beepRequested = false;

@@ -75,3 +75,18 @@ HARD_NEGATIVE_EXTRA_CROPS = 3
 SEED = 1234
 VAL_FRACTION = 0.1
 TEST_FRACTION = 0.1
+
+# ─── Cercania (modelo aparte: "¿hay algo muy cerca al frente?") ───
+# Etiquetas generadas por un modelo profesor de profundidad (vision/depth_labels.py, Depth Anything V2
+# metrico) y por NYU Depth V2 (profundidad real de Kinect). El modelo chico corre en la placa junto al de
+# clases y avisa con pitidos que se aceleran, como el sensor de retroceso de un auto.
+PROXIMITY_CLASSES = ["libre", "cerca", "muy_cerca"]
+PROXIMITY_NEAR_M = 1.5        # < 1,5 m al frente = "cerca"
+PROXIMITY_VERY_NEAR_M = 0.7   # < 0,7 m = "muy_cerca"
+# Zona que cuenta como "al frente" en el mapa de profundidad de 32x32 (filas y columnas): el centro,
+# sin el borde de abajo (ahi suele aparecer el suelo, que siempre esta cerca).
+PROXIMITY_ROWS = (6, 24)
+PROXIMITY_COLS = (8, 24)
+PROXIMITY_PERCENTILE = 10     # distancia "mas cercana" robusta (no el pixel minimo, que es ruido)
+PROXIMITY_DATASET_FILE = DATA_DIR / "proximity_dataset.npz"
+PROXIMITY_ALERT_THRESHOLD = 0.8   # v1: muy_cerca 62% avisado, 6% de avisos falsos con el camino libre (test limpio)

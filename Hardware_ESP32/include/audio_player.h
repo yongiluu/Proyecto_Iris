@@ -11,4 +11,7 @@ void playAudioBuffer(const uint8_t* payload, size_t length);
 // Tono corto de "pensando". Llamar desde el loop, no desde callbacks BLE.
 void playThinkingBeep();
 
+// Tono senoidal (ej. pitidos de cercania). Llamar desde el loop, no desde callbacks BLE.
+void playTone(float frequencyHz, int durationMs);
+
 #endif

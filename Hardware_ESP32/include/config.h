@@ -52,6 +52,10 @@
 // (CMD_AUDIO_CONTEXT / CMD_VISION_CONTEXT). No genera avisos hablados.
 #define AMBIENT_CONTEXT_PERIOD_MS  10000
 
+// Cercania con vision: intervalo entre pitidos segun el nivel (proximity.h)
+#define PROXIMITY_BEEP_NEAR_MS       800   // "cerca" (< ~1,5 m)
+#define PROXIMITY_BEEP_VERY_NEAR_MS  250   // "muy cerca" (< ~0,7 m)
+
 #ifdef IRIS_XIAO
 // ==========================================
 // PINES XIAO ESP32S3 SENSE (PROTOTIPO 2)

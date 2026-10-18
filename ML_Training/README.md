@@ -262,6 +262,37 @@ El umbral se cambia en `vision/config.py` (`ALERT_THRESHOLD`) y se aplica sin re
 - La rotación se corrigió en las fotos de validation/test. En las de train de Open Images se omitió (`--skip-train-rotations`, el CSV es de 640 MB): afecta a ~1 % de esas fotos.
 - No se mide aquí: tiempo por inferencia en la placa. La librería TFLM de la placa no trae las optimizaciones ESP-NN, así que podría tardar del orden de 1 s por frame. Ver el log al arrancar.
 
+## Cercanía: ¿voy a chocar con algo? (`vision/proximity_*.py`)
+
+El modelo de clases solo sabe si al frente hay una persona, un vehículo, una escalera o una puerta: una pared lisa para él es "nada". Para avisar antes de chocar hay un **segundo modelo chico** que, con la misma imagen 96×96 en grises, responde **libre / cerca (< 1,5 m) / muy cerca (< 0,7 m)**. Corre en la placa justo después del de clases (MobileNet 0,25, ~300 KB, unos 50 ms con ESP-NN). Avisa con **pitidos que se aceleran** desde la propia placa, como el sensor de retroceso de un auto: cada 0,8 s si está "cerca" y cada 0,25 s, más agudo, si está "muy cerca". También manda `CMD_PROXIMITY:<nivel>:<%>` por BLE, para que la app vibre.
+
+**De dónde salen las distancias:**
+- Un modelo "profesor" grande de profundidad, *Depth Anything V2* métrico (interior, versión chica), estima en metros la distancia de cada píxel de las fotos de Open Images (`vision/depth_labels.py`, ~1 s por foto en CPU). Es demasiado grande para la placa: solo sirve para etiquetar.
+- **NYU Depth V2** aporta 1.449 fotos de interiores con profundidad real medida con Kinect (`vision/nyu_to_labels.py`).
+- La etiqueta es la distancia más cercana (percentil 10) en la zona central de la imagen, sin el borde de abajo, porque ahí suele aparecer el suelo.
+- Casi no hay fotos públicas tomadas a 50 cm de una pared. Por eso el train agrega **vistas acercadas con zoom**: acercar la imagen 1/s veces equivale aprox. a caminar hasta quedar a s·d metros, y la distancia se recalcula. El test no usa este truco.
+- **Lo que más va a mejorar este modelo** son tus grabaciones de la misión "Acercarse a obstáculos" de la app: guardan la foto a color, que después etiqueta el profesor.
+
+```bash
+python vision/depth_labels.py --n 15000                 # profesor sobre Open Images (~4 h en CPU; retoma si se corta)
+python vision/nyu_to_labels.py nyu_depth_v2_labeled.mat --delete   # opcional, profundidad real
+python vision/depth_labels.py --source data/proximity_board --name board --n 0   # tus fotos de la misión
+python vision/proximity_train.py --rebuild
+python vision/proximity_export.py
+```
+
+**Límites (importante para la demo):** es una estimación con una cámara de 96×96 en grises. Debería detectar paredes, puertas, muebles y personas al frente a menos de ~1 m. **No** detecta hoyos, escalones hacia abajo ni cosas delgadas (postes finos, ramas), y se equivoca más con poca luz. Un sensor de distancia (VL53L1X, prototipo 3) es la solución de fondo.
+
+**Resultados v1 (2026-10-18), primera versión:** ~3.500 fotos de Open Images etiquetadas por el profesor + NYU. Test de 497 fotos sin trucar, modelo int8, 1 frame y umbral 0,8 sobre (cerca + muy_cerca):
+
+| | Test limpio | Con simulación OV2640 |
+|---|---|---|
+| "Muy cerca" (< 0,7 m) avisado | 62 % | 81 % |
+| "Cerca" (0,7–1,5 m) avisado | 34 % | 41 % |
+| Pitidos falsos con el camino libre | 6,4 % | 12,8 % |
+
+Es una primera versión. Con la simulación de cámara pita más, porque aprendió que "borroso" es "cerca": las vistas con zoom quedan más borrosas. La v2 corrige ese sesgo, usa las ~15 mil fotos y suma las grabaciones de la misión.
+
 ## Entrenar visión
 
 Desde `ML_Training/` (con el mismo `.venv` del audio):

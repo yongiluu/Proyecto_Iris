@@ -95,10 +95,10 @@ void playAudioBuffer(const uint8_t* payload, size_t length) {
   }
 }
 
-void playThinkingBeep() {
+void playTone(float frequencyHz, int durationMs) {
   if (playbackStream == nullptr) return;
 
-  constexpr int totalSamples = AUDIO_SAMPLE_RATE * kBeepDurationMs / 1000;
+  const int totalSamples = AUDIO_SAMPLE_RATE * durationMs / 1000;
   int16_t chunk[kChunkSamples];
 
   int produced = 0;
@@ -107,10 +107,14 @@ void playThinkingBeep() {
     if (count > (int)kChunkSamples) count = kChunkSamples;
 
     for (int i = 0; i < count; i++) {
-      float phase = 2.0f * (float)M_PI * kBeepFrequencyHz * (float)(produced + i) / AUDIO_SAMPLE_RATE;
+      float phase = 2.0f * (float)M_PI * frequencyHz * (float)(produced + i) / AUDIO_SAMPLE_RATE;
       chunk[i] = (int16_t)(kBeepAmplitude * sinf(phase));
     }
     playAudioBuffer((const uint8_t*)chunk, count * sizeof(int16_t));
     produced += count;
   }
+}
+
+void playThinkingBeep() {
+  playTone(kBeepFrequencyHz, kBeepDurationMs);
 }

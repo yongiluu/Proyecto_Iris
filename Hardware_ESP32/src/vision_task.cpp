@@ -1,6 +1,7 @@
 #include "vision_task.h"
 #include "camera_driver.h"
 #include "tflite_vision.h"
+#include "proximity.h"
 #include "config.h"
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
@@ -19,6 +20,7 @@ void visionTask(void*) {
     if (wasPaused) {
       // No promediar la escena de antes de la pausa con la de ahora.
       resetVisionSmoothing();
+      resetProximitySmoothing();
       wasPaused = false;
     }
 
@@ -26,6 +28,7 @@ void visionTask(void*) {
     if (frame == nullptr) continue;
 
     runVisionInference(frame->buf, frame->len);
+    runProximityInference(frame->buf, frame->len);
     releaseGrayFrame(frame);
   }
 }

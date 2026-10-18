@@ -126,7 +126,8 @@ def check(name: str, model_path: Path, x_float: np.ndarray, arena_bytes: int) ->
     exact = np.mean(diff.max(1) == 0)
     # TFLM (2022) y TFLite actual redondean distinto en casos aislados (unos LSB): se exige la misma clase
     # en todos los ejemplos y diferencias chicas.
-    ok = same_class == 1 and diff.max() <= 8
+    # Hasta ~16/256 en casos aislados (cascada de redondeos); la clase debe coincidir siempre.
+    ok = same_class == 1 and diff.max() <= 16
     # La arena que usa TFLM aca (64 bits, punteros mas grandes) es una cota superior de la de la placa.
     used = int(re.search(r"arena usada (\d+)", run.stdout).group(1))
     if used > arena_bytes:
@@ -161,6 +162,14 @@ def main() -> None:
     ok &= check("audio", ML_DIR / "models" / "audio_events_int8.tflite",
                 x[rng.choice(len(x), min(args.n, len(x)), replace=False)],
                 declared_arena("audio_model_data.h", "kAudioTensorArenaSize"))
+
+    proximity_file = ML_DIR / "data" / "proximity_dataset.npz"
+    if proximity_file.exists() and (ML_DIR / "models" / "proximity_int8.tflite").exists():
+        x = np.load(proximity_file)["x_test"]
+        x = x[rng.choice(len(x), min(args.n, len(x)), replace=False)]
+        ok &= check("cercania", ML_DIR / "models" / "proximity_int8.tflite",
+                    x.astype(np.float32)[..., None] / 127.5 - 1.0,
+                    declared_arena("proximity_model_data.h", "kProximityTensorArenaSize"))
 
     print("\nTODO OK: los kernels ESP-NN del firmware dan lo mismo que TensorFlow." if ok
           else "\n✘ Hay diferencias: revisar los kernels ESP-NN antes de subir el firmware.")

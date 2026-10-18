@@ -1,0 +1,35 @@
+== Validacion (float32) ==
+Exactitud: 69.4%  (454 ejemplos)
+
+Real \ Predicho      libre     cerca muy_cerca
+libre                  226        45        11
+cerca                   46        45        23
+muy_cerca                5         9        44
+
+Con umbral 0.6 (cerca + muy_cerca):
+  muy_cerca avisado: 91.4%   cerca avisado: 55.3%
+  avisos falsos con el camino libre: 16.0%
+
+== Test limpio (float32) ==
+Exactitud: 70.6%  (497 ejemplos)
+
+Real \ Predicho      libre     cerca muy_cerca
+libre                  290        37        18
+cerca                   52        35        23
+muy_cerca                4        12        26
+
+Con umbral 0.6 (cerca + muy_cerca):
+  muy_cerca avisado: 90.5%   cerca avisado: 49.1%
+  avisos falsos con el camino libre: 13.6%
+
+== Test con simulacion OV2640 (float32) ==
+Exactitud: 61.4%  (497 ejemplos)
+
+Real \ Predicho      libre     cerca muy_cerca
+libre                  236        73        36
+cerca                   41        43        26
+muy_cerca                2        14        26
+
+Con umbral 0.6 (cerca + muy_cerca):
+  muy_cerca avisado: 95.2%   cerca avisado: 60.9%
+  avisos falsos con el camino libre: 29.9%
