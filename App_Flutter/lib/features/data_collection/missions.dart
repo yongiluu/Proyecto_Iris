@@ -172,6 +172,15 @@ const List<Mission> missions = [
     takes: 4,
     photosPerTake: 15,
   ),
+  Mission.photo(
+    id: 'foto_cruce',
+    label: 'cruce',
+    scene: 'calle',
+    title: 'Cruces peatonales',
+    instructions: 'Parate en la vereda frente a un cruce de cebra, a 1-4 m, celular a la altura del pecho; '
+        'muevete un poco entre fotos y prueba cruces distintos.',
+    takes: 4,
+  ),
 
   // ─── Cercania: para un detector de "obstaculo muy cerca" (no es clase del modelo de 5 clases) ───
   Mission.photo(
