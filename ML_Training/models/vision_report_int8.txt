@@ -1,51 +1,51 @@
 == Test limpio (int8, lo que corre en la placa) ==
-Exactitud: 83.3%  (8358 ejemplos)
+Exactitud: 83.7%  (8383 ejemplos)
 
 Real \ Predicho      nada  persona vehiculo escalera   puerta    cruce
-nada                 2690      147       73      137      183       28
-persona               276     1274       47       25       34       24
-vehiculo               71       33     1153       12        4       10
-escalera               72       11       22      952       36        5
-puerta                 67        9        2       30      760        3
-cruce                  19        5        8        2        4      130
+nada                 2738      175       75       85      160       25
+persona               251     1324       45       16       29       15
+vehiculo               74       38     1149        9        5        8
+escalera              123       14       16      933       33        4
+puerta                 85       13        1       22      748        2
+cruce                  24        8       10        2        1      123
 
-nada      precision= 84.2%  recall= 82.6%
-persona   precision= 86.1%  recall= 75.8%
-vehiculo  precision= 88.4%  recall= 89.9%
-escalera  precision= 82.2%  recall= 86.7%
-puerta    precision= 74.4%  recall= 87.3%
-cruce     precision= 65.0%  recall= 77.4%
+nada      precision= 83.1%  recall= 84.0%
+persona   precision= 84.2%  recall= 78.8%
+vehiculo  precision= 88.7%  recall= 89.6%
+escalera  precision= 87.4%  recall= 83.1%
+puerta    precision= 76.6%  recall= 85.9%
+cruce     precision= 69.5%  recall= 73.2%
 
 Con umbral 0.75 (1 frame, sin promediar):
-  persona   avisada bien  58.6%
-  vehiculo  avisada bien  84.3%
-  escalera  avisada bien  78.7%
-  puerta    avisada bien  73.0%
-  cruce     avisada bien  66.1%
-  avisos falsos sobre 'nada': 6.8%  |  aviso de clase equivocada: 2.0%
+  persona   avisada bien  64.2%
+  vehiculo  avisada bien  85.0%
+  escalera  avisada bien  75.2%
+  puerta    avisada bien  73.9%
+  cruce     avisada bien  61.3%
+  avisos falsos sobre 'nada': 7.0%  |  aviso de clase equivocada: 2.0%
 
 == Test con simulacion OV2640 (int8) ==
-Exactitud: 79.9%  (8358 ejemplos)
+Exactitud: 80.7%  (8383 ejemplos)
 
 Real \ Predicho      nada  persona vehiculo escalera   puerta    cruce
-nada                 2656      161       62      145      208       26
-persona               380     1165       49       28       34       24
-vehiculo               95       42     1111       16        8       11
-escalera              120       25       20      873       48       12
-puerta                 82       13        3       23      746        4
-cruce                  24        7        6        1        5      125
+nada                 2665      196       79       99      186       33
+persona               286     1273       51       19       31       20
+vehiculo               83       40     1127       15        7       11
+escalera              154       26       18      872       45        8
+puerta                 99       15        5       21      727        4
+cruce                  36       12        8        5        4      103
 
-nada      precision= 79.1%  recall= 81.5%
-persona   precision= 82.4%  recall= 69.3%
-vehiculo  precision= 88.8%  recall= 86.6%
-escalera  precision= 80.4%  recall= 79.5%
-puerta    precision= 71.1%  recall= 85.6%
-cruce     precision= 61.9%  recall= 74.4%
+nada      precision= 80.2%  recall= 81.8%
+persona   precision= 81.5%  recall= 75.8%
+vehiculo  precision= 87.5%  recall= 87.8%
+escalera  precision= 84.6%  recall= 77.6%
+puerta    precision= 72.7%  recall= 83.5%
+cruce     precision= 57.5%  recall= 61.3%
 
 Con umbral 0.75 (1 frame, sin promediar):
-  persona   avisada bien  48.3%
-  vehiculo  avisada bien  79.3%
-  escalera  avisada bien  68.4%
-  puerta    avisada bien  67.7%
-  cruce     avisada bien  59.5%
-  avisos falsos sobre 'nada': 5.5%  |  aviso de clase equivocada: 2.0%
+  persona   avisada bien  57.0%
+  vehiculo  avisada bien  80.4%
+  escalera  avisada bien  66.6%
+  puerta    avisada bien  70.5%
+  cruce     avisada bien  53.6%
+  avisos falsos sobre 'nada': 6.2%  |  aviso de clase equivocada: 2.3%

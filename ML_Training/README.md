@@ -4,8 +4,10 @@ Entrenamiento de los modelos TensorFlow Lite Micro que corren **dentro de la pla
 
 | Modelo | Estado | Qué detecta |
 |---|---|---|
-| Audio (`audio/`) | ✅ pipeline completo, modelo v3 (ESC-50 + UrbanSound8K + voz chilena) | `fondo`, `voz`, `bocina`, `sirena`, `perro` |
-| Visión (`vision/`) | ✅ pipeline completo, modelo v5 (MobileNet 0,5) entrenado con Open Images | `nada`, `persona`, `vehiculo`, `escalera`, `puerta`, `cruce` |
+| Audio (`audio/`) | ✅ pipeline completo, modelo v3 (ESC-50 + UrbanSound8K + voz chilena) reforzado con audios de la app | `fondo`, `voz`, `bocina`, `sirena`, `perro` |
+| Visión (`vision/`) | ✅ modelo v5 (MobileNet 0,5, Open Images) reforzado con fotos de la app | `nada`, `persona`, `vehiculo`, `escalera`, `puerta`, `cruce` |
+| Cercanía (`vision/proximity_*`) | ✅ v2 reforzada con fotos de la app; pitidos apagados por ahora | `libre`, `cerca`, `muy_cerca` |
+| Wake word (`wakeword/`) | ✅ v1 con las tomas de la app (una voz) | "Oye Iris" |
 
 ## Recolectar datos reales con la app (con o sin prototipo)
 
@@ -199,6 +201,55 @@ Luego copia a tu PC los archivos generados (`Hardware_ESP32/include/audio_model_
 3. Si agregas una alerta, añade su frase en `_audioAlertPhrases` (`App_Flutter/lib/features/assistant/screens/assistant_screen.dart`).
 
 ---
+
+## Primeros datos reales de la app (2026-10-18): resultados del ciclo
+
+Primer `ciclo_datos_reales.py` con el export de la app (`iris_dataset_20261018_202009.zip`): 492 fotos de cercanía, 50–200 fotos por clase de visión, 19 audios de fondo, 5 de voz, 3 de bocina, 3 de sirena y 3 de perro, 20 tomas de "Oye Iris" y 8 de frases parecidas. Todo fue grabado con el **celular**, no con la placa. Cada modelo se reforzó con fine-tuning desde el anterior.
+
+**Medido con tus datos reales, que el modelo anterior nunca vio.** Es la medida más honesta que tenemos:
+
+| Modelo | Antes (sin tus datos) | Después (reforzado) |
+|---|---|---|
+| Visión v5 → v5 + tus fotos | personas 36/60, cruces 38/100, falsos sobre "nada" 107/400 (27 %) | 48/60, 93/100, 51/400 (13 %) (*) |
+| Audio v3 → v3 + tus audios (tomas de test) | bocina 35 % (31 ventanas), falsas con tu voz 24 % | **bocina 71 %**, falsas con tu voz 22 % |
+| Cercanía v2 → v2 + tus fotos | "muy cerca" avisado 70 %, falsos con camino libre 30 % (492 fotos) | test (1 tanda de 40): muy cerca 6/6, falsos 16/24 |
+
+(*) Casi todas tus tandas de fotos quedaron en train, así que la columna "después" de visión es optimista. La única tanda de test (25 fotos de escalera) bajó de 19 a 15. En el test de Open Images (8.383 recortes), v5 + tus fotos queda así: personas **64 %** (antes 59 %), con simulación OV2640 **57 %** (antes 48 %). Escalera baja de 79 a 75 % y cruce de 66 a 61 %. Los avisos falsos quedan casi iguales (7,0 % vs 6,8 %).
+
+Conclusiones:
+- Con fotos reales, los modelos entrenados con internet rinden bastante peor. Por eso sirven las misiones. **Visión queda en v5 + tus fotos** (`models/vision_v6_candidato/`). v5 puro queda en `models/vision_v5/`.
+- La cercanía da muchos avisos falsos con fotos reales: **los pitidos quedan apagados** en la placa (`PROXIMITY_BEEPS_ENABLED 0`) y en la app (`kProximityBeepsEnabled = false`). El nivel igual llega a la IA como contexto silencioso.
+- Audio: la voz del usuario a veces dispara alertas en ventanas sueltas. El firmware promedia 2 inferencias, lo que debería bajar esos avisos, pero falta medirlo en la placa.
+
+# Wake word "Oye Iris" (`wakeword/`)
+
+```text
+micrófono ─► log-mel (el mismo del modelo de audio) ─► DS-CNN 0,5 int8 (16 KB, cada 240 ms) ─► "Oye Iris" ─► tono + CMD_WAKE_WORD + CMD_PTT_START
+```
+
+La placa hace lo mismo que al apretar el botón: manda tu pregunta a la app y **corta sola** cuando dejas de hablar. Corta tras 0,9 s de silencio, si no hablas en 4 s o a los 10 s como máximo. También manda los 0,5 s de audio de antes de la detección, para no perder el comienzo de la pregunta ("Oye Iris, ¿qué hay adelante?"). La app no necesita cambios: recibe el mismo `CMD_PTT_START`/`CMD_PTT_STOP` que con el botón. Si aprietas el botón mientras habla el wake word, desde ahí manda el botón. Todo se configura en `include/config.h` (`WAKE_WORD_ENABLED`, `WAKE_*_MS`).
+
+**Datos:** las misiones "Iris Wake Word" de la app (20 tomas de 30 s con ~12 "Oye Iris" cada una y 8 tomas de frases parecidas). `prepare_wake.py` corta cada "Oye Iris" por energía (242 tramos). En train, cada uno se usa 40 veces con otra velocidad (0,88–1,12x), otra posición, ruido de calle o casa y el micrófono simulado. Los negativos son las frases parecidas, los bordes de las tomas sin la frase completa, tus fondos y voz, 4.000 archivos de voz chilena (OpenSLR 71) y todo el dataset del modelo de audio. Las tomas se separan **enteras** en train, val y test.
+
+**Resultado (2026-10-19), audio continuo de test, int8, umbral 0,90.** Se simula la placa: una ventana cada 240 ms y 2 s sin volver a activarse.
+
+| | |
+|---|---|
+| "Oye Iris" detectados (4 tomas que el modelo no vio, 50 frases) | **44/50 = 88 %** |
+| Activaciones falsas con 62 min de voz chilena (otros hablantes) | **0** (con umbral 0,83: 1) |
+| Activaciones falsas con frases parecidas / tus fondos y voz | 0 / 0 (pero son solo 0,5 y 1,3 min de test) |
+| Tamaño / arena declarada | 16 KB / 43 KB (el arranque muestra el uso real) |
+
+**Limitaciones honestas:**
+- Todas las frases son de **una sola persona** y grabadas con el celular. Con otras voces y con el micrófono de la placa puede despertar menos. Para mejorarlo, que otras personas graben la misión.
+- En las tomas de test hay 4 activaciones que no calzan con ningún tramo cortado. Probablemente son "Oye Iris" que el corte por energía descartó (muy largos o pegados), así que se cuentan como falsas por precaución.
+
+```bash
+python wakeword/prepare_wake.py && python wakeword/train_wake.py && python wakeword/export_wake.py
+python wakeword/export_wake.py --umbral 0.9        # fijar el umbral (por defecto lo elige: <= 1 activación falsa por hora)
+```
+
+`ciclo_datos_reales.py` ya incluye este paso (`--solo wake`). El monitor serial muestra `[Wake word] Autotest OK: x ms` al arrancar y `[Wake word] Oye Iris (93%)` en cada detección. Con `AUDIO_EVENTS_DEBUG 1` también imprime los puntajes > 0,3.
 
 # Modelo de visión (`vision/`)
 

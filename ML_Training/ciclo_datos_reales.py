@@ -11,6 +11,7 @@ Hace, uno a la vez (el PC tiene ~7 GB de RAM):
   3. Cercania: el profesor de profundidad etiqueta tus fotos (depth_labels.py) y se reentrena partiendo
      del modelo actual (fine-tuning).
   4. Audio y vision: prepare_dataset (suma tus datos) y fine-tuning desde el modelo actual.
+     Wake word "Oye Iris" (wakeword/): dataset con tus tomas y entrenamiento desde cero.
   5. Exporta cada modelo (archivos del firmware) y lo compara con el anterior SOBRE EL MISMO TEST
      (compare_models.py). Si el nuevo es peor, el informe lo dice: para volver al anterior basta
      `python <audio|vision>/export_model.py --tflite models/antes_<fecha>/<modelo>.tflite`
@@ -33,6 +34,7 @@ FILES = {
     "audio": ["audio_events.keras", "audio_events_int8.tflite"],
     "vision": ["vision_scenes.keras", "vision_scenes_int8.tflite"],
     "cercania": ["proximity.keras", "proximity_int8.tflite"],
+    "wake": ["wakeword.keras", "wakeword_int8.tflite"],
 }
 
 
@@ -60,7 +62,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("zip", nargs="?", help="zip exportado por la app (o carpeta iris_dataset)")
     parser.add_argument("--sin-importar", action="store_true", help="los datos ya estan importados")
-    parser.add_argument("--solo", default="audio,vision,cercania", help="modelos a reentrenar, separados por coma")
+    parser.add_argument("--solo", default="audio,wake,vision,cercania", help="modelos a reentrenar, separados por coma")
     parser.add_argument("--epocas", type=int, default=10, help="epocas de fine-tuning")
     parser.add_argument("--sin-compilar", action="store_true")
     args = parser.parse_args()
@@ -101,6 +103,17 @@ def main() -> None:
         log.run(python, "audio/train.py", "--finetune", "--epochs", args.epocas)
         log.run(python, "audio/export_model.py")
         log.run(python, "compare_models.py", "audio", backup / "audio_events_int8.tflite", MODELS / "audio_events_int8.tflite")
+
+    if "wake" in targets and any((ML_DIR / "data" / "wakeword_board").glob("*/*.wav")):
+        log.step('Wake word "Oye Iris": dataset con tus grabaciones y entrenamiento (desde cero, es chico)')
+        # Negativos: el dataset del modelo de audio (fondos, voz chilena, alertas) tal como quedo recien.
+        shutil.copy2(ML_DIR / "data" / "audio_dataset.npz", ML_DIR / "data" / "wakeword_negatives_audio.npz")
+        log.run(python, "wakeword/prepare_wake.py")
+        log.run(python, "wakeword/train_wake.py")
+        log.run(python, "wakeword/export_wake.py")
+        if (backup / "wakeword_int8.tflite").exists():
+            log.step("Wake word anterior sobre el mismo test (para comparar)")
+            log.run(python, "wakeword/export_wake.py", "--tflite", backup / "wakeword_int8.tflite", "--solo-medir")
 
     if "vision" in targets:
         log.step("Vision: dataset con tus fotos y fine-tuning")

@@ -1,35 +1,35 @@
 == Validacion (float32) ==
-Exactitud: 70.2%  (1650 ejemplos)
+Exactitud: 71.0%  (1650 ejemplos)
 
 Real \ Predicho      libre     cerca muy_cerca
-libre                  855        56        31
-cerca                  192       164       103
-muy_cerca               41        68       140
+libre                  848        70        24
+cerca                  169       191        99
+muy_cerca               35        82       132
 
-Con umbral 0.8 (cerca + muy_cerca):
-  muy_cerca avisado: 62.2%   cerca avisado: 32.2%
-  avisos falsos con el camino libre: 2.4%
+Con umbral 0.7 (cerca + muy_cerca):
+  muy_cerca avisado: 78.7%   cerca avisado: 49.2%
+  avisos falsos con el camino libre: 6.1%
 
 == Test limpio (float32) ==
-Exactitud: 72.6%  (1662 ejemplos)
+Exactitud: 71.3%  (1702 ejemplos)
 
 Real \ Predicho      libre     cerca muy_cerca
-libre                  917        74        25
-cerca                  180       145        77
-muy_cerca               49        51       144
+libre                  917        96        27
+cerca                  176       160        76
+muy_cerca               40        73       137
 
-Con umbral 0.8 (cerca + muy_cerca):
-  muy_cerca avisado: 58.2%   cerca avisado: 32.3%
-  avisos falsos con el camino libre: 2.8%
+Con umbral 0.7 (cerca + muy_cerca):
+  muy_cerca avisado: 77.6%   cerca avisado: 48.8%
+  avisos falsos con el camino libre: 8.1%
 
 == Test con simulacion OV2640 (float32) ==
-Exactitud: 70.3%  (1662 ejemplos)
+Exactitud: 71.1%  (1702 ejemplos)
 
 Real \ Predicho      libre     cerca muy_cerca
-libre                  907        80        29
-cerca                  193       120        89
-muy_cerca               53        49       142
+libre                  887       122        31
+cerca                  161       174        77
+muy_cerca               31        70       149
 
-Con umbral 0.8 (cerca + muy_cerca):
-  muy_cerca avisado: 53.3%   cerca avisado: 29.1%
-  avisos falsos con el camino libre: 3.1%
+Con umbral 0.7 (cerca + muy_cerca):
+  muy_cerca avisado: 79.2%   cerca avisado: 49.0%
+  avisos falsos con el camino libre: 9.0%

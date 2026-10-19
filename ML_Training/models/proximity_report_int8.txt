@@ -1,23 +1,23 @@
 == Test limpio (int8, lo que corre en la placa) ==
-Exactitud: 72.1%  (1662 ejemplos)
+Exactitud: 71.4%  (1702 ejemplos)
 
 Real \ Predicho      libre     cerca muy_cerca
-libre                  917        79        20
-cerca                  182       149        71
-muy_cerca               48        63       133
+libre                  906       104        30
+cerca                  166       171        75
+muy_cerca               36        76       138
 
 Con umbral 0.7 (cerca + muy_cerca):
-  muy_cerca avisado: 72.5%   cerca avisado: 41.0%
-  avisos falsos con el camino libre: 6.3%
+  muy_cerca avisado: 80.8%   cerca avisado: 51.2%
+  avisos falsos con el camino libre: 9.5%
 
 == Test con simulacion OV2640 (int8) ==
-Exactitud: 70.2%  (1662 ejemplos)
+Exactitud: 70.8%  (1702 ejemplos)
 
 Real \ Predicho      libre     cerca muy_cerca
-libre                  901        86        29
-cerca                  189       133        80
-muy_cerca               55        57       132
+libre                  866       135        39
+cerca                  151       181        80
+muy_cerca               28        64       158
 
 Con umbral 0.7 (cerca + muy_cerca):
-  muy_cerca avisado: 69.3%   cerca avisado: 40.0%
-  avisos falsos con el camino libre: 6.5%
+  muy_cerca avisado: 82.4%   cerca avisado: 53.2%
+  avisos falsos con el camino libre: 10.8%

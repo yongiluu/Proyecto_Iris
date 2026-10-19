@@ -1,10 +1,10 @@
 // GENERADO por ML_Training/vision/export_model.py. No editar a mano.
 // == Test limpio (int8, lo que corre en la placa) ==
-// Exactitud: 83.3%  (8358 ejemplos)
-// avisos falsos sobre 'nada': 6.8%  |  aviso de clase equivocada: 2.0%
+// Exactitud: 83.7%  (8383 ejemplos)
+// avisos falsos sobre 'nada': 7.0%  |  aviso de clase equivocada: 2.0%
 // == Test con simulacion OV2640 (int8) ==
-// Exactitud: 79.9%  (8358 ejemplos)
-// avisos falsos sobre 'nada': 5.5%  |  aviso de clase equivocada: 2.0%
+// Exactitud: 80.7%  (8383 ejemplos)
+// avisos falsos sobre 'nada': 6.2%  |  aviso de clase equivocada: 2.3%
 #ifndef VISION_MODEL_DATA_H
 #define VISION_MODEL_DATA_H
 

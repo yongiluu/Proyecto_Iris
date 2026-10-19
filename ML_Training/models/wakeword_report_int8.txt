@@ -1,0 +1,11 @@
+== Wake word 'Oye Iris' (int8) ==
+Umbral 0.90: 44/50 = 88.0% detectados; activaciones falsas/hora: oye_iris 119.5, frases_parecidas 0.0, fondos_app 0.0, voz_chilena 0.0
+Ventanas de test sueltas: Oye Iris 95.8%, otro sobre el umbral 0.113%
+
+Umbral | Oye Iris detectados | activaciones falsas por hora: oye_iris / frases_parecidas / fondos_app / voz_chilena
+  0.50 |  44/ 50 =  88.0% | 179.3 / 119.7 / 224.3 /   5.8
+  0.70 |  44/ 50 =  88.0% | 179.3 /   0.0 /  89.7 /   2.9
+  0.80 |  45/ 50 =  90.0% | 149.4 /   0.0 /   0.0 /   1.9
+  0.90 |  44/ 50 =  88.0% | 119.5 /   0.0 /   0.0 /   0.0
+  0.95 |  45/ 50 =  90.0% |  89.6 /   0.0 /   0.0 /   0.0
+(minutos de audio de test: {'oye_iris': 2.0, 'frases_parecidas': 0.5, 'fondos_app': 1.3, 'voz_chilena': 62.2})

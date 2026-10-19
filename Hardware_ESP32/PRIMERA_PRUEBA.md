@@ -18,9 +18,12 @@ Al arrancar deberían aparecer estas líneas (los números cambian):
 
 ```text
 [Vision IA] Autotest OK: 150 ms por imagen (ESP-NN optimizado), clase puerta, max dif 0
-[Vision IA] Listo: 5 clases, arena 16xxxx/174080 bytes
-[Audio IA] Autotest OK: 8.0 ms por inferencia, clase sirena, max dif 0
-[Audio IA] Listo: 5 clases, arena 4xxxx/70656 bytes
+[Vision IA] Listo: 6 clases, arena 16xxxx/174080 bytes
+[Audio IA] Listo: arena 4xxxx/70656 bytes
+[Audio IA] Autotest OK: 8.0 ms por inferencia, salida 3, max dif 0
+[Wake word] Listo: arena 2xxxx/44032 bytes
+[Wake word] Autotest OK: 3.0 ms por inferencia, salida 1, max dif 0
+[Audio IA] Listo: 5 clases + wake word "Oye Iris"
 Iris ESP32 listo. Esperando conexion BLE...
 ```
 
@@ -33,6 +36,8 @@ Iris ESP32 listo. Esperando conexion BLE...
 | `Error al inicializar la camara` | Revisa que la placa de la cámara (Sense) esté bien encajada. |
 | La imagen sale al revés (en las misiones) | En `src/camera_driver.cpp` hay dos líneas comentadas para darla vuelta. |
 
+Si el wake word no carga, el resto sigue funcionando: la pregunta se hace con el botón. Para apagarlo, pon `WAKE_WORD_ENABLED 0` en `include/config.h`.
+
 Para ver los puntajes en vivo, pon `VISION_EVENTS_DEBUG 1` y/o `AUDIO_EVENTS_DEBUG 1` en `include/config.h` y vuelve a subir.
 
 ## 3. Probar con la app
@@ -41,6 +46,8 @@ Para ver los puntajes en vivo, pon `VISION_EVENTS_DEBUG 1` y/o `AUDIO_EVENTS_DEB
 2. En la app, elige el modo **Placa ESP32**. Debe decir "Bluetooth conectado".
 3. Apunta la cámara a una puerta o escalera a 1–2 m: la app debería decir "Adelante hay una puerta". La placa no repite la misma clase antes de 8 s, y la app tampoco antes de 20 s.
 4. Pregúntale algo a Iris ("¿qué hay a mi alrededor?"): la respuesta usa el contexto de lo que oyó y vio la placa.
+5. **"Oye Iris"** sin tocar el botón. Debería sonar un tono corto y en el serial aparecer `[Wake word] Oye Iris (9x%)`. Después haz tu pregunta: la placa corta sola cuando dejas de hablar (`[Wake word] Fin de la pregunta`). Si no despierta, acércate o dilo más claro. Con `AUDIO_EVENTS_DEBUG 1` el serial muestra el puntaje (despierta con 0,90 o más). Anota cuántas veces de 10 despierta y si alguna vez despertó sin que lo dijeras: con eso se ajusta el umbral.
+6. Los pitidos de cercanía están **apagados** (`PROXIMITY_BEEPS_ENABLED 0`): con fotos reales daban muchos avisos falsos.
 
 ## 4. Datos reales (lo que más mejora los modelos)
 

@@ -39,6 +39,14 @@
 #define AUDIO_EVENTS_DEBUG      0      // 1 = imprime los puntajes de cada inferencia por serial
 #define AUDIO_CAPTURE_BAUD      921600 // firmware de captura de datos (entornos *_audio_capture)
 
+// Wake word "Oye Iris" (modelo de ML_Training/wakeword). Al detectarlo la placa hace lo mismo que el
+// boton: manda tu pregunta a la app y corta sola cuando dejas de hablar.
+#define WAKE_WORD_ENABLED        1
+#define WAKE_PREROLL_MS          500    // audio de antes de la deteccion que tambien se manda
+#define WAKE_WAIT_SPEECH_MS      4000   // si no hablas en este tiempo, se cancela
+#define WAKE_END_SILENCE_MS      900    // silencio que marca el fin de la pregunta
+#define WAKE_MAX_MS              10000  // tope de una pregunta por wake word
+
 // ==========================================
 // Vision local (Edge AI, modelo de ML_Training/vision)
 // ==========================================
@@ -52,7 +60,10 @@
 // (CMD_AUDIO_CONTEXT / CMD_VISION_CONTEXT). No genera avisos hablados.
 #define AMBIENT_CONTEXT_PERIOD_MS  10000
 
-// Cercania con vision: intervalo entre pitidos segun el nivel (proximity.h)
+// Cercania con vision: pitidos de la placa. Apagados por ahora: con fotos reales el modelo da muchos
+// avisos falsos con el camino libre. El nivel igual se manda a la app (CMD_PROXIMITY, contexto silencioso).
+#define PROXIMITY_BEEPS_ENABLED      0
+// Intervalo entre pitidos segun el nivel (proximity.h)
 #define PROXIMITY_BEEP_NEAR_MS       800   // "cerca" (< ~1,5 m)
 #define PROXIMITY_BEEP_VERY_NEAR_MS  250   // "muy cerca" (< ~0,7 m)
 

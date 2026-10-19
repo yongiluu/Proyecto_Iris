@@ -1,7 +1,7 @@
 // GENERADO por ML_Training/audio/export_model.py. No editar a mano.
 // == Test (int8, lo que corre en la placa) ==
-// Exactitud: 87.9%  (4431 ejemplos)
-// Con umbral 0.7: alertas detectadas 71.5%, falsas alarmas sobre fondo/voz 3.2%
+// Exactitud: 85.1%  (4580 ejemplos)
+// Con umbral 0.7: alertas detectadas 75.4%, falsas alarmas sobre fondo/voz 4.8%
 #ifndef AUDIO_MODEL_DATA_H
 #define AUDIO_MODEL_DATA_H
 

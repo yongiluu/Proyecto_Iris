@@ -6,3 +6,6 @@ tests/build/
 *.log
 # Respaldos locales de versiones anteriores de los modelos
 models/*_v[0-9]/
+# Respaldos que deja ciclo_datos_reales.py y candidatos a adoptar
+models/antes_*/
+models/*_candidato/

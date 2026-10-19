@@ -171,6 +171,16 @@ def main() -> None:
                     x.astype(np.float32)[..., None] / 127.5 - 1.0,
                     declared_arena("proximity_model_data.h", "kProximityTensorArenaSize"))
 
+    wake_file = ML_DIR / "data" / "wakeword_dataset.npz"
+    if wake_file.exists() and (ML_DIR / "models" / "wakeword_int8.tflite").exists():
+        wake = np.load(wake_file)
+        x, y = wake["x_test"], wake["y_test"]
+        # Mitad "Oye Iris" y mitad "otro", para probar las dos salidas.
+        pick = np.concatenate([rng.choice(np.nonzero(y == c)[0], min(args.n // 2, int(np.sum(y == c))), replace=False)
+                               for c in (0, 1)])
+        ok &= check("wake word", ML_DIR / "models" / "wakeword_int8.tflite", x[pick].astype(np.float32),
+                    declared_arena("wakeword_model_data.h", "kWakeTensorArenaSize"))
+
     print("\nTODO OK: los kernels ESP-NN del firmware dan lo mismo que TensorFlow." if ok
           else "\n✘ Hay diferencias: revisar los kernels ESP-NN antes de subir el firmware.")
     sys.exit(0 if ok else 1)
