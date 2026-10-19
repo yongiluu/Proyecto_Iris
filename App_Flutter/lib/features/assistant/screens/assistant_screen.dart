@@ -291,6 +291,10 @@ class _AssistantScreenState extends State<AssistantScreen>
   // ─── Cercania ("voy a chocar con algo?"), como el sensor de retroceso de un auto ───
   // Sin voz: tiene que ser inmediato. En modo Celular pita y vibra; en modo Modulo la placa pita
   // por su parlante y el celular solo vibra al mismo ritmo.
+  // APAGADO por ahora: con fotos reales el modelo de cercania da 30-60 % de avisos falsos con el
+  // camino libre y el celular pitaba sin motivo. El nivel igual llega a SensorContext (contexto
+  // silencioso para la IA). Poner en true para volver a pitar/vibrar (celular y CMD_PROXIMITY).
+  static const bool kProximityBeepsEnabled = false;
   static const Duration _proximityNearPeriod = Duration(milliseconds: 800);
   static const Duration _proximityVeryNearPeriod = Duration(milliseconds: 250);
   Timer? _proximityTimer;
@@ -298,6 +302,7 @@ class _AssistantScreenState extends State<AssistantScreen>
 
   void _setProximityAlert(int level, {required bool fromPhone}) {
     _sensorContext.onProximity(level);
+    if (!kProximityBeepsEnabled) return;
     final active = fromPhone ? _hardwareMode == HardwareMode.standalone : _hardwareMode == HardwareMode.esp32;
     if (!active) level = 0;
     if (level == _proximityAlertLevel) return;
