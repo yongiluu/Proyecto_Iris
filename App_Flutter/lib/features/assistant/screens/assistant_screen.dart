@@ -7,6 +7,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:camera/camera.dart';
+import 'package:permission_handler/permission_handler.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:vibration/vibration.dart';
 
@@ -801,6 +802,11 @@ class _AssistantScreenState extends State<AssistantScreen>
               ? 'Modulo conectado (Bluetooth)'
               : 'Buscando el modulo por Bluetooth...');
     });
+    if (mode == HardwareMode.esp32) {
+      _esp32SpeechService.ensurePermissions().then((_) {
+        if (mounted) setState(() {});
+      });
+    }
     // Los pitidos de cercania eran del otro modo.
     _proximityTimer?.cancel();
     _proximityTimer = null;
@@ -1103,6 +1109,41 @@ class _AssistantScreenState extends State<AssistantScreen>
             ),
           ),
         ),
+        ValueListenableBuilder<String?>(
+          valueListenable: _esp32SpeechService.problem,
+          builder: (context, problem, _) {
+            if (problem == null || connected) return const SizedBox.shrink();
+            return Padding(
+              padding: const EdgeInsets.only(top: 8),
+              child: Semantics(
+                liveRegion: true,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(problem, style: const TextStyle(color: AppTheme.alertAmber, fontSize: 15, height: 1.3)),
+                    if (_esp32SpeechService.needsPermissions)
+                      Wrap(
+                        spacing: 8,
+                        children: [
+                          TextButton(
+                            onPressed: () async {
+                              await _esp32SpeechService.ensurePermissions();
+                              if (mounted) setState(() {});
+                            },
+                            child: const Text('Dar permiso', style: TextStyle(color: AppTheme.accentCyan)),
+                          ),
+                          TextButton(
+                            onPressed: openAppSettings,
+                            child: const Text('Abrir ajustes', style: TextStyle(color: AppTheme.accentCyan)),
+                          ),
+                        ],
+                      ),
+                  ],
+                ),
+              ),
+            );
+          },
+        ),
         Wrap(
           crossAxisAlignment: WrapCrossAlignment.center,
           spacing: 8,
@@ -1260,10 +1301,13 @@ class _AssistantScreenState extends State<AssistantScreen>
                   }
                 : null,
             child: ExcludeSemantics(
-              child: GestureDetector(
-                onTapDown: (_) => _talkButtonDown(),
-                onTapUp: (_) => _talkButtonUp(),
-                onTapCancel: _talkButtonUp,
+              // Listener y no GestureDetector: no compite en la arena de gestos, asi que soltar el
+              // dedo siempre llega (antes podia perderse el "soltar" y no se mandaba CMD_APP_PTT_STOP).
+              child: Listener(
+                behavior: HitTestBehavior.opaque,
+                onPointerDown: (_) => _talkButtonDown(),
+                onPointerUp: (_) => _talkButtonUp(),
+                onPointerCancel: (_) => _talkButtonUp(),
                 child: AnimatedBuilder(
                   animation: _pulseAnimation,
                   builder: (context, child) {
@@ -1375,10 +1419,25 @@ class _BoardPicker extends StatelessWidget {
                   ],
                 ),
                 if (boards.isEmpty)
-                  const Padding(
-                    padding: EdgeInsets.symmetric(vertical: 24),
-                    child: Text('Buscando placas... Enciende la placa y acercala al celular.',
-                        style: TextStyle(color: AppTheme.textOnDarkMuted, fontSize: 16)),
+                  ValueListenableBuilder<String?>(
+                    valueListenable: service.problem,
+                    builder: (context, problem, _) => Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 24),
+                      child: Semantics(
+                        liveRegion: true,
+                        child: Text(
+                          service.isScanning || problem == null
+                              ? 'Buscando placas... Enciende la placa y acercala al celular.'
+                              : problem,
+                          style: const TextStyle(color: AppTheme.textOnDarkMuted, fontSize: 16),
+                        ),
+                      ),
+                    ),
+                  ),
+                if (service.needsPermissions)
+                  const TextButton(
+                    onPressed: openAppSettings,
+                    child: Text('Abrir ajustes de la app', style: TextStyle(color: AppTheme.accentCyan)),
                   ),
                 for (final board in boards)
                   ListTile(

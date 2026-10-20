@@ -43,6 +43,11 @@ class Esp32SpeechService {
   final List<StreamSubscription<List<int>>> _notificationSubscriptions = [];
   Timer? _watchdogTimer;
   Timer? _thinkingTimer;
+  // Si se pierde la notificacion BLE de CMD_PTT_STOP, la app no debe quedar "escuchando placa".
+  static const Duration _pttStopGrace = Duration(milliseconds: 1500);
+  static const Duration _maxPttRecording = Duration(seconds: 15);
+  Timer? _pttStopTimer;
+  Timer? _pttSafetyTimer;
 
   final BytesBuilder _micBuffer = BytesBuilder(copy: false);
   final BytesBuilder _photoBuffer = BytesBuilder(copy: false);
@@ -80,6 +85,13 @@ class Esp32SpeechService {
 
   /// La placa oyo "Oye Iris" (CMD_WAKE_WORD:<%>).
   void Function(int percent)? onWakeWord;
+
+  /// Problema visible para el usuario (sin permisos, Bluetooth apagado, ninguna placa), o null.
+  final ValueNotifier<String?> problem = ValueNotifier(null);
+
+  /// true si faltan permisos de Bluetooth: la UI muestra un boton a los ajustes de la app.
+  bool get needsPermissions => _missingPermissions;
+  bool _missingPermissions = false;
 
   String? get preferredBoardId => _preferredBoardId;
   String? get connectedBoardId => isConnected ? _device?.remoteId.str : null;
@@ -140,13 +152,48 @@ class Esp32SpeechService {
       Permission.locationWhenInUse, // necesario para escanear BLE en Android 11 o menor
     ].request();
     debugPrint('Permisos BLE: $statuses');
+    await _hasBlePermissions();
+  }
+
+  /// Pide los permisos de Bluetooth (y microfono) si faltan. Llamar al entrar al modo Modulo.
+  /// Devuelve true si se puede escanear.
+  Future<bool> ensurePermissions() async {
+    if (defaultTargetPlatform != TargetPlatform.android) return true;
+    await [
+      Permission.bluetoothScan,
+      Permission.bluetoothConnect,
+      Permission.locationWhenInUse,
+      Permission.microphone,
+    ].request();
+    final ok = await _hasBlePermissions();
+    if (ok) unawaited(_scanAndConnect());
+    return ok;
+  }
+
+  /// Android 12+: BLUETOOTH_SCAN (neverForLocation en el manifiesto) y BLUETOOTH_CONNECT.
+  /// (En Android 11 o menor esos dos quedan "granted" y escanear usa la ubicacion, que se pide
+  /// en _requestPermissions.)
+  Future<bool> _hasBlePermissions() async {
+    if (defaultTargetPlatform != TargetPlatform.android) return true;
+    final ok = await Permission.bluetoothScan.isGranted && await Permission.bluetoothConnect.isGranted;
+    _missingPermissions = !ok;
+    if (!ok) {
+      problem.value = 'Iris necesita permiso de Bluetooth (dispositivos cercanos) para buscar la placa.';
+    } else if (problem.value?.startsWith('Iris necesita permiso') ?? false) {
+      problem.value = null;
+    }
+    return ok;
   }
 
   // ───────────────────────── Conexion ─────────────────────────
 
   Future<void> _scanAndConnect() async {
     if (isConnected || _isConnecting) return;
-    if (FlutterBluePlus.adapterStateNow != BluetoothAdapterState.on) return;
+    if (FlutterBluePlus.adapterStateNow != BluetoothAdapterState.on) {
+      problem.value = 'Activa el Bluetooth del celular para conectar la placa.';
+      return;
+    }
+    if (!await _hasBlePermissions()) return;
 
     _isConnecting = true;
     try {
@@ -169,11 +216,21 @@ class Esp32SpeechService {
     final preferred = _preferredBoardId;
     final boards = await _scanBoards(stopWhenSeen: preferred);
     if (boards == null) return null;
-    if (preferred != null) {
-      return boards.where((b) => b.id == preferred).map((b) => b.device).firstOrNull;
+    if (boards.isEmpty) {
+      problem.value = 'No encontre placas Iris: revisa que este encendida y el Bluetooth activado.';
+      return null;
     }
+    if (preferred != null) {
+      final match = boards.where((b) => b.id == preferred).map((b) => b.device).firstOrNull;
+      problem.value = match != null
+          ? null
+          : 'No encuentro ${IrisBoard.labelFor(preferred, nicknameOf(preferred))}. '
+              'Hay otra placa cerca: usa "Cambiar placa".';
+      return match;
+    }
+    problem.value = null;
     if (boards.length == 1) return boards.first.device;
-    if (boards.length > 1) onChooseBoard?.call(boards);
+    onChooseBoard?.call(boards);
     return null;
   }
 
@@ -225,9 +282,16 @@ class Esp32SpeechService {
 
   /// Escaneo pedido por la UI (pantalla "Cambiar placa"), tambien estando conectado.
   Future<void> refreshBoards() async {
-    if (FlutterBluePlus.adapterStateNow != BluetoothAdapterState.on) return;
+    if (FlutterBluePlus.adapterStateNow != BluetoothAdapterState.on) {
+      problem.value = 'Activa el Bluetooth del celular para conectar la placa.';
+      return;
+    }
+    if (!await _hasBlePermissions()) return;
     await _scanBoards();
   }
+
+  /// true mientras busca placas (para que la UI muestre "Buscando..." en vez de "no hay").
+  bool get isScanning => _isScanning;
 
   /// Guarda la placa elegida y se conecta a ella (desconectando la actual si es otra).
   Future<void> selectBoard(String id) async {
@@ -263,7 +327,21 @@ class Esp32SpeechService {
   /// Boton "Manten para hablar" de la app (mientras la placa no tenga boton fisico): la placa
   /// responde igual que con su boton, con CMD_PTT_START / audio / CMD_PTT_STOP.
   Future<void> sendAppPttStart() => _sendCommand('CMD_APP_PTT_START');
-  Future<void> sendAppPttStop() => _sendCommand('CMD_APP_PTT_STOP');
+  Future<void> sendAppPttStop() async {
+    await _sendCommand('CMD_APP_PTT_STOP');
+    _pttStopTimer?.cancel();
+    _pttStopTimer = Timer(_pttStopGrace, () => _finishRecording('no llego CMD_PTT_STOP'));
+  }
+
+  /// Termina la grabacion de la placa (una sola vez) y procesa el audio que haya llegado.
+  void _finishRecording(String? reason) {
+    _pttStopTimer?.cancel();
+    _pttSafetyTimer?.cancel();
+    if (!_isRecording) return;
+    if (reason != null) debugPrint('Grabacion de la placa cerrada por la app: $reason');
+    _isRecording = false;
+    onRecordingStopped?.call();
+  }
 
   Future<void> _connect(BluetoothDevice device) async {
     _device = device;
@@ -286,6 +364,7 @@ class Esp32SpeechService {
       await _prefs?.setString(_prefBoardId, _preferredBoardId!);
     }
     _publishBoards(boardsFound.value);
+    problem.value = null;
     onConnectionChanged?.call(true);
   }
 
@@ -364,6 +443,8 @@ class Esp32SpeechService {
     _audioSession++;
     _isSendingAudio = false;
     _thinkingTimer?.cancel();
+    _pttStopTimer?.cancel();
+    _pttSafetyTimer?.cancel();
     _completePhoto(null);
   }
 
@@ -384,10 +465,11 @@ class Esp32SpeechService {
       _isRecording = true;
       stopAudio();
       _micBuffer.clear();
+      _pttSafetyTimer?.cancel();
+      _pttSafetyTimer = Timer(_maxPttRecording, () => _finishRecording('tope de ${_maxPttRecording.inSeconds} s'));
       onRecordingStarted?.call();
     } else if (command == 'CMD_PTT_STOP') {
-      _isRecording = false;
-      onRecordingStopped?.call();
+      _finishRecording(null);
     } else if (command.startsWith('CMD_PHOTO_START:')) {
       _isReceivingPhoto = true;
       _photoBuffer.clear();
@@ -707,6 +789,7 @@ class Esp32SpeechService {
     }
     lastPhotoNotifier.dispose();
     boardsFound.dispose();
+    problem.dispose();
   }
 }
 
