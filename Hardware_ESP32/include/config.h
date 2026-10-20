@@ -83,6 +83,7 @@
 #define I2S_AMP_DIN   3  // D2
 
 #define BUTTON_PIN    4  // D3
+#define BUTTON_PIN_BOOT 0 // boton BOOT de la XIAO: tambien sirve para hablarle a Iris (sin boton externo)
 
 #define PWDN_GPIO_NUM     -1
 #define RESET_GPIO_NUM    -1

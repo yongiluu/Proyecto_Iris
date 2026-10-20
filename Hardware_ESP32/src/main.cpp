@@ -3,6 +3,7 @@
 
 #include <Arduino.h>
 #include "config.h"
+#include <esp_heap_caps.h>
 #include "camera_driver.h"
 #include "audio_events.h"
 #include "audio_player.h"
@@ -215,6 +216,9 @@ void handleButton() {
   static uint32_t lastChangeMs = 0;
 
   bool reading = digitalRead(BUTTON_PIN);
+#ifdef BUTTON_PIN_BOOT
+  reading = reading && digitalRead(BUTTON_PIN_BOOT);  // apretado (LOW) si cualquiera de los dos lo esta
+#endif
   if (reading != lastReading) {
     lastReading = reading;
     lastChangeMs = millis();
@@ -230,7 +234,15 @@ void handleButton() {
 
 void setup() {
   Serial.begin(115200);
+#if ARDUINO_USB_CDC_ON_BOOT
+  // Con USB nativo (XIAO) lo que se imprime antes de abrir el monitor se pierde: espera un poco al PC
+  // para que se vean los autotests. Sin cable sigue a los 2,5 s.
+  while (!Serial && millis() < 2500) delay(10);
+#endif
   pinMode(BUTTON_PIN, INPUT_PULLUP);
+#ifdef BUTTON_PIN_BOOT
+  pinMode(BUTTON_PIN_BOOT, INPUT_PULLUP);
+#endif
 
   if (!initCamera()) Serial.println("Error al inicializar la camara");
   if (!initAudioPlayer()) Serial.println("Error al inicializar el reproductor de audio");
@@ -245,6 +257,10 @@ void setup() {
   if (!startPhotoTask()) Serial.println("Error al crear la tarea de fotos");
   if (!startVisionTask()) Serial.println("Error al crear la tarea de vision");
 
+  Serial.printf("[Memoria] RAM interna libre %u bytes (bloque mayor %u), PSRAM libre %u bytes\n",
+                (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
+                (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL),
+                (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM));
   Serial.println("Iris ESP32 listo. Esperando conexion BLE...");
 }
 

@@ -15,6 +15,7 @@
 #include "audio_frontend.h"
 #include "audio_model_data.h"
 #include "config.h"
+#include "tflm_arena.h"
 #if WAKE_WORD_ENABLED
 #include "wakeword_model_data.h"
 #endif
@@ -222,16 +223,15 @@ bool loadModel(Model& m, const char* tag, const unsigned char* modelData, int ar
         Serial.printf("[%s] Version de schema del modelo incorrecta\n", tag);
         return false;
     }
-    // RAM interna (rapida); si no alcanza, PSRAM.
-    uint8_t* arena = (uint8_t*)heap_caps_malloc(arenaBytes, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
-    if (arena == nullptr) arena = (uint8_t*)heap_caps_malloc(arenaBytes, MALLOC_CAP_SPIRAM);
+    const size_t arenaSize = tflmArenaBytes(arenaBytes);
+    uint8_t* arena = allocTflmArena(arenaSize);
     if (arena == nullptr) {
         Serial.printf("[%s] Sin memoria para el tensor arena\n", tag);
         return false;
     }
-    auto* interpreter = new tflite::MicroInterpreter(model, resolver, arena, arenaBytes, errorReporter);
+    auto* interpreter = new tflite::MicroInterpreter(model, resolver, arena, arenaSize, errorReporter);
     if (interpreter->AllocateTensors() != kTfLiteOk) {
-        Serial.printf("[%s] AllocateTensors fallo: sube el tensor arena (%d)\n", tag, arenaBytes);
+        Serial.printf("[%s] AllocateTensors fallo con %u bytes: sube tflmArenaBytes()\n", tag, (unsigned)arenaSize);
         return false;
     }
     TfLiteTensor* input = interpreter->input(0);
@@ -246,7 +246,7 @@ bool loadModel(Model& m, const char* tag, const unsigned char* modelData, int ar
     m.inputScale = input->params.scale;
     m.inputZeroPoint = input->params.zero_point;
     m.interpreter = interpreter;
-    Serial.printf("[%s] Listo: arena %u/%d bytes\n", tag, (unsigned)interpreter->arena_used_bytes(), arenaBytes);
+    Serial.printf("[%s] Listo: arena %u/%u bytes\n", tag, (unsigned)interpreter->arena_used_bytes(), (unsigned)arenaSize);
     return true;
 }
 }  // namespace

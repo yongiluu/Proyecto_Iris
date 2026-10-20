@@ -10,6 +10,7 @@
 #include "tensorflow/lite/schema/schema_generated.h"
 
 #include "config.h"
+#include "tflm_arena.h"
 #include "proximity_model_data.h"
 
 namespace {
@@ -47,8 +48,8 @@ bool initProximityAI(ProximityCallback callback) {
         Serial.println("[Cercania IA] Version de schema del modelo incorrecta");
         return false;
     }
-    uint8_t* arena = (uint8_t*)heap_caps_malloc(kProximityTensorArenaSize, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
-    if (arena == nullptr) arena = (uint8_t*)heap_caps_malloc(kProximityTensorArenaSize, MALLOC_CAP_SPIRAM);
+    const size_t arenaBytes = tflmArenaBytes(kProximityTensorArenaSize);
+    uint8_t* arena = allocTflmArena(arenaBytes);
     if (arena == nullptr) {
         Serial.println("[Cercania IA] Sin memoria para el tensor arena");
         return false;
@@ -56,11 +57,11 @@ bool initProximityAI(ProximityCallback callback) {
 
     static tflite::MicroErrorReporter errorReporter;
     static tflite::AllOpsResolver resolver;
-    static tflite::MicroInterpreter staticInterpreter(model, resolver, arena, kProximityTensorArenaSize, &errorReporter);
+    static tflite::MicroInterpreter staticInterpreter(model, resolver, arena, arenaBytes, &errorReporter);
     interpreter = &staticInterpreter;
     if (interpreter->AllocateTensors() != kTfLiteOk) {
-        Serial.printf("[Cercania IA] AllocateTensors fallo: sube kProximityTensorArenaSize (%d)\n",
-                      kProximityTensorArenaSize);
+        Serial.printf("[Cercania IA] AllocateTensors fallo con %u bytes: sube tflmArenaBytes()\n",
+                      (unsigned)arenaBytes);
         interpreter = nullptr;
         return false;
     }
@@ -73,8 +74,8 @@ bool initProximityAI(ProximityCallback callback) {
         return false;
     }
     runSelfTest();
-    Serial.printf("[Cercania IA] Listo, arena %u/%d bytes\n", (unsigned)interpreter->arena_used_bytes(),
-                  kProximityTensorArenaSize);
+    Serial.printf("[Cercania IA] Listo, arena %u/%u bytes\n", (unsigned)interpreter->arena_used_bytes(),
+                  (unsigned)arenaBytes);
     return true;
 }
 

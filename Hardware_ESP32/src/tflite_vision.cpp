@@ -10,6 +10,7 @@
 #include "tensorflow/lite/schema/schema_generated.h"
 
 #include "config.h"
+#include "tflm_arena.h"
 #include "vision_model_data.h"
 
 namespace {
@@ -115,9 +116,8 @@ bool initVisionAI(VisionEventCallback callback, VisionEventCallback contextCallb
         return false;
     }
 
-    // RAM interna (rapida); si no alcanza, PSRAM.
-    uint8_t* arena = (uint8_t*)heap_caps_malloc(kVisionTensorArenaSize, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
-    if (arena == nullptr) arena = (uint8_t*)heap_caps_malloc(kVisionTensorArenaSize, MALLOC_CAP_SPIRAM);
+    const size_t arenaBytes = tflmArenaBytes(kVisionTensorArenaSize);
+    uint8_t* arena = allocTflmArena(arenaBytes);
     if (arena == nullptr) {
         Serial.println("[Vision IA] Sin memoria para el tensor arena");
         return false;
@@ -125,11 +125,11 @@ bool initVisionAI(VisionEventCallback callback, VisionEventCallback contextCallb
 
     static tflite::MicroErrorReporter errorReporter;
     static tflite::AllOpsResolver resolver;
-    static tflite::MicroInterpreter staticInterpreter(model, resolver, arena, kVisionTensorArenaSize, &errorReporter);
+    static tflite::MicroInterpreter staticInterpreter(model, resolver, arena, arenaBytes, &errorReporter);
     interpreter = &staticInterpreter;
 
     if (interpreter->AllocateTensors() != kTfLiteOk) {
-        Serial.printf("[Vision IA] AllocateTensors fallo: sube kVisionTensorArenaSize (%d)\n", kVisionTensorArenaSize);
+        Serial.printf("[Vision IA] AllocateTensors fallo con %u bytes: sube tflmArenaBytes()\n", (unsigned)arenaBytes);
         interpreter = nullptr;
         return false;
     }
@@ -144,8 +144,8 @@ bool initVisionAI(VisionEventCallback callback, VisionEventCallback contextCallb
     }
 
     runSelfTest();
-    Serial.printf("[Vision IA] Listo: %d clases, arena %u/%d bytes\n", kVisionNumClasses,
-                  (unsigned)interpreter->arena_used_bytes(), kVisionTensorArenaSize);
+    Serial.printf("[Vision IA] Listo: %d clases, arena %u/%u bytes\n", kVisionNumClasses,
+                  (unsigned)interpreter->arena_used_bytes(), (unsigned)arenaBytes);
     return true;
 }
 
