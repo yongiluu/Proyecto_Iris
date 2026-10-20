@@ -28,6 +28,9 @@ bool isTransmitting = false;
 volatile bool collectingAudio = false;
 // Pedido de actualizacion por WiFi (CMD_OTA_WIFI llega en el hilo BLE; el loop lo atiende).
 volatile bool otaRequested = false;
+// Boton de hablar en la pantalla de la app (prototipo sin boton): CMD_APP_PTT_START / STOP.
+volatile bool appPttStartRequested = false;
+volatile bool appPttStopRequested = false;
 
 // Wake word "Oye Iris": la tarea de audio avisa y el loop arranca la pregunta (como el boton).
 volatile int wakePercent = 0;   // != 0: hay un "Oye Iris" pendiente
@@ -98,6 +101,10 @@ void onCommandReceived(const char* command) {
     requestGrayFrameCapture();
   } else if (strcmp(command, "CMD_OTA_WIFI") == 0) {
     otaRequested = true;
+  } else if (strcmp(command, "CMD_APP_PTT_START") == 0) {
+    appPttStartRequested = true;
+  } else if (strcmp(command, "CMD_APP_PTT_STOP") == 0) {
+    appPttStopRequested = true;
   } else {
     Serial.printf("[BLE] Comando desconocido: %s\n", command);
   }
@@ -331,6 +338,14 @@ void loop() {
   }
 
   handleButton();
+  if (appPttStartRequested) {
+    appPttStartRequested = false;
+    startPushToTalk();
+  }
+  if (appPttStopRequested) {
+    appPttStopRequested = false;
+    if (isTransmitting) stopPushToTalk();
+  }
 
   handleProximityBeeps();
 

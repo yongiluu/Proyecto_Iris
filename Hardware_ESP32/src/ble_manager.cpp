@@ -50,6 +50,8 @@ void BleManager::init(AudioReceiveCallback audioCallback, CommandReceiveCallback
 
     NimBLEDevice::init(BLE_DEVICE_NAME);
     NimBLEDevice::setMTU(BLE_REQUESTED_MTU);
+    // Con dos prototipos (mismo nombre) la app los distingue por esta direccion.
+    Serial.printf("[BLE] %s direccion %s\n", BLE_DEVICE_NAME, NimBLEDevice::getAddress().toString().c_str());
 
     pServer = NimBLEDevice::createServer();
     pServer->setCallbacks(new ServerCallbacks());
