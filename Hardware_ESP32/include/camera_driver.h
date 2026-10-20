@@ -16,4 +16,7 @@ void releaseGrayFrame(camera_fb_t* frame);
 camera_fb_t* acquireJpegFrame();
 void releaseJpegFrame(camera_fb_t* frame);
 
+// Apaga la camara (antes de actualizar por WiFi: su tarea se cae mientras se escribe la flash).
+void shutdownCamera();
+
 #endif

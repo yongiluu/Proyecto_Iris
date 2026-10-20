@@ -13,6 +13,7 @@
 #include "proximity.h"
 #include "tflite_vision.h"
 #include "vision_task.h"
+#include "ota_update.h"
 
 namespace {
 constexpr uint32_t kDebounceMs = 50;
@@ -25,6 +26,8 @@ uint32_t lastProximityBeepMs = 0;
 bool isTransmitting = false;
 // Modo recoleccion de datos (pantalla "Misiones" de la app): manda el microfono crudo sin apretar el boton.
 volatile bool collectingAudio = false;
+// Pedido de actualizacion por WiFi (CMD_OTA_WIFI llega en el hilo BLE; el loop lo atiende).
+volatile bool otaRequested = false;
 
 // Wake word "Oye Iris": la tarea de audio avisa y el loop arranca la pregunta (como el boton).
 volatile int wakePercent = 0;   // != 0: hay un "Oye Iris" pendiente
@@ -93,6 +96,8 @@ void onCommandReceived(const char* command) {
     collectingAudio = false;
   } else if (strcmp(command, "CMD_COLLECT_FRAME") == 0) {
     requestGrayFrameCapture();
+  } else if (strcmp(command, "CMD_OTA_WIFI") == 0) {
+    otaRequested = true;
   } else {
     Serial.printf("[BLE] Comando desconocido: %s\n", command);
   }
@@ -210,10 +215,49 @@ void updateWakeSession(const int16_t* samples, size_t count) {
   }
 }
 
+// Modo actualizacion por WiFi: se detiene todo, la placa crea su red y espera el firmware nuevo.
+// Tres tonos subiendo = listo para recibir; un tono grave = no se pudo.
+void enterOtaMode(const char* reason) {
+  Serial.printf("[OTA] Modo actualizacion por WiFi (%s)\n", reason);
+  if (isTransmitting) stopPushToTalk();
+  collectingAudio = false;
+  setVisionPaused(true);
+  setAudioEventsPaused(true);
+  shutdownCamera();
+  if (startOtaUpdate()) {
+    bleManager.sendCommand("CMD_OTA_READY:" OTA_AP_SSID);
+    playTone(880.0f, 120);
+    playTone(1175.0f, 120);
+    playTone(1568.0f, 200);
+  } else {
+    bleManager.sendCommand("CMD_OTA_ERROR");
+    playTone(330.0f, 600);
+    delay(700);
+    ESP.restart();  // vuelve al modo normal con la camara
+  }
+}
+
+// Escribir OTA (y Enter) en el monitor serial tambien activa la actualizacion por WiFi.
+void handleSerialCommands() {
+  static char line[16];
+  static size_t length = 0;
+  while (Serial.available()) {
+    char c = (char)Serial.read();
+    if (c == '\r' || c == '\n') {
+      line[length] = 0;
+      if (strcasecmp(line, "OTA") == 0) otaRequested = true;
+      length = 0;
+    } else if (length < sizeof(line) - 1) {
+      line[length++] = c;
+    }
+  }
+}
+
 void handleButton() {
   static bool stableState = HIGH;
   static bool lastReading = HIGH;
   static uint32_t lastChangeMs = 0;
+  static uint32_t pressedSinceMs = 0;
 
   bool reading = digitalRead(BUTTON_PIN);
 #ifdef BUTTON_PIN_BOOT
@@ -226,8 +270,18 @@ void handleButton() {
 
   if (reading != stableState && millis() - lastChangeMs >= kDebounceMs) {
     stableState = reading;
-    if (stableState == LOW) startPushToTalk();
-    else stopPushToTalk();
+    if (stableState == LOW) {
+      pressedSinceMs = millis();
+      startPushToTalk();
+    } else {
+      stopPushToTalk();
+    }
+  }
+  // Mantenerlo apretado OTA_BUTTON_HOLD_MS (nadie habla tanto con el boton): actualizar por WiFi.
+  static uint32_t holdHandledFor = 0;  // una sola vez por cada vez que se aprieta
+  if (stableState == LOW && millis() - pressedSinceMs >= OTA_BUTTON_HOLD_MS && holdHandledFor != pressedSinceMs) {
+    holdHandledFor = pressedSinceMs;
+    enterOtaMode("boton mantenido");
   }
 }
 }
@@ -265,6 +319,17 @@ void setup() {
 }
 
 void loop() {
+  if (otaActive()) {
+    handleOtaUpdate();
+    return;
+  }
+  handleSerialCommands();
+  if (otaRequested) {
+    otaRequested = false;
+    enterOtaMode("pedido de la app o del serial");
+    return;
+  }
+
   handleButton();
 
   handleProximityBeeps();

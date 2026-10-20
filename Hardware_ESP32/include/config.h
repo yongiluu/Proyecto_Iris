@@ -47,6 +47,13 @@
 #define WAKE_END_SILENCE_MS      900    // silencio que marca el fin de la pregunta
 #define WAKE_MAX_MS              10000  // tope de una pregunta por wake word
 
+// Actualizar el firmware por WiFi con la caja cerrada (ota_update.h, ACTUALIZAR_POR_WIFI.md).
+// Se activa manteniendo apretado el boton de Iris OTA_BUTTON_HOLD_MS, con CMD_OTA_WIFI desde la app o
+// escribiendo OTA en el monitor serial. La clave de la red esta en platformio.ini ([ota] password).
+#define OTA_AP_SSID              "Iris-Actualizar"
+#define OTA_BUTTON_HOLD_MS       15000
+#define OTA_TIMEOUT_MS           600000  // 10 min sin recibir firmware: vuelve al modo normal
+
 // ==========================================
 // Vision local (Edge AI, modelo de ML_Training/vision)
 // ==========================================

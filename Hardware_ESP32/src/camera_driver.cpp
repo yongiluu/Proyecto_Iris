@@ -127,3 +127,12 @@ void releaseJpegFrame(camera_fb_t* frame) {
   cameraReady = restartCamera(CameraMode::Gray);
   xSemaphoreGive(cameraMutex);
 }
+
+void shutdownCamera() {
+  if (cameraMutex == nullptr || !cameraReady) return;
+  // Espera a que nadie este usando un frame; despues la camara queda apagada (acquire* devuelve nullptr).
+  xSemaphoreTake(cameraMutex, portMAX_DELAY);
+  cameraReady = false;
+  esp_camera_deinit();
+  xSemaphoreGive(cameraMutex);
+}
