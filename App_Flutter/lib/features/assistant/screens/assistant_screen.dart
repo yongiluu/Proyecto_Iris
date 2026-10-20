@@ -239,7 +239,8 @@ class _AssistantScreenState extends State<AssistantScreen>
   /// Misiones de recoleccion ocultas por ahora (el codigo queda).
   static const bool kShowDataMissions = false;
   /// Boton "Manten para hablar" en modo Modulo: manda CMD_APP_PTT_START/STOP a la placa.
-  static const bool kAppPttEnabled = true;
+  /// Apagado: en la final se activa con "Oye Iris" (el codigo queda por si hace falta).
+  static const bool kAppPttEnabled = false;
   static const String _prefAnswersOnPhone = 'iris_answers_on_phone';
   bool _answersOnPhone = true;
   bool _boardSheetOpen = false;
@@ -1259,7 +1260,9 @@ class _AssistantScreenState extends State<AssistantScreen>
     } else {
       caption = !isModule
           ? 'Manten presionado para hablar'
-          : (canTalkHere ? 'Manten presionado: habla al modulo' : 'Conecta el modulo para hablar');
+          : (canTalkHere
+              ? 'Manten presionado: habla al modulo'
+              : (_esp32SpeechService.isConnected ? 'Di "Oye Iris" para hablar' : 'Conecta el modulo para hablar'));
     }
 
     final String semanticLabel;

@@ -304,7 +304,22 @@ class Esp32SpeechService {
     unawaited(_scanAndConnect());
   }
 
-  String? nicknameOf(String id) => _prefs?.getString('$_prefNickPrefix$id');
+  /// Nombres de los dos prototipos de la final (por el comienzo de su direccion BLE). Un apodo puesto
+  /// en la app tiene prioridad.
+  static const Map<String, String> _knownBoards = {
+    '44:B1:76:AF:46': 'Iris blanca',
+    '44:BD:8D:EC:B6': 'Iris negra',
+  };
+
+  String? nicknameOf(String id) {
+    final saved = _prefs?.getString('$_prefNickPrefix$id');
+    if (saved != null && saved.isNotEmpty) return saved;
+    final upper = id.toUpperCase();
+    for (final entry in _knownBoards.entries) {
+      if (upper.startsWith(entry.key)) return entry.value;
+    }
+    return null;
+  }
 
   Future<void> setNickname(String id, String nickname) async {
     final clean = nickname.trim();
