@@ -709,7 +709,47 @@ class Esp32SpeechService {
   Future<String> stopListeningAndTranscribe() async {
     final pcm = _micBuffer.takeBytes();
     if (pcm.length < _minRecordingBytes) return '';
-    return _transcribeWithHuggingFace(_buildWav(pcm));
+    final wav = _buildWav(pcm);
+    // Azure Speech primero (misma llave que la voz de Iris); Hugging Face queda de respaldo.
+    final azure = await _transcribeWithAzure(wav);
+    if (azure.isNotEmpty) return azure;
+    return _transcribeWithHuggingFace(wav);
+  }
+
+  /// Voz a texto con Azure Speech (REST para audio corto, hasta 60 s). WAV 16 kHz mono 16-bit.
+  Future<String> _transcribeWithAzure(Uint8List wavBytes) async {
+    final key = EnvConfig.azureSpeechKey.trim();
+    final region = EnvConfig.azureSpeechRegion.trim();
+    if (key.isEmpty || region.isEmpty) return '';
+
+    try {
+      final response = await http
+          .post(
+            Uri.parse('https://$region.stt.speech.microsoft.com/speech/recognition/conversation/'
+                'cognitiveservices/v1?language=es-CL&format=simple'),
+            headers: {
+              'Ocp-Apim-Subscription-Key': key,
+              'Content-Type': 'audio/wav; codecs=audio/pcm; samplerate=16000',
+              'Accept': 'application/json',
+            },
+            body: wavBytes,
+          )
+          .timeout(_transcriptionTimeout);
+
+      if (response.statusCode != 200) {
+        debugPrint('Error Azure Speech ${response.statusCode}: ${response.body}');
+        return '';
+      }
+      final result = jsonDecode(utf8.decode(response.bodyBytes));
+      if (result['RecognitionStatus'] != 'Success') {
+        debugPrint('Azure Speech: ${result['RecognitionStatus']}');
+        return '';
+      }
+      return result['DisplayText']?.toString().trim() ?? '';
+    } catch (e) {
+      debugPrint('Error Azure Speech: $e');
+      return '';
+    }
   }
 
   Uint8List _buildWav(Uint8List pcm) => buildWav(pcm);

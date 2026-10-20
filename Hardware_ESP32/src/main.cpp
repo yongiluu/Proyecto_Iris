@@ -17,7 +17,7 @@
 
 namespace {
 constexpr uint32_t kDebounceMs = 50;
-constexpr uint32_t kStopFlushDelayMs = 20;
+constexpr uint32_t kStopFlushDelayMs = 80;
 
 volatile bool beepRequested = false;
 // Cercania (0 libre, 1 cerca, 2 muy cerca): la escribe la tarea de vision, el loop pita.
@@ -183,6 +183,10 @@ void stopPushToTalk() {
   setVisionPaused(false);
   setAudioEventsPaused(false);
   delay(kStopFlushDelayMs); // deja vaciar la cola BLE de audio antes del STOP
+  bleManager.sendCommand("CMD_PTT_STOP");
+  // En las pruebas con la app el STOP a veces no llegaba (cola BLE llena con el ultimo audio) y la app
+  // quedaba "escuchando". Se repite: la app ignora el segundo (ya no esta escuchando).
+  delay(150);
   bleManager.sendCommand("CMD_PTT_STOP");
 }
 
