@@ -7,6 +7,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:camera/camera.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:vibration/vibration.dart';
 
 import '../../../core/theme/app_theme.dart';
@@ -146,6 +147,18 @@ class _AssistantScreenState extends State<AssistantScreen>
       _phoneVision.onContext = _sensorContext.onVisionContext;
       _phoneVision.onProximity = (level, _) => _setProximityAlert(level, fromPhone: true);
       _esp32SpeechService.onProximity = (level, _) => _setProximityAlert(level, fromPhone: false);
+      _esp32SpeechService.onChooseBoard = (_) {
+        if (mounted && _hardwareMode == HardwareMode.esp32 && !_boardSheetOpen) _showBoardPicker();
+      };
+      _esp32SpeechService.onWakeWord = (_) {
+        if (mounted && _hardwareMode == HardwareMode.esp32 && !_isListening && !_isProcessing) {
+          setState(() => _statusText = 'Te escucho');
+        }
+      };
+      try {
+        final prefs = await SharedPreferences.getInstance();
+        _answersOnPhone = prefs.getBool(_prefAnswersOnPhone) ?? true;
+      } catch (_) {}
 
       // Un servicio que falla (ej. sin permiso de camara) no debe impedir usar los demas.
       await Future.wait<void>([
@@ -216,8 +229,58 @@ class _AssistantScreenState extends State<AssistantScreen>
       // Las misiones de datos usan la misma camara.
       (ModalRoute.of(context)?.isCurrent ?? true);
 
+  /// A donde mandar la voz de Iris. Con "Escuchar respuestas en el celular" (por defecto, mientras
+  /// la placa no tenga altavoz) suena en el celular aunque el modo sea Modulo.
   Esp32SpeechService? get _activeEsp32 =>
-      _hardwareMode == HardwareMode.esp32 ? _esp32SpeechService : null;
+      _hardwareMode == HardwareMode.esp32 && !_answersOnPhone ? _esp32SpeechService : null;
+
+  // ─── Modo prueba de la final (temporal): placa sin altavoz ni boton ───
+  /// Misiones de recoleccion ocultas por ahora (el codigo queda).
+  static const bool kShowDataMissions = false;
+  /// Boton "Manten para hablar" en modo Modulo: manda CMD_APP_PTT_START/STOP a la placa.
+  static const bool kAppPttEnabled = true;
+  static const String _prefAnswersOnPhone = 'iris_answers_on_phone';
+  bool _answersOnPhone = true;
+  bool _boardSheetOpen = false;
+  Timer? _localThinkingTimer;
+
+  Future<void> _setAnswersOnPhone(bool value) async {
+    setState(() => _answersOnPhone = value);
+    try {
+      (await SharedPreferences.getInstance()).setBool(_prefAnswersOnPhone, value);
+    } catch (_) {}
+  }
+
+  /// Pitido de "pensando" en la placa o, con respuestas en el celular, en el parlante del celular.
+  void _startThinking() {
+    if (_activeEsp32 != null) {
+      _esp32SpeechService.startThinkingSound();
+      return;
+    }
+    _localThinkingTimer?.cancel();
+    _playCue('thinking');
+    _localThinkingTimer = Timer.periodic(const Duration(seconds: 2), (_) => _playCue('thinking'));
+  }
+
+  void _stopThinking() {
+    _esp32SpeechService.stopThinkingSound();
+    _localThinkingTimer?.cancel();
+    _localThinkingTimer = null;
+  }
+
+  Future<void> _showBoardPicker() async {
+    if (_boardSheetOpen) return;
+    _boardSheetOpen = true;
+    unawaited(_esp32SpeechService.refreshBoards());
+    await showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: const Color(0xFF0B1116),
+      isScrollControlled: true,
+      builder: (context) => _BoardPicker(service: _esp32SpeechService),
+    );
+    _boardSheetOpen = false;
+    if (mounted) setState(() {});
+  }
 
   bool _isNativeMicActive = false;
 
@@ -473,14 +536,14 @@ class _AssistantScreenState extends State<AssistantScreen>
        _isNativeMicActive = false;
        // We can still play the thinking sound on the ESP32 if we are in ESP32 mode
        if (_hardwareMode == HardwareMode.esp32) {
-           _esp32SpeechService.startThinkingSound();
+           _startThinking();
        }
     } else if (_hardwareMode == HardwareMode.esp32) {
        // Envia "Pensando..." sonoro al ESP32
-       _esp32SpeechService.startThinkingSound();
+       _startThinking();
        prompt = await _esp32SpeechService.stopListeningAndTranscribe();
        // Detenemos sonido pensante al tener la transcripcion
-       _esp32SpeechService.stopThinkingSound();
+       _stopThinking();
     } else {
        prompt = await _nativeSpeechService.stopListening();
     }
@@ -512,7 +575,7 @@ class _AssistantScreenState extends State<AssistantScreen>
     await _playQuerySentCue();
     
     // Si la ESP32 va a analizar la imagen, que vuelva a sonar "Pensando..." durante el GPT
-    if (_hardwareMode == HardwareMode.esp32) _esp32SpeechService.startThinkingSound();
+    if (_hardwareMode == HardwareMode.esp32) _startThinking();
 
     try {
       final String? description = await _agentService.processWithAgenticReasoning(
@@ -524,7 +587,7 @@ class _AssistantScreenState extends State<AssistantScreen>
         sensorContext: _sensorContext.describe(),
       );
       
-      if (_hardwareMode == HardwareMode.esp32) _esp32SpeechService.stopThinkingSound();
+      if (_hardwareMode == HardwareMode.esp32) _stopThinking();
       
       _resetState(null);
       setState(() {
@@ -536,7 +599,7 @@ class _AssistantScreenState extends State<AssistantScreen>
       }
     } catch (e) {
       debugPrint('⚠️ Error del servicio AI: $e');
-      if (_hardwareMode == HardwareMode.esp32) _esp32SpeechService.stopThinkingSound();
+      if (_hardwareMode == HardwareMode.esp32) _stopThinking();
       _resetState('Error de servicio AI.');
       await _ttsService.speak('Hubo un error, por favor intenta de nuevo.', esp32Service: _activeEsp32);
     }
@@ -560,6 +623,7 @@ class _AssistantScreenState extends State<AssistantScreen>
   void dispose() {
     _continuousTimer?.cancel();
     _proximityTimer?.cancel();
+    _localThinkingTimer?.cancel();
     _phoneVision.dispose();
     _pulseController.dispose();
     _fadeController.dispose();
@@ -832,7 +896,7 @@ class _AssistantScreenState extends State<AssistantScreen>
                   Row(
                     children: [
                       Expanded(child: _buildHardwareToggle()),
-                      _buildMissionsButton(),
+                      if (kShowDataMissions) _buildMissionsButton(),
                     ],
                   ),
                   Expanded(
@@ -896,8 +960,7 @@ class _AssistantScreenState extends State<AssistantScreen>
     final statusLine = visionAlert != null ? 'Presiona el boton para hablar' : _statusText;
     // Borde solo mientras escucha o piensa; en reposo la tarjeta va limpia.
     final borderColor = _isBusy ? accent.withValues(alpha: 0.7) : Colors.transparent;
-    final showModuleLink =
-        _hardwareMode == HardwareMode.esp32 && !_statusText.contains('Bluetooth');
+    final showModuleLink = _hardwareMode == HardwareMode.esp32;
 
     return AnimatedContainer(
       duration: _uiAnim,
@@ -1015,26 +1078,62 @@ class _AssistantScreenState extends State<AssistantScreen>
   /// quedaba tapado por la tarjeta de descripcion).
   Widget _buildModuleLink() {
     final connected = _esp32SpeechService.isConnected;
-    return Semantics(
-      label: connected ? 'Módulo conectado por Bluetooth' : 'Buscando el módulo por Bluetooth',
-      child: ExcludeSemantics(
-        child: Row(
-          children: [
-            Icon(
-              connected ? Icons.bluetooth_connected : Icons.bluetooth_searching,
-              color: connected ? AppTheme.accentCyan : AppTheme.alertAmber,
-              size: 22,
+    final label = _esp32SpeechService.connectedBoardLabel;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Semantics(
+          label: connected ? 'Conectado a $label' : 'Buscando el módulo por Bluetooth',
+          child: ExcludeSemantics(
+            child: Row(
+              children: [
+                Icon(
+                  connected ? Icons.bluetooth_connected : Icons.bluetooth_searching,
+                  color: connected ? AppTheme.accentCyan : AppTheme.alertAmber,
+                  size: 22,
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    connected ? 'Conectado a $label' : 'Buscando el modulo...',
+                    style: const TextStyle(color: AppTheme.textOnDarkMuted, fontSize: 15),
+                  ),
+                ),
+              ],
             ),
-            const SizedBox(width: 8),
-            Flexible(
-              child: Text(
-                connected ? 'Modulo conectado' : 'Buscando el modulo...',
-                style: const TextStyle(color: AppTheme.textOnDarkMuted, fontSize: 15),
+          ),
+        ),
+        Wrap(
+          crossAxisAlignment: WrapCrossAlignment.center,
+          spacing: 8,
+          children: [
+            TextButton.icon(
+              onPressed: _showBoardPicker,
+              icon: const Icon(Icons.swap_horiz, color: AppTheme.accentCyan),
+              label: const Text('Cambiar placa', style: TextStyle(color: AppTheme.accentCyan, fontSize: 15)),
+            ),
+            MergeSemantics(
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Flexible(
+                    child: Text('Respuestas en el celular',
+                        style: TextStyle(color: AppTheme.textOnDarkMuted, fontSize: 15)),
+                  ),
+                  Switch(
+                    value: _answersOnPhone,
+                    onChanged: _setAnswersOnPhone,
+                    activeThumbColor: Colors.black,
+                    activeTrackColor: AppTheme.accentCyan,
+                    inactiveThumbColor: AppTheme.textOnDarkMuted,
+                    inactiveTrackColor: Colors.white24,
+                  ),
+                ],
               ),
             ),
           ],
         ),
-      ),
+      ],
     );
   }
 
@@ -1081,10 +1180,32 @@ class _AssistantScreenState extends State<AssistantScreen>
     );
   }
 
+  /// Celular: microfono del celular. Modulo: pide a la placa que grabe con su microfono
+  /// (como su boton fisico, que el prototipo de la final no tiene).
+  void _talkButtonDown() {
+    if (_hardwareMode == HardwareMode.standalone) {
+      _startNativeListening();
+    } else if (kAppPttEnabled && _esp32SpeechService.isConnected && !_isListening && !_isProcessing) {
+      _appPttActive = true;
+      _esp32SpeechService.sendAppPttStart();
+    }
+  }
+
+  void _talkButtonUp() {
+    if (_hardwareMode == HardwareMode.standalone || _isNativeMicActive) {
+      _stopNativeListening();
+    } else if (_appPttActive) {
+      _appPttActive = false;
+      _esp32SpeechService.sendAppPttStop();
+    }
+  }
+
+  bool _appPttActive = false;
+
   Widget _buildFloatingIndicator() {
     final isModule = _hardwareMode == HardwareMode.esp32;
     // En modo Modulo se habla con el boton de la placa: el de la pantalla no graba.
-    final canTalkHere = !isModule;
+    final canTalkHere = !isModule || (kAppPttEnabled && _esp32SpeechService.isConnected);
     final Color fill = _isListening
         ? AppTheme.listeningRed
         : (canTalkHere ? AppTheme.primaryCyan : AppTheme.cardDark);
@@ -1095,7 +1216,9 @@ class _AssistantScreenState extends State<AssistantScreen>
     if (_isListening) {
       caption = canTalkHere ? 'Suelta para enviar' : 'Escuchando...';
     } else {
-      caption = canTalkHere ? 'Manten presionado para hablar' : 'Habla con el boton del modulo';
+      caption = !isModule
+          ? 'Manten presionado para hablar'
+          : (canTalkHere ? 'Manten presionado: habla al modulo' : 'Conecta el modulo para hablar');
     }
 
     final String semanticLabel;
@@ -1130,24 +1253,17 @@ class _AssistantScreenState extends State<AssistantScreen>
             onTap: canTalkHere || (_isListening && _isNativeMicActive)
                 ? () {
                     if (_isListening) {
-                      _stopNativeListening();
+                      _talkButtonUp();
                     } else {
-                      _startNativeListening();
+                      _talkButtonDown();
                     }
                   }
                 : null,
             child: ExcludeSemantics(
               child: GestureDetector(
-                onTapDown: (_) {
-                  if (_hardwareMode == HardwareMode.standalone) _startNativeListening();
-                },
-                onTapUp: (_) {
-                  // En modo Modulo solo sirve para enviar lo que escucha el microfono del celular.
-                  if (_hardwareMode == HardwareMode.standalone || _isNativeMicActive) _stopNativeListening();
-                },
-                onTapCancel: () {
-                  if (_hardwareMode == HardwareMode.standalone) _stopNativeListening();
-                },
+                onTapDown: (_) => _talkButtonDown(),
+                onTapUp: (_) => _talkButtonUp(),
+                onTapCancel: _talkButtonUp,
                 child: AnimatedBuilder(
                   animation: _pulseAnimation,
                   builder: (context, child) {
@@ -1202,6 +1318,94 @@ class _AssistantScreenState extends State<AssistantScreen>
             ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+/// Lista de placas Iris cercanas: elegir a cual conectarse y ponerles apodo ("Iris 1", "Iris 2").
+class _BoardPicker extends StatelessWidget {
+  const _BoardPicker({required this.service});
+
+  final Esp32SpeechService service;
+
+  Future<void> _rename(BuildContext context, IrisBoard board) async {
+    final controller = TextEditingController(text: board.nickname ?? '');
+    final name = await showDialog<String>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Apodo de la placa'),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          decoration: InputDecoration(hintText: 'Ej. Iris 1', helperText: board.id),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancelar')),
+          TextButton(onPressed: () => Navigator.pop(context, controller.text), child: const Text('Guardar')),
+        ],
+      ),
+    );
+    if (name != null) await service.setNickname(board.id, name);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return SafeArea(
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+        child: ValueListenableBuilder<List<IrisBoard>>(
+          valueListenable: service.boardsFound,
+          builder: (context, boards, _) {
+            return Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Row(
+                  children: [
+                    const Expanded(
+                      child: Text('Elige tu placa Iris',
+                          style: TextStyle(color: Colors.white, fontSize: 20, fontWeight: FontWeight.bold)),
+                    ),
+                    IconButton(
+                      tooltip: 'Buscar de nuevo',
+                      onPressed: service.refreshBoards,
+                      icon: const Icon(Icons.refresh, color: AppTheme.accentCyan),
+                    ),
+                  ],
+                ),
+                if (boards.isEmpty)
+                  const Padding(
+                    padding: EdgeInsets.symmetric(vertical: 24),
+                    child: Text('Buscando placas... Enciende la placa y acercala al celular.',
+                        style: TextStyle(color: AppTheme.textOnDarkMuted, fontSize: 16)),
+                  ),
+                for (final board in boards)
+                  ListTile(
+                    contentPadding: EdgeInsets.zero,
+                    leading: Icon(
+                      board.id == service.connectedBoardId ? Icons.bluetooth_connected : Icons.memory,
+                      color: board.id == service.preferredBoardId ? AppTheme.accentCyan : AppTheme.textOnDarkMuted,
+                    ),
+                    title: Text(board.label, style: const TextStyle(color: Colors.white, fontSize: 18)),
+                    subtitle: Text(
+                      '${board.id}  ·  ${board.id == service.connectedBoardId ? 'conectada' : 'senal ${board.rssi} dBm'}',
+                      style: const TextStyle(color: AppTheme.textOnDarkMuted),
+                    ),
+                    trailing: IconButton(
+                      tooltip: 'Poner apodo',
+                      onPressed: () => _rename(context, board),
+                      icon: const Icon(Icons.edit, color: AppTheme.textOnDarkMuted),
+                    ),
+                    onTap: () {
+                      service.selectBoard(board.id);
+                      Navigator.pop(context);
+                    },
+                  ),
+              ],
+            );
+          },
+        ),
       ),
     );
   }

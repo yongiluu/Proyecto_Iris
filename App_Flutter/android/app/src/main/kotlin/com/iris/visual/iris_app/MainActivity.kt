@@ -40,6 +40,7 @@ class MainActivity : FlutterActivity() {
             val toneType = when (call.method) {
                 "querySent" -> ToneGenerator.TONE_PROP_ACK
                 "listening" -> ToneGenerator.TONE_PROP_BEEP
+                "thinking" -> ToneGenerator.TONE_CDMA_PIP
                 else -> null
             }
             if (toneType != null) {

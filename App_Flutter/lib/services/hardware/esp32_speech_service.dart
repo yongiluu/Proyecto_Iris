@@ -7,6 +7,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_blue_plus/flutter_blue_plus.dart';
 import 'package:http/http.dart' as http;
 import 'package:permission_handler/permission_handler.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../core/constants/env_config.dart';
 
@@ -64,6 +65,25 @@ class Esp32SpeechService {
 
   bool isConnected = false;
 
+  // ─── Varias placas con el mismo nombre (ej. dos prototipos en la final) ───
+  static const String _prefBoardId = 'iris_board_id';
+  static const String _prefNickPrefix = 'iris_board_nick_';
+  SharedPreferences? _prefs;
+  String? _preferredBoardId;
+  bool _isScanning = false;
+
+  /// Placas Iris vistas en el ultimo escaneo (la conectada no anuncia: se agrega aparte).
+  final ValueNotifier<List<IrisBoard>> boardsFound = ValueNotifier(const []);
+
+  /// Se encontro mas de una placa y el usuario todavia no eligio: la UI debe preguntar.
+  void Function(List<IrisBoard> boards)? onChooseBoard;
+
+  /// La placa oyo "Oye Iris" (CMD_WAKE_WORD:<%>).
+  void Function(int percent)? onWakeWord;
+
+  String? get preferredBoardId => _preferredBoardId;
+  String? get connectedBoardId => isConnected ? _device?.remoteId.str : null;
+
   Function()? onRecordingStarted;
   Function()? onRecordingStopped;
   Function(bool)? onConnectionChanged;
@@ -97,6 +117,8 @@ class Esp32SpeechService {
     _isInitialized = true;
 
     await _requestPermissions();
+    _prefs = await SharedPreferences.getInstance();
+    _preferredBoardId = _prefs?.getString(_prefBoardId);
 
     _adapterSubscription = FlutterBluePlus.adapterState.listen((state) {
       if (state == BluetoothAdapterState.on) {
@@ -141,31 +163,107 @@ class Esp32SpeechService {
     }
   }
 
+  /// Con una placa elegida, se conecta apenas la ve. Sin eleccion: si hay una sola, a esa;
+  /// si hay varias, avisa a la UI (onChooseBoard) y espera.
   Future<BluetoothDevice?> _findIrisDevice() async {
-    final found = Completer<BluetoothDevice?>();
+    final preferred = _preferredBoardId;
+    final boards = await _scanBoards(stopWhenSeen: preferred);
+    if (boards == null) return null;
+    if (preferred != null) {
+      return boards.where((b) => b.id == preferred).map((b) => b.device).firstOrNull;
+    }
+    if (boards.length == 1) return boards.first.device;
+    if (boards.length > 1) onChooseBoard?.call(boards);
+    return null;
+  }
+
+  /// Escanea las placas Iris por `_scanTimeout` (o hasta ver `stopWhenSeen`). null si ya habia
+  /// otro escaneo en curso.
+  Future<List<IrisBoard>?> _scanBoards({String? stopWhenSeen}) async {
+    if (_isScanning) return null;
+    _isScanning = true;
+    final seen = <String, IrisBoard>{};
+    final stop = Completer<void>();
     final resultsSubscription = FlutterBluePlus.onScanResults.listen((results) {
       for (final result in results) {
         final name = result.advertisementData.advName.isNotEmpty
             ? result.advertisementData.advName
             : result.device.platformName;
-        if (name == deviceName && !found.isCompleted) {
-          found.complete(result.device);
-        }
+        if (name != deviceName) continue;
+        final id = result.device.remoteId.str;
+        seen[id] = IrisBoard(id: id, device: result.device, rssi: result.rssi, nickname: nicknameOf(id));
+        if (id == stopWhenSeen && !stop.isCompleted) stop.complete();
       }
     });
 
     try {
       debugPrint('Buscando $deviceName por BLE...');
       await FlutterBluePlus.startScan(withServices: [_serviceUuid], timeout: _scanTimeout);
-      return await Future.any<BluetoothDevice?>([
-        found.future,
-        FlutterBluePlus.isScanning.where((scanning) => !scanning).first.then<BluetoothDevice?>((_) => null),
+      await Future.any<void>([
+        stop.future,
+        FlutterBluePlus.isScanning.where((scanning) => !scanning).first,
       ]);
     } finally {
       await resultsSubscription.cancel();
       await FlutterBluePlus.stopScan();
+      _isScanning = false;
     }
+    final boards = seen.values.toList()..sort((a, b) => b.rssi.compareTo(a.rssi));
+    _publishBoards(boards);
+    return boards;
   }
+
+  void _publishBoards(List<IrisBoard> scanned) {
+    final list = [...scanned];
+    final device = _device;
+    if (isConnected && device != null && !list.any((b) => b.id == device.remoteId.str)) {
+      final id = device.remoteId.str;
+      list.insert(0, IrisBoard(id: id, device: device, rssi: 0, nickname: nicknameOf(id)));
+    }
+    boardsFound.value = list;
+  }
+
+  /// Escaneo pedido por la UI (pantalla "Cambiar placa"), tambien estando conectado.
+  Future<void> refreshBoards() async {
+    if (FlutterBluePlus.adapterStateNow != BluetoothAdapterState.on) return;
+    await _scanBoards();
+  }
+
+  /// Guarda la placa elegida y se conecta a ella (desconectando la actual si es otra).
+  Future<void> selectBoard(String id) async {
+    _preferredBoardId = id;
+    await _prefs?.setString(_prefBoardId, id);
+    if (isConnected && connectedBoardId != id) {
+      await _dropConnection();
+      onConnectionChanged?.call(false);
+    }
+    unawaited(_scanAndConnect());
+  }
+
+  String? nicknameOf(String id) => _prefs?.getString('$_prefNickPrefix$id');
+
+  Future<void> setNickname(String id, String nickname) async {
+    final clean = nickname.trim();
+    if (clean.isEmpty) {
+      await _prefs?.remove('$_prefNickPrefix$id');
+    } else {
+      await _prefs?.setString('$_prefNickPrefix$id', clean);
+    }
+    boardsFound.value = [
+      for (final b in boardsFound.value) b.id == id ? b.copyWith(nickname: nicknameOf(id)) : b,
+    ];
+  }
+
+  /// Nombre para mostrar de la placa conectada (apodo o "Iris · 46:24").
+  String? get connectedBoardLabel {
+    final id = connectedBoardId;
+    return id == null ? null : IrisBoard.labelFor(id, nicknameOf(id));
+  }
+
+  /// Boton "Manten para hablar" de la app (mientras la placa no tenga boton fisico): la placa
+  /// responde igual que con su boton, con CMD_PTT_START / audio / CMD_PTT_STOP.
+  Future<void> sendAppPttStart() => _sendCommand('CMD_APP_PTT_START');
+  Future<void> sendAppPttStop() => _sendCommand('CMD_APP_PTT_STOP');
 
   Future<void> _connect(BluetoothDevice device) async {
     _device = device;
@@ -181,7 +279,13 @@ class Esp32SpeechService {
     await _discoverCharacteristics(device);
 
     isConnected = true;
-    debugPrint('Conectado a Iris por BLE (MTU ${device.mtuNow}).');
+    debugPrint('Conectado a Iris ${device.remoteId.str} por BLE (MTU ${device.mtuNow}).');
+    // Sin eleccion guardada (habia una sola placa): recordar esta.
+    if (_preferredBoardId == null) {
+      _preferredBoardId = device.remoteId.str;
+      await _prefs?.setString(_prefBoardId, _preferredBoardId!);
+    }
+    _publishBoards(boardsFound.value);
     onConnectionChanged?.call(true);
   }
 
@@ -299,6 +403,8 @@ class Esp32SpeechService {
       // CMD_VISION_EVENT:<clase>:<porcentaje>
       final parts = command.split(':');
       if (parts.length >= 3) onVisionEvent?.call(parts[1], int.tryParse(parts[2]) ?? 0);
+    } else if (command.startsWith('CMD_WAKE_WORD:')) {
+      onWakeWord?.call(int.tryParse(command.split(':')[1]) ?? 0);
     } else if (command.startsWith('CMD_PROXIMITY:')) {
       // CMD_PROXIMITY:<nivel>:<porcentaje>
       final parts = command.split(':');
@@ -600,7 +706,26 @@ class Esp32SpeechService {
       debugPrint('Error al cerrar BLE: $e');
     }
     lastPhotoNotifier.dispose();
+    boardsFound.dispose();
   }
+}
+
+/// Una placa Iris encontrada por BLE. Todas se llaman "Iris_ESP32": se distinguen por direccion.
+class IrisBoard {
+  final String id; // direccion BLE, ej. 44:B1:76:AF:46:26
+  final BluetoothDevice device;
+  final int rssi; // 0 = conectada (no anuncia)
+  final String? nickname;
+
+  const IrisBoard({required this.id, required this.device, required this.rssi, this.nickname});
+
+  IrisBoard copyWith({String? nickname}) => IrisBoard(id: id, device: device, rssi: rssi, nickname: nickname);
+
+  String get label => labelFor(id, nickname);
+
+  /// Apodo, o "Iris · " + los ultimos 5 caracteres de la direccion.
+  static String labelFor(String id, String? nickname) =>
+      (nickname != null && nickname.isNotEmpty) ? nickname : 'Iris · ${id.length > 5 ? id.substring(id.length - 5) : id}';
 }
 
 /// Imagen en grises (1 byte por pixel) tal como la entrega la camara de la placa.
