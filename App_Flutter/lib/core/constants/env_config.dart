@@ -17,6 +17,7 @@ class EnvConfig {
   static String get azureSpeechKey => _read('AZURE_SPEECH_KEY');
   static String get azureSpeechRegion => _read('AZURE_SPEECH_REGION');
   static String get huggingFaceApiKey => _read('HUGGINGFACE_API_KEY');
+  static String get groqApiKey => _read('GROQ_API_KEY');
   static String get locationIqKey => _read('LOCATIONIQ_KEY');
   static String get openWeatherKey => _read('OPENWEATHER_KEY');
 

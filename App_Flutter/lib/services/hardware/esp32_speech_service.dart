@@ -710,10 +710,39 @@ class Esp32SpeechService {
     final pcm = _micBuffer.takeBytes();
     if (pcm.length < _minRecordingBytes) return '';
     final wav = _buildWav(pcm);
-    // Azure Speech primero (misma llave que la voz de Iris); Hugging Face queda de respaldo.
+    // Groq (Whisper gratis) primero; despues Azure Speech y Hugging Face, si tienen llave.
+    final groq = await _transcribeWithGroq(wav);
+    if (groq.isNotEmpty) return groq;
     final azure = await _transcribeWithAzure(wav);
     if (azure.isNotEmpty) return azure;
     return _transcribeWithHuggingFace(wav);
+  }
+
+  /// Voz a texto con Whisper en Groq (API compatible con OpenAI, plan gratis). GROQ_API_KEY en .env.
+  Future<String> _transcribeWithGroq(Uint8List wavBytes) async {
+    final key = EnvConfig.groqApiKey.trim();
+    if (key.isEmpty) return '';
+
+    try {
+      final request = http.MultipartRequest(
+          'POST', Uri.parse('https://api.groq.com/openai/v1/audio/transcriptions'))
+        ..headers['Authorization'] = 'Bearer $key'
+        ..fields['model'] = 'whisper-large-v3-turbo'
+        ..fields['language'] = 'es'
+        ..fields['response_format'] = 'json'
+        ..files.add(http.MultipartFile.fromBytes('file', wavBytes, filename: 'pregunta.wav'));
+      final response = await http.Response.fromStream(await request.send().timeout(_transcriptionTimeout));
+
+      if (response.statusCode != 200) {
+        debugPrint('Error Groq ${response.statusCode}: ${response.body}');
+        return '';
+      }
+      final result = jsonDecode(utf8.decode(response.bodyBytes));
+      return result['text']?.toString().trim() ?? '';
+    } catch (e) {
+      debugPrint('Error Groq: $e');
+      return '';
+    }
   }
 
   /// Voz a texto con Azure Speech (REST para audio corto, hasta 60 s). WAV 16 kHz mono 16-bit.
