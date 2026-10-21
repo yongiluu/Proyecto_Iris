@@ -1,36 +1,90 @@
 #include "audio_player.h"
 #include "config.h"
 #include <driver/i2s.h>
+#include <esp_heap_caps.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/stream_buffer.h>
 #include <freertos/task.h>
 #include <math.h>
 
 namespace {
-constexpr size_t kStreamBufferBytes = 16 * 1024;     // ~0.5 s de audio a 16 kHz/16 bit
+// Buffer grande en PSRAM (~32 s a 16 kHz/16 bit): la app puede mandar la respuesta entera de una vez y
+// nada se descarta. Antes eran 16 KB (0,5 s) y el audio salia cortado con cualquier pausa del BLE.
+constexpr size_t kStreamBufferBytes = 1024 * 1024;
+constexpr size_t kFallbackBufferBytes = 16 * 1024;   // si no hay PSRAM
+// Antes de empezar a sonar se juntan 0,4 s (o se espera a que deje de llegar audio: respuestas cortas
+// y tonos). Si se vacia a la mitad, se vuelve a juntar: una pausa corta en vez de audio entrecortado.
+constexpr size_t kPrebufferBytes = AUDIO_SAMPLE_RATE * 2 * 4 / 10;
+constexpr TickType_t kEndOfStreamTicks = pdMS_TO_TICKS(250);
 constexpr size_t kChunkSamples = 256;
 constexpr TickType_t kEnqueueTimeoutTicks = pdMS_TO_TICKS(50);
-constexpr int kOutputGain = 2;
+constexpr float kOutputGain = 2.0f;
+// El parlante de ~1 cm no reproduce graves: solo distorsionan (suena a estatica). Pasa-altos a 300 Hz.
+constexpr float kHighPassHz = 300.0f;
 
 constexpr float kBeepFrequencyHz = 880.0f;
 constexpr int kBeepDurationMs = 120;
 constexpr int16_t kBeepAmplitude = 8000;
 
 StreamBufferHandle_t playbackStream = nullptr;
+StaticStreamBuffer_t playbackStreamStruct;
+volatile TickType_t lastEnqueueTick = 0;
+
+// Biquad pasa-altos (RBJ, Q = 0,707).
+struct HighPass {
+    float b0, b1, b2, a1, a2;
+    float x1 = 0, x2 = 0, y1 = 0, y2 = 0;
+
+    void setup(float cutoffHz, float sampleRate) {
+        const float w = 2.0f * (float)M_PI * cutoffHz / sampleRate;
+        const float alpha = sinf(w) / (2.0f * 0.7071f);
+        const float cosw = cosf(w);
+        const float a0 = 1.0f + alpha;
+        b0 = (1.0f + cosw) / 2.0f / a0;
+        b1 = -(1.0f + cosw) / a0;
+        b2 = b0;
+        a1 = -2.0f * cosw / a0;
+        a2 = (1.0f - alpha) / a0;
+    }
+    void reset() { x1 = x2 = y1 = y2 = 0; }
+    float process(float x) {
+        const float y = b0 * x + b1 * x1 + b2 * x2 - a1 * y1 - a2 * y2;
+        x2 = x1; x1 = x;
+        y2 = y1; y1 = y;
+        return y;
+    }
+};
+HighPass highPass;
 
 // El hilo BLE solo encola; la escritura I2S (bloqueante) ocurre en esta tarea.
 void playbackTask(void*) {
   static int16_t input[kChunkSamples];
   static int32_t output[kChunkSamples * 2];
+  bool playing = false;
 
   for (;;) {
-    size_t bytes = xStreamBufferReceive(playbackStream, input, sizeof(input), portMAX_DELAY);
+    if (!playing) {
+      const size_t available = xStreamBufferBytesAvailable(playbackStream);
+      const bool stillArriving = xTaskGetTickCount() - lastEnqueueTick < kEndOfStreamTicks;
+      if (available == 0 || (available < kPrebufferBytes && stillArriving)) {
+        vTaskDelay(pdMS_TO_TICKS(10));
+        continue;
+      }
+      playing = true;
+      highPass.reset();
+    }
+
+    size_t bytes = xStreamBufferReceive(playbackStream, input, sizeof(input), pdMS_TO_TICKS(20));
+    if (bytes == 0) {
+      playing = false;  // se vacio: vuelve a juntar antes de seguir
+      continue;
+    }
     size_t samples = bytes / sizeof(int16_t);
 
     for (size_t i = 0; i < samples; i++) {
-      int32_t amplified = (int32_t)input[i] * kOutputGain;
-      if (amplified > INT16_MAX) amplified = INT16_MAX;
-      if (amplified < INT16_MIN) amplified = INT16_MIN;
+      // Pasa-altos, ganancia y limitador suave (tanh): sin el recorte duro que agregaba estatica.
+      float x = highPass.process((float)input[i]) * kOutputGain / 32768.0f;
+      int32_t amplified = (int32_t)(tanhf(x) * 32767.0f);
 
       // MAX98357A espera 32 bits alineados a la izquierda; mismo valor en L y R.
       int32_t frame = amplified << 16;
@@ -73,7 +127,14 @@ bool initAudioPlayer() {
     return false;
   }
 
-  playbackStream = xStreamBufferCreate(kStreamBufferBytes, 1);
+  highPass.setup(kHighPassHz, AUDIO_SAMPLE_RATE);
+
+  uint8_t* storage = (uint8_t*)heap_caps_malloc(kStreamBufferBytes + 1, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+  if (storage != nullptr) {
+    playbackStream = xStreamBufferCreateStatic(kStreamBufferBytes, 1, storage, &playbackStreamStruct);
+  } else {
+    playbackStream = xStreamBufferCreate(kFallbackBufferBytes, 1);
+  }
   if (playbackStream == nullptr) {
     Serial.println("[Audio] Error: sin memoria para el buffer de reproduccion");
     return false;
@@ -90,6 +151,7 @@ void playAudioBuffer(const uint8_t* payload, size_t length) {
   if (length == 0) return;
 
   size_t sent = xStreamBufferSend(playbackStream, payload, length, kEnqueueTimeoutTicks);
+  lastEnqueueTick = xTaskGetTickCount();
   if (sent < length) {
     Serial.println("[Audio] Buffer de reproduccion lleno: audio descartado");
   }
