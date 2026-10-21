@@ -28,6 +28,7 @@ class Esp32SpeechService {
   static const int _maxAudioChunkBytes = 500;
   static const int _attHeaderBytes = 3;
   static const double _ttsVolumeScale = 0.35;
+  static const int _maxAudioAheadMs = 30000; // tope de seguridad (bufer de la placa: 32 s)
 
   static const Duration _scanTimeout = Duration(seconds: 6);
   static const Duration _watchdogPeriod = Duration(seconds: 5);
@@ -678,6 +679,9 @@ class Esp32SpeechService {
     final chunkSize = maxPayload & ~1;
     if (chunkSize < 2) return;
 
+    // La placa tiene un bufer de 32 s en PSRAM y empieza a sonar con ~0,4 s (o al terminar el
+    // envio): se manda toda la respuesta lo mas rapido que acepte el BLE, con await en cada
+    // escritura, y solo se frena si se adelanta mas de 30 s a la reproduccion.
     final stopwatch = Stopwatch()..start();
     try {
       for (int offset = 0; offset < scaled.length; offset += chunkSize) {
@@ -686,13 +690,13 @@ class Esp32SpeechService {
         final end = math.min(offset + chunkSize, scaled.length);
         await characteristic.write(scaled.sublist(offset, end), withoutResponse: true);
 
-        // Pacing: no ir mas de 100 ms adelante de la reproduccion (32000 bytes/s).
-        final sentAudioMs = end / 32000.0 * 1000.0;
-        while (stopwatch.elapsedMilliseconds < sentAudioMs - 100) {
+        final sentAudioMs = end / 32000.0 * 1000.0; // 16 kHz, 16 bits
+        while (sentAudioMs - stopwatch.elapsedMilliseconds > _maxAudioAheadMs) {
           if (!_isSendingAudio || session != _audioSession) break;
-          await Future.delayed(const Duration(milliseconds: 5));
+          await Future.delayed(const Duration(milliseconds: 50));
         }
       }
+      debugPrint('Audio a la placa: ${scaled.length} bytes en ${stopwatch.elapsedMilliseconds} ms');
     } catch (e) {
       debugPrint('Error enviando audio a la placa: $e');
     } finally {

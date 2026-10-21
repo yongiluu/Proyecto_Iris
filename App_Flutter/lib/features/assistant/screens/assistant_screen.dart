@@ -351,7 +351,19 @@ class _AssistantScreenState extends State<AssistantScreen>
 
   /// Doble pitido al mandar una consulta a la IA: una persona ciega no ve la pantalla y necesita
   /// saber por audio que la pregunta salio (pedido del profesor Raul).
-  Future<void> _playQuerySentCue() => _playCue('querySent');
+  /// Con las respuestas en la placa, el aviso es su propio pitido de "pensando" (que empieza al
+  /// mismo tiempo): asi nunca suenan la placa y el celular a la vez.
+  Future<void> _playQuerySentCue() async {
+    if (_activeEsp32 != null) return;
+    await _playCue('querySent');
+  }
+
+  /// La placa manda ~0,5 s de audio previo al "Oye Iris": la transcripcion puede empezar con
+  /// "Oye Iris", "oye iris," o "Iris,". Se quita del comienzo antes de pasarla al agente.
+  static final RegExp _wakeWordPrefix =
+      RegExp(r'^[\s¡¿,.]*((oye|hey|oi|hoy)[\s,.!]*)?iris\b[\s,.:;!?¡¿]*', caseSensitive: false);
+
+  static String _stripWakeWord(String text) => text.replaceFirst(_wakeWordPrefix, '').trim();
 
   // ─── Cercania ("voy a chocar con algo?"), como el sensor de retroceso de un auto ───
   // Sin voz: tiene que ser inmediato. En modo Celular pita y vibra; en modo Modulo la placa pita
@@ -551,6 +563,7 @@ class _AssistantScreenState extends State<AssistantScreen>
        prompt = await _nativeSpeechService.stopListening();
     }
     
+    prompt = _stripWakeWord(prompt);
     if (prompt.isEmpty) {
       _resetState('No entendi o hubo ruido, por favor intenta de nuevo');
       await _ttsService.speak('No escuche claramente, puedes repetir?', esp32Service: _activeEsp32);

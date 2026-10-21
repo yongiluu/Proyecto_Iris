@@ -95,7 +95,8 @@ class TtsService {
           .timeout(_cloudTtsTimeout);
 
       if (response.statusCode == 200) {
-        // Sin await: el envio BLE esta dosificado a la velocidad de reproduccion.
+        // Toda la respuesta (todas sus frases) es un solo PCM de Azure y va en un solo envio.
+        // Sin await: la placa ya puede ir sonando mientras termina de llegar.
         unawaited(esp32Service.sendAudioToEsp32(response.bodyBytes));
       } else {
         debugPrint('⚠️ Azure TTS Error: ${response.statusCode} - ${response.body}');
