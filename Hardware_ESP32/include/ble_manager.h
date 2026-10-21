@@ -21,6 +21,8 @@ public:
 
     // Parten automaticamente el dato segun el MTU. Devuelven false si no hay conexion.
     bool sendAudioChunk(const uint8_t* data, size_t length);
+    // Igual, pero espera buffers libres (para vaciar la cola al soltar el boton: nada se pierde).
+    bool sendAudioChunkWaiting(const uint8_t* data, size_t length);
     bool sendCommand(const char* command);
     bool sendPhotoChunk(const uint8_t* data, size_t length);
     // true si NimBLE tiene buffers libres para una notificacion: el audio del microfono no debe esperar

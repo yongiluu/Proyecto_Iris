@@ -77,7 +77,7 @@ void flushTxQueue() {
   int16_t out[2 * kMicMaxSamples];
   size_t count;
   while ((count = queuePop(out, 2 * kMicMaxSamples)) > 0) {
-    bleManager.sendAudioChunk((const uint8_t*)out, count * sizeof(int16_t));
+    bleManager.sendAudioChunkWaiting((const uint8_t*)out, count * sizeof(int16_t));
   }
 }
 
@@ -377,9 +377,15 @@ void loop() {
   // caja cerrada no hay monitor serial; asi se distingue un reinicio de una desconexion BLE).
   // CMD_HELLO:<segundos encendida>:<motivo del ultimo reinicio>:<RAM interna libre>
   static bool wasConnected = false;
+  static uint32_t connectedSinceMs = 0;
+  static bool helloSent = false;
   const bool connectedNow = bleManager.isConnected();
   if (connectedNow && !wasConnected) {
-    delay(500);  // que la app termine de suscribirse a las notificaciones
+    connectedSinceMs = millis();
+    helloSent = false;
+  }
+  if (connectedNow && !helloSent && millis() - connectedSinceMs > 3000) {  // la app ya se suscribio
+    helloSent = true;
     static const char* const kReasons[] = {"?", "encendido", "externo", "software", "panic",
                                            "watchdog_int", "watchdog_tarea", "watchdog", "sueno",
                                            "bajo_voltaje", "sdio"};
@@ -421,9 +427,13 @@ void loop() {
     queuePush(samples, sampleCount, kTxQueueSamples);
     // Doble velocidad hasta vaciar el audio previo. Si el BLE esta ocupado no se espera: queda en la
     // cola y sale en las proximas vueltas (esperar aqui cortaba la lectura del microfono).
-    int16_t out[2 * kMicMaxSamples];
-    const size_t count = queuePop(out, 2 * kMicMaxSamples);
-    if (count > 0) bleManager.sendAudioChunk((const uint8_t*)out, count * sizeof(int16_t));
+    // Nunca se bota la voz: si el BLE no tiene buffers libres, queda en la cola de 3 s (PSRAM) y sale
+    // en las proximas vueltas (sin esperar: el loop debe seguir leyendo el microfono).
+    if (bleManager.canSendNow()) {
+      int16_t out[2 * kMicMaxSamples];
+      const size_t count = queuePop(out, 2 * kMicMaxSamples);
+      if (count > 0) bleManager.sendAudioChunk((const uint8_t*)out, count * sizeof(int16_t));
+    }
     if (wakeSession) updateWakeSession(samples, sampleCount);
   } else {
     queuePush(samples, sampleCount, kPrerollSamples);

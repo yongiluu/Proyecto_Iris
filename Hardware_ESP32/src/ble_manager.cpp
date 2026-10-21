@@ -5,8 +5,14 @@
 BleManager bleManager;
 
 class ServerCallbacks : public NimBLEServerCallbacks {
-    void onConnect(NimBLEServer* pServer) override {
+    void onConnect(NimBLEServer* pServer, ble_gap_conn_desc* desc) override {
         bleManager.deviceConnected = true;
+        // Enlace rapido: paquetes grandes (sin esto cada notificacion de 500 bytes viaja en trozos de
+        // 27), radio de 2 Mbps si el telefono puede, e intervalo corto. Sin esto la voz del microfono
+        // (32 KB/s) no alcanzaba a salir y se perdia: llegaba 1,3 s de 4 s.
+        ble_gap_set_data_len(desc->conn_handle, 251, 2120);
+        ble_gap_set_prefered_le_phy(desc->conn_handle, BLE_GAP_LE_PHY_2M_MASK, BLE_GAP_LE_PHY_2M_MASK, 0);
+        pServer->updateConnParams(desc->conn_handle, 6, 12, 0, 400);  // 7,5-15 ms, 4 s de tolerancia
     }
 
     void onDisconnect(NimBLEServer* pServer) override {
@@ -137,6 +143,10 @@ bool BleManager::notifyInChunks(NimBLECharacteristic* characteristic, const uint
 
 bool BleManager::sendAudioChunk(const uint8_t* data, size_t length) {
     return notifyInChunks(pTxCharacteristic, data, length);
+}
+
+bool BleManager::sendAudioChunkWaiting(const uint8_t* data, size_t length) {
+    return notifyInChunks(pTxCharacteristic, data, length, true);
 }
 
 bool BleManager::sendCommand(const char* command) {
