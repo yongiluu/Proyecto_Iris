@@ -112,6 +112,10 @@ bool waitForBleBuffers(volatile bool& connected) {
 }
 }  // namespace
 
+bool BleManager::canSendNow() const {
+    return deviceConnected && os_msys_num_free() >= kMinFreeBuffers;
+}
+
 // Una notificacion mas grande que MTU-3 se trunca en silencio, asi que se parte aqui.
 bool BleManager::notifyInChunks(NimBLECharacteristic* characteristic, const uint8_t* data, size_t length) {
     if (!deviceConnected || characteristic == nullptr || data == nullptr) return false;

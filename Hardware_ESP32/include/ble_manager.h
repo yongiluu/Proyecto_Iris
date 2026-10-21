@@ -23,6 +23,9 @@ public:
     bool sendAudioChunk(const uint8_t* data, size_t length);
     bool sendCommand(const char* command);
     bool sendPhotoChunk(const uint8_t* data, size_t length);
+    // true si NimBLE tiene buffers libres para una notificacion: el audio del microfono no debe esperar
+    // (el loop dejaria de leer el microfono y se perderian pedazos de la voz).
+    bool canSendNow() const;
 
 private:
     bool notifyInChunks(NimBLECharacteristic* characteristic, const uint8_t* data, size_t length);

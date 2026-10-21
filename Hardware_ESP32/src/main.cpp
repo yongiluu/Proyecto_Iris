@@ -44,12 +44,14 @@ float noiseFloor = 200.0f;      // RMS del ambiente; se mide mientras no se le h
 // antes de que se detectara "Oye Iris"); al transmitir los manda primero y se pone al dia a doble velocidad.
 constexpr size_t kPrerollSamples = AUDIO_SAMPLE_RATE * WAKE_PREROLL_MS / 1000;
 // Al transmitir sale el doble de lo que entra, asi que la cola nunca pasa del audio previo + unos bloques.
-constexpr size_t kTxQueueSamples = kPrerollSamples + 4 * kMicMaxSamples;
-int16_t txQueue[kTxQueueSamples];
+// En PSRAM: si el BLE se atrasa, el audio se acumula aqui (hasta 3 s) en vez de perderse.
+constexpr size_t kTxQueueSamples = AUDIO_SAMPLE_RATE * 3;
+int16_t* txQueue = nullptr;
 size_t txHead = 0;   // muestra mas antigua
 size_t txCount = 0;
 
 void queuePush(const int16_t* samples, size_t count, size_t maxKeep) {
+  if (txQueue == nullptr) return;
   for (size_t i = 0; i < count; i++) {
     txQueue[(txHead + txCount) % kTxQueueSamples] = samples[i];
     if (txCount < kTxQueueSamples) txCount++;
@@ -62,6 +64,7 @@ void queuePush(const int16_t* samples, size_t count, size_t maxKeep) {
 }
 
 size_t queuePop(int16_t* out, size_t maxCount) {
+  if (txQueue == nullptr) return 0;
   size_t count = txCount < maxCount ? txCount : maxCount;
   for (size_t i = 0; i < count; i++) out[i] = txQueue[(txHead + i) % kTxQueueSamples];
   txHead = (txHead + count) % kTxQueueSamples;
@@ -299,6 +302,7 @@ void handleButton() {
 
 void setup() {
   Serial.begin(115200);
+  txQueue = (int16_t*)heap_caps_malloc(kTxQueueSamples * sizeof(int16_t), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
 #if ARDUINO_USB_CDC_ON_BOOT
   // Con USB nativo (XIAO) lo que se imprime antes de abrir el monitor se pierde: espera un poco al PC
   // para que se vean los autotests. Sin cable sigue a los 2,5 s.
@@ -379,9 +383,13 @@ void loop() {
   // 2. Transmision Bluetooth (push-to-talk / "Oye Iris" o recoleccion de datos)
   if (isTransmitting) {
     queuePush(samples, sampleCount, kTxQueueSamples);
-    int16_t out[2 * kMicMaxSamples];
-    const size_t count = queuePop(out, 2 * kMicMaxSamples);  // doble velocidad hasta vaciar el audio previo
-    if (count > 0) bleManager.sendAudioChunk((const uint8_t*)out, count * sizeof(int16_t));
+    // Doble velocidad hasta vaciar el audio previo. Si el BLE esta ocupado no se espera: queda en la
+    // cola y sale en las proximas vueltas (esperar aqui cortaba la lectura del microfono).
+    if (bleManager.canSendNow()) {
+      int16_t out[2 * kMicMaxSamples];
+      const size_t count = queuePop(out, 2 * kMicMaxSamples);
+      if (count > 0) bleManager.sendAudioChunk((const uint8_t*)out, count * sizeof(int16_t));
+    }
     if (wakeSession) updateWakeSession(samples, sampleCount);
   } else {
     queuePush(samples, sampleCount, kPrerollSamples);

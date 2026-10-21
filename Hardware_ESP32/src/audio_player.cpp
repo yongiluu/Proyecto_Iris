@@ -18,7 +18,10 @@ constexpr size_t kPrebufferBytes = AUDIO_SAMPLE_RATE * 2 * 4 / 10;
 constexpr TickType_t kEndOfStreamTicks = pdMS_TO_TICKS(250);
 constexpr size_t kChunkSamples = 256;
 constexpr TickType_t kEnqueueTimeoutTicks = pdMS_TO_TICKS(50);
-constexpr float kOutputGain = 2.0f;
+// Volumen: el parlante va en el oido. 1.0 = la mitad de lo que habia (antes 2.0), y la salida nunca pasa
+// de kMaxOutputLevel del maximo del amplificador (tope de seguridad auditiva).
+constexpr float kOutputGain = 1.0f;
+constexpr float kMaxOutputLevel = 0.5f;
 // El parlante de ~1 cm no reproduce graves: solo distorsionan (suena a estatica). Pasa-altos a 300 Hz.
 constexpr float kHighPassHz = 300.0f;
 
@@ -84,7 +87,7 @@ void playbackTask(void*) {
     for (size_t i = 0; i < samples; i++) {
       // Pasa-altos, ganancia y limitador suave (tanh): sin el recorte duro que agregaba estatica.
       float x = highPass.process((float)input[i]) * kOutputGain / 32768.0f;
-      int32_t amplified = (int32_t)(tanhf(x) * 32767.0f);
+      int32_t amplified = (int32_t)(tanhf(x) * 32767.0f * kMaxOutputLevel);
 
       // MAX98357A espera 32 bits alineados a la izquierda; mismo valor en L y R.
       int32_t frame = amplified << 16;
