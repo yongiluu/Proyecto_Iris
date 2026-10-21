@@ -100,7 +100,9 @@ namespace {
 // app descarta, CMD_PTT_STOP perdido). Antes de cada paquete se espera a que haya buffers (cada
 // notificacion de ~500 bytes usa unos 3).
 constexpr int kMinFreeBuffers = 6;
-constexpr uint32_t kBufferWaitMs = 400;
+// Solo la foto espera (tarea propia): con 400 ms las fotos se cortaban cuando el telefono tardaba en
+// confirmar paquetes. 3 s alcanzan y no traban nada mas.
+constexpr uint32_t kBufferWaitMs = 3000;
 
 bool waitForBleBuffers(volatile bool& connected) {
     const uint32_t start = millis();

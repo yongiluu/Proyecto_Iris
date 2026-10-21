@@ -505,6 +505,9 @@ class Esp32SpeechService {
       debugPrint('Esperando foto de $_expectedPhotoSize bytes');
     } else if (command == 'CMD_PHOTO_END') {
       _finishPhoto();
+    } else if (command.startsWith('CMD_HELLO:')) {
+      // CMD_HELLO:<segundos encendida>:<motivo del ultimo reinicio>:<RAM interna libre>
+      debugPrint('Placa: ${command.substring(10)} (encendida s : ultimo reinicio : RAM libre)');
     } else if (command.startsWith('CMD_AUDIO_RX:')) {
       // CMD_AUDIO_RX:<recibidos>:<anunciados> - si faltan bytes, se perdieron paquetes BLE.
       debugPrint('La placa recibio audio: ${command.substring(13)}');
@@ -799,9 +802,9 @@ class Esp32SpeechService {
     if (pcm.length < _minRecordingBytes) return '';
     final wav = _buildWav(pcm);
     // Diagnostico: la ultima pregunta queda en el celular para revisarla desde el PC
-    // (adb pull /sdcard/Android/data/com.iris.visual.iris_app/files/ultima_pregunta.wav).
+    // (adb exec-out run-as com.iris.visual.iris_app cat files/ultima_pregunta.wav > ultima.wav).
     try {
-      File('/storage/emulated/0/Android/data/com.iris.visual.iris_app/files/ultima_pregunta.wav')
+      File('/data/data/com.iris.visual.iris_app/files/ultima_pregunta.wav')
         ..createSync(recursive: true)
         ..writeAsBytesSync(wav);
     } catch (e) {

@@ -4,6 +4,7 @@
 #include <Arduino.h>
 #include "config.h"
 #include <esp_heap_caps.h>
+#include <esp_system.h>
 #include "camera_driver.h"
 #include "audio_events.h"
 #include "audio_player.h"
@@ -371,6 +372,25 @@ void loop() {
     beepRequested = false;
     playThinkingBeep();
   }
+
+  // Al conectarse la app: cuanto lleva encendida la placa y por que se reinicio la ultima vez (con la
+  // caja cerrada no hay monitor serial; asi se distingue un reinicio de una desconexion BLE).
+  // CMD_HELLO:<segundos encendida>:<motivo del ultimo reinicio>:<RAM interna libre>
+  static bool wasConnected = false;
+  const bool connectedNow = bleManager.isConnected();
+  if (connectedNow && !wasConnected) {
+    delay(500);  // que la app termine de suscribirse a las notificaciones
+    static const char* const kReasons[] = {"?", "encendido", "externo", "software", "panic",
+                                           "watchdog_int", "watchdog_tarea", "watchdog", "sueno",
+                                           "bajo_voltaje", "sdio"};
+    const int reason = (int)esp_reset_reason();
+    char hello[64];
+    snprintf(hello, sizeof(hello), "CMD_HELLO:%lu:%s:%u", (unsigned long)(millis() / 1000),
+             reason >= 0 && reason <= 10 ? kReasons[reason] : "?",
+             (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL));
+    bleManager.sendCommand(hello);
+  }
+  wasConnected = connectedNow;
 
   // Si el telefono se desconecta con el boton apretado, no quedarse "transmitiendo"
   if (isTransmitting && !bleManager.isConnected()) {
