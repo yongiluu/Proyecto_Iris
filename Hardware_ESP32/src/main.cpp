@@ -419,6 +419,12 @@ void loop() {
   if (speaking != wasSpeaking && !isTransmitting) {
     setAudioEventsPaused(speaking);
     wasSpeaking = speaking;
+    if (!speaking) {
+      // Diagnostico: cuanta voz salio de verdad por el amplificador (la app lo registra).
+      char log[48];
+      snprintf(log, sizeof(log), "CMD_LOG:voz_reproducida:%u", (unsigned)takePlayedBytes());
+      bleManager.sendCommand(log);
+    }
   }
   feedAudioEvents(samples, sampleCount);
 

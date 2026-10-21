@@ -16,6 +16,9 @@ void playThinkingBeep();
 // oia la voz de Iris (falsos "Oye Iris" y alertas).
 bool isIrisSpeaking();
 
+// Bytes de voz escritos al amplificador desde la ultima llamada (diagnostico sin monitor serial).
+size_t takePlayedBytes();
+
 // Calla a Iris: descarta el audio que quedaba por reproducir (al apretar el boton para preguntar otra cosa).
 void stopPlayback();
 

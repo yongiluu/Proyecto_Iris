@@ -2,6 +2,7 @@
 #include "config.h"
 #include <driver/i2s.h>
 #include <esp_heap_caps.h>
+#include <esp_system.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/stream_buffer.h>
 #include <freertos/task.h>
@@ -27,6 +28,10 @@ constexpr TickType_t kEnqueueTimeoutTicks = pdMS_TO_TICKS(50);
 // de kMaxOutputLevel del maximo del amplificador (tope de seguridad auditiva).
 constexpr float kOutputGain = 1.0f;
 constexpr float kMaxOutputLevel = 0.5f;
+// Iris blanca (MAC 44:B1:76:AF:46:24) tiene 2 parlantes en paralelo: la voz no sonaba (se sospecha que
+// el amplificador o la alimentacion no dan la corriente). Prueba: la mitad de volumen solo en esa placa.
+float outputLevel = kMaxOutputLevel;
+volatile uint32_t playedBytes = 0;  // voz realmente escrita al amplificador (diagnostico)
 // El parlante de ~1 cm no reproduce graves: solo distorsionan (suena a estatica). Pasa-altos a 300 Hz.
 constexpr float kHighPassHz = 300.0f;
 
@@ -138,7 +143,7 @@ void playbackTask(void*) {
     for (size_t i = 0; i < samples; i++) {
       // Pasa-altos, ganancia y limitador suave (tanh): sin el recorte duro que agregaba estatica.
       float x = highPass.process((float)input[i]) * kOutputGain / 32768.0f;
-      int32_t amplified = (int32_t)(tanhf(x) * 32767.0f * kMaxOutputLevel);
+      int32_t amplified = (int32_t)(tanhf(x) * 32767.0f * outputLevel);
 
       // MAX98357A espera 32 bits alineados a la izquierda; mismo valor en L y R.
       int32_t frame = amplified << 16;
@@ -148,6 +153,7 @@ void playbackTask(void*) {
 
     size_t bytes_written = 0;
     i2s_write(I2S_AMP_PORT, output, samples * 2 * sizeof(int32_t), &bytes_written, portMAX_DELAY);
+    playedBytes = playedBytes + samples * sizeof(int16_t);
   }
 }
 }
@@ -182,6 +188,10 @@ bool initAudioPlayer() {
   }
 
   highPass.setup(kHighPassHz, AUDIO_SAMPLE_RATE);
+  uint8_t mac[6] = {};
+  esp_efuse_mac_get_default(mac);
+  if (mac[3] == 0xAF && mac[4] == 0x46 && mac[5] == 0x24) outputLevel = kMaxOutputLevel * 0.5f;
+  Serial.printf("[Audio] Volumen de salida %.2f\n", outputLevel);
 
   uint8_t* storage = (uint8_t*)heap_caps_malloc(kStreamBufferBytes + 1, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
   if (storage != nullptr) {
@@ -264,6 +274,12 @@ void stopPlayback() {
   expectedBytes = 0;
   flushRequested = true;
   lastEnqueueTick = 0;
+}
+
+size_t takePlayedBytes() {
+  const size_t value = playedBytes;
+  playedBytes = 0;
+  return value;
 }
 
 bool isIrisSpeaking() {
