@@ -94,6 +94,16 @@ class Esp32SpeechService {
   /// Se encontro mas de una placa y el usuario todavia no eligio: la UI debe preguntar.
   void Function(List<IrisBoard> boards)? onChooseBoard;
 
+  /// Volumen del altavoz de la placa (5-100). Llega en CMD_HELLO y se cambia con CMD_VOLUME.
+  final ValueNotifier<int> boardVolume = ValueNotifier(50);
+
+  /// Cambia el volumen de la placa (la placa lo aplica al tiro y lo guarda).
+  Future<void> setBoardVolume(int volume) async {
+    final clamped = volume.clamp(5, 100);
+    boardVolume.value = clamped;
+    await _sendCommand('CMD_VOLUME:$clamped');
+  }
+
   /// La placa oyo "Oye Iris" (CMD_WAKE_WORD:<%>).
   void Function(int percent)? onWakeWord;
 
@@ -506,8 +516,11 @@ class Esp32SpeechService {
     } else if (command == 'CMD_PHOTO_END') {
       _finishPhoto();
     } else if (command.startsWith('CMD_HELLO:')) {
-      // CMD_HELLO:<segundos encendida>:<motivo del ultimo reinicio>:<RAM interna libre>
-      debugPrint('Placa: ${command.substring(10)} (encendida s : ultimo reinicio : RAM libre)');
+      // CMD_HELLO:<segundos encendida>:<motivo del ultimo reinicio>:<RAM interna libre>:<volumen>
+      debugPrint('Placa: ${command.substring(10)} (encendida s : ultimo reinicio : RAM libre : volumen)');
+      final parts = command.split(':');
+      final volume = parts.length >= 5 ? int.tryParse(parts[4]) : null;
+      if (volume != null) boardVolume.value = volume.clamp(5, 100);
     } else if (command.startsWith('CMD_AUDIO_RX:')) {
       // CMD_AUDIO_RX:<recibidos>:<anunciados> - si faltan bytes, se perdieron paquetes BLE.
       debugPrint('La placa recibio audio: ${command.substring(13)}');
@@ -959,6 +972,7 @@ class Esp32SpeechService {
     lastPhotoNotifier.dispose();
     boardsFound.dispose();
     problem.dispose();
+    boardVolume.dispose();
   }
 }
 

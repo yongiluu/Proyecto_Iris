@@ -1194,9 +1194,76 @@ class _AssistantScreenState extends State<AssistantScreen>
             ),
           ],
         ),
+        _buildBoardVolume(connected),
       ],
     );
   }
+
+  /// Volumen del altavoz de la placa: slider de 5 a 100 (pasos de 5, se manda al soltar) y
+  /// botones grandes de -10 / +10.
+  Widget _buildBoardVolume(bool connected) {
+    return ValueListenableBuilder<int>(
+      valueListenable: _esp32SpeechService.boardVolume,
+      builder: (context, volume, _) {
+        final shown = _volumeDrag ?? volume;
+        Widget stepButton(int delta) => Semantics(
+              button: true,
+              label: delta < 0 ? 'Bajar volumen de la placa' : 'Subir volumen de la placa',
+              value: '$volume por ciento',
+              child: ExcludeSemantics(
+                child: IconButton(
+                  iconSize: 32,
+                  constraints: const BoxConstraints(minWidth: 56, minHeight: 56),
+                  style: IconButton.styleFrom(backgroundColor: Colors.white12),
+                  onPressed: connected ? () => _esp32SpeechService.setBoardVolume(volume + delta) : null,
+                  icon: Icon(delta < 0 ? Icons.remove : Icons.add, color: AppTheme.textOnDark),
+                ),
+              ),
+            );
+        return Padding(
+          padding: const EdgeInsets.only(top: 8),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              ExcludeSemantics(
+                child: Text('Volumen de la placa: $shown',
+                    style: const TextStyle(color: AppTheme.textOnDarkMuted, fontSize: 15)),
+              ),
+              Row(
+                children: [
+                  stepButton(-10),
+                  Expanded(
+                    child: Semantics(
+                      label: 'Volumen de la placa',
+                      child: Slider(
+                        value: shown.toDouble().clamp(5, 100),
+                        min: 5,
+                        max: 100,
+                        divisions: 19,
+                        label: '$shown',
+                        activeColor: AppTheme.accentCyan,
+                        inactiveColor: Colors.white24,
+                        onChanged: connected ? (v) => setState(() => _volumeDrag = v.round()) : null,
+                        onChangeEnd: connected
+                            ? (v) {
+                                setState(() => _volumeDrag = null);
+                                _esp32SpeechService.setBoardVolume(v.round());
+                              }
+                            : null,
+                      ),
+                    ),
+                  ),
+                  stepButton(10),
+                ],
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  int? _volumeDrag; // valor mientras se arrastra el slider (se manda al soltar)
 
   Widget _buildDescriptionOverlay() {
     return Container(
