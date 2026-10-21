@@ -13,15 +13,19 @@ namespace {
 constexpr size_t kStreamBufferBytes = 1024 * 1024;
 constexpr size_t kFallbackBufferBytes = 16 * 1024;   // si no hay PSRAM
 // Antes de empezar a sonar se juntan 0,4 s (o se espera a que deje de llegar audio: respuestas cortas
-// y tonos). Si se vacia a la mitad, se vuelve a juntar: una pausa corta en vez de audio entrecortado.
-constexpr size_t kPrebufferBytes = AUDIO_SAMPLE_RATE * 2 * 4 / 10;
+// y tonos). Si se vacia a la mitad (el BLE a veces llega mas lento que la reproduccion), se vuelve a
+// juntar el DOBLE, hasta 4 s: una o dos pausas en vez de muchos trabones. Se reinicia en cada respuesta.
+constexpr size_t kBytesPerSecond = AUDIO_SAMPLE_RATE * 2;
+constexpr size_t kPrebufferBytes = kBytesPerSecond * 4 / 10;
+constexpr size_t kMaxPrebufferBytes = kBytesPerSecond * 4;
 constexpr TickType_t kEndOfStreamTicks = pdMS_TO_TICKS(250);
+constexpr TickType_t kNewAnswerGapTicks = pdMS_TO_TICKS(1500);
 constexpr size_t kChunkSamples = 256;
 constexpr TickType_t kEnqueueTimeoutTicks = pdMS_TO_TICKS(50);
-// Volumen: el parlante va en el oido. 1.0 = la mitad de lo que habia (antes 2.0), y la salida nunca pasa
+// Volumen: el parlante va en el oido. Con 2.0 sonaba roto y con 1.0/0.5 muy bajito. La salida nunca pasa
 // de kMaxOutputLevel del maximo del amplificador (tope de seguridad auditiva).
-constexpr float kOutputGain = 1.0f;
-constexpr float kMaxOutputLevel = 0.5f;
+constexpr float kOutputGain = 1.5f;
+constexpr float kMaxOutputLevel = 0.7f;
 // El parlante de ~1 cm no reproduce graves: solo distorsionan (suena a estatica). Pasa-altos a 300 Hz.
 constexpr float kHighPassHz = 300.0f;
 
@@ -64,12 +68,15 @@ void playbackTask(void*) {
   static int16_t input[kChunkSamples];
   static int32_t output[kChunkSamples * 2];
   bool playing = false;
+  size_t prebuffer = kPrebufferBytes;
 
   for (;;) {
     if (!playing) {
       const size_t available = xStreamBufferBytesAvailable(playbackStream);
-      const bool stillArriving = xTaskGetTickCount() - lastEnqueueTick < kEndOfStreamTicks;
-      if (available == 0 || (available < kPrebufferBytes && stillArriving)) {
+      const TickType_t sinceEnqueue = xTaskGetTickCount() - lastEnqueueTick;
+      if (sinceEnqueue > kNewAnswerGapTicks) prebuffer = kPrebufferBytes;  // respuesta nueva
+      const bool stillArriving = sinceEnqueue < kEndOfStreamTicks;
+      if (available == 0 || (available < prebuffer && stillArriving)) {
         vTaskDelay(pdMS_TO_TICKS(10));
         continue;
       }
@@ -80,6 +87,10 @@ void playbackTask(void*) {
     size_t bytes = xStreamBufferReceive(playbackStream, input, sizeof(input), pdMS_TO_TICKS(20));
     if (bytes == 0) {
       playing = false;  // se vacio: vuelve a juntar antes de seguir
+      if (xTaskGetTickCount() - lastEnqueueTick < kEndOfStreamTicks) {
+        // Se quedo sin audio a la mitad de la respuesta: la proxima vez junta el doble.
+        prebuffer = prebuffer * 2 > kMaxPrebufferBytes ? kMaxPrebufferBytes : prebuffer * 2;
+      }
       continue;
     }
     size_t samples = bytes / sizeof(int16_t);
