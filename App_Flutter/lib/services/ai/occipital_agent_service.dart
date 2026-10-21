@@ -28,6 +28,51 @@ class OccipitalAgentService {
     r'analiza(r)? (la )?vision|que tengo (al |en )?frente|que tengo (a|de)?delante|que hay al frente)',
   );
 
+  // Texto de llamadas a herramientas, razonamiento o estado interno que a veces el modelo escribe
+  // en vez de (o ademas de) usar tool_calls. Nunca se habla ni se muestra.
+  static const Map<String, String> _toolNames = {
+    'analyze_surroundings': 'analyze_surroundings',
+    'analyze surroundings': 'analyze_surroundings',
+    'analyse surroundings': 'analyze_surroundings',
+    'analyse_surroundings': 'analyze_surroundings',
+    'get_weather_and_location': 'get_weather_and_location',
+    'weather and location': 'get_weather_and_location',
+    'search_medical_database': 'search_medical_database',
+    'medical database': 'search_medical_database',
+  };
+  static final RegExp _leakPattern = RegExp(
+    r'(llamando a|llamare a|voy a llamar|invocando|ejecutando la herramienta|usando la herramienta|'
+    r'usare la herramienta|calling|call(ing)? the (tool|function)|tool_call|function_call|<tool|</?function|'
+    r'analy[sz]e[ _]surroundings|get_weather_and_location|search_medical_database|^\s*[\[{].*[\]}]\s*$)',
+    caseSensitive: false,
+  );
+
+  /// Quita las frases que filtran herramientas o JSON. Devuelve el texto limpio (puede quedar vacio).
+  static String cleanReply(String text) {
+    final sentences = text.split(RegExp(r'(?<=[.!?\n])\s+'));
+    final kept = sentences.where((s) => s.trim().isNotEmpty && !_leakPattern.hasMatch(s)).toList();
+    return kept.join(' ').replaceAll(RegExp(r'[ \t]+'), ' ').trim();
+  }
+
+  /// Si el texto menciona una herramienta (sin haberla llamado de verdad), cual.
+  static String? leakedTool(String text) {
+    final lower = text.toLowerCase();
+    for (final entry in _toolNames.entries) {
+      if (lower.contains(entry.key)) return entry.value;
+    }
+    return null;
+  }
+
+  static const String _noClearAnswer = 'No pude obtener una respuesta clara. Intentalo de nuevo.';
+
+  /// Respuesta final para hablar: sin texto de herramientas; si no queda nada, un mensaje corto.
+  static String? _speakable(String? content) {
+    if (content == null) return null;
+    final clean = cleanReply(content);
+    if (clean != content.trim()) debugPrint('Texto interno filtrado de la respuesta: $content');
+    return clean.isEmpty ? _noClearAnswer : clean;
+  }
+
   /// true si la pregunta pide describir lo que hay adelante (sin tildes ni mayusculas).
   static bool wantsVision(String prompt) => _visionRequest.hasMatch(_normalize(prompt));
 
@@ -175,9 +220,36 @@ RESPONDE SIEMPRE EN ESPANOL Y DE FORMA MUY BREVE, CORTA Y CONCISA. No des explic
         return 'Error al contactar al cerebro de Iris.';
       }
 
-      final message = jsonDecode(firstResponse.body)['choices'][0]['message'] as Map<String, dynamic>;
-      final toolCalls = (message['tool_calls'] as List?) ?? const [];
-      if (toolCalls.isEmpty) return message['content']?.toString();
+      var message = jsonDecode(firstResponse.body)['choices'][0]['message'] as Map<String, dynamic>;
+      var toolCalls = (message['tool_calls'] as List?) ?? const [];
+      if (toolCalls.isEmpty) {
+        final content = message['content']?.toString() ?? '';
+        final leaked = leakedTool(content);
+        if (leaked == null) return _speakable(content);
+        // Escribio "llamando a analyze_surroundings..." sin llamarla: ejecutarla de verdad y
+        // hablar solo la respuesta final.
+        debugPrint('El modelo escribio la herramienta $leaked en vez de llamarla; se ejecuta.');
+        if (leaked == 'analyze_surroundings') {
+          return _describeNow(
+            url,
+            deployment,
+            userPrompt: userPrompt,
+            captureImageCallback: captureImageCallback,
+            onStatusUpdate: onStatusUpdate,
+            sensorContext: sensorContext,
+            onVisionStart: onVisionStart,
+            visionFallback: visionFallback,
+          );
+        }
+        toolCalls = [
+          {
+            'id': 'call_iris_leak',
+            'type': 'function',
+            'function': {'name': leaked, 'arguments': jsonEncode({'query': userPrompt})},
+          },
+        ];
+        message = {'role': 'assistant', 'content': null, 'tool_calls': toolCalls};
+      }
 
       // Cada tool_call necesita su propio mensaje "tool"; si falta alguno la API responde 400.
       messages.add(message);
@@ -213,7 +285,7 @@ RESPONDE SIEMPRE EN ESPANOL Y DE FORMA MUY BREVE, CORTA Y CONCISA. No des explic
         debugPrint('Azure Error ${secondResponse.statusCode}: ${secondResponse.body}');
         return 'Error al analizar los resultados de las herramientas.';
       }
-      return jsonDecode(secondResponse.body)['choices'][0]['message']['content']?.toString();
+      return _speakable(jsonDecode(secondResponse.body)['choices'][0]['message']['content']?.toString());
     } on TimeoutException {
       return 'La conexion tardo demasiado. Intentalo de nuevo.';
     } catch (e) {
@@ -261,7 +333,7 @@ RESPONDE SIEMPRE EN ESPANOL Y DE FORMA MUY BREVE, CORTA Y CONCISA. No des explic
         debugPrint('Azure Error ${response.statusCode}: ${response.body}');
         return 'Error al analizar la imagen.';
       }
-      return jsonDecode(response.body)['choices'][0]['message']['content']?.toString();
+      return _speakable(jsonDecode(response.body)['choices'][0]['message']['content']?.toString());
     } on TimeoutException {
       return 'La conexion tardo demasiado. Intentalo de nuevo.';
     } catch (e) {

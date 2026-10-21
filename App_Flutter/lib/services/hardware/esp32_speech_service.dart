@@ -28,7 +28,11 @@ class Esp32SpeechService {
   static const int _maxAudioChunkBytes = 500;
   static const int _attHeaderBytes = 3;
   static const double _ttsVolumeScale = 0.35;
-  static const int _maxAudioAheadMs = 30000; // tope de seguridad (bufer de la placa: 32 s)
+  static const double _playbackBytesPerMs = 32.0; // 16 kHz x 16 bits
+  static const double _sendBytesPerMs = 40.0; // 1,25 veces la reproduccion
+  static const int _startBurstBytes = 12800; // ~0,4 s: lo que junta la placa antes de sonar
+  static const int _maxAudioAheadMs = 1500;
+  Future<void> _audioQueue = Future.value();
 
   static const Duration _scanTimeout = Duration(seconds: 6);
   static const Duration _watchdogPeriod = Duration(seconds: 5);
@@ -665,13 +669,19 @@ class Esp32SpeechService {
   // ───────────────────────── Audio hacia la placa ─────────────────────────
 
   /// Envia PCM 16-bit mono 16 kHz a la placa, a la velocidad de reproduccion.
-  Future<void> sendAudioToEsp32(Uint8List pcmData) async {
+  /// Encola un audio (PCM 16 kHz) para la placa. Varios audios seguidos (ej. "Dejame mirar" y
+  /// despues la respuesta) salen en orden, sin solaparse. stopAudio() cancela lo encolado.
+  Future<void> sendAudioToEsp32(Uint8List pcmData) {
+    final session = _audioSession;
+    final sent = _audioQueue.then((_) => _sendAudioNow(pcmData, session));
+    _audioQueue = sent.catchError((_) {});
+    return sent;
+  }
+
+  Future<void> _sendAudioNow(Uint8List pcmData, int session) async {
     final device = _device;
     final characteristic = _ttsAudioCharacteristic;
-    if (device == null || characteristic == null || !isConnected) return;
-
-    final session = ++_audioSession;
-    _isSendingAudio = true;
+    if (device == null || characteristic == null || !isConnected || session != _audioSession) return;
 
     final scaled = _scaleVolume(pcmData);
 
@@ -680,35 +690,37 @@ class Esp32SpeechService {
     final chunkSize = maxPayload & ~1;
     if (chunkSize < 2) return;
 
-    // La placa tiene un bufer de 32 s en PSRAM y empieza a sonar con ~0,4 s (o al terminar el
-    // envio): se manda toda la respuesta lo mas rapido que acepte el BLE, con await en cada
-    // escritura, y solo se frena si se adelanta mas de 30 s a la reproduccion.
-    // Android puede dejar la conexion en un intervalo largo (ahorro) y entonces el envio va mas
-    // lento que la reproduccion (13 KB/s vs 32 KB/s): pedir prioridad alta antes de cada voz.
+    // Android puede dejar la conexion en un intervalo largo (ahorro): pedir prioridad alta.
     final highPriority = await _requestHighPriority(device);
+    _isSendingAudio = true;
 
+    // Dosificado: a toda velocidad (52-136 KB/s) la placa bota paquetes y la voz sale en
+    // pedacitos; muy lento (13 KB/s) se queda sin audio. Ritmo de 40 KB/s (1,25 veces la
+    // reproduccion de 32 KB/s), con un arranque de ~0,4 s y nunca mas de 1,5 s adelantado.
     final stopwatch = Stopwatch()..start();
     try {
       for (int offset = 0; offset < scaled.length; offset += chunkSize) {
-        if (!_isSendingAudio || session != _audioSession) break;
+        if (session != _audioSession) break;
 
         final end = math.min(offset + chunkSize, scaled.length);
         await characteristic.write(scaled.sublist(offset, end), withoutResponse: true);
 
-        final sentAudioMs = end / 32000.0 * 1000.0; // 16 kHz, 16 bits
-        while (sentAudioMs - stopwatch.elapsedMilliseconds > _maxAudioAheadMs) {
-          if (!_isSendingAudio || session != _audioSession) break;
-          await Future.delayed(const Duration(milliseconds: 50));
+        while (session == _audioSession) {
+          final elapsed = stopwatch.elapsedMilliseconds;
+          final aheadMs = end / _playbackBytesPerMs - elapsed;
+          final overRate = end > _startBurstBytes + elapsed * _sendBytesPerMs;
+          if (aheadMs <= _maxAudioAheadMs && !overRate) break;
+          await Future.delayed(const Duration(milliseconds: 5));
         }
       }
       final ms = math.max(1, stopwatch.elapsedMilliseconds);
       debugPrint('Audio a la placa: ${scaled.length} bytes en $ms ms '
-          '(${(scaled.length / ms).toStringAsFixed(1)} KB/s, se necesitan 32; '
+          '(${(scaled.length / ms).toStringAsFixed(1)} KB/s, objetivo 40, reproduccion 32; '
           'prioridad alta: ${highPriority ? 'si' : 'no'}, chunk $chunkSize, MTU ${device.mtuNow})');
     } catch (e) {
       debugPrint('Error enviando audio a la placa: $e');
     } finally {
-      if (session == _audioSession) _isSendingAudio = false;
+      _isSendingAudio = false;
     }
   }
 
