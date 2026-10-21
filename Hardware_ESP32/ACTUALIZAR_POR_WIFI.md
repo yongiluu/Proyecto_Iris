@@ -14,6 +14,8 @@ La placa deja de detectar cosas y abre la red **`Iris-Actualizar`**. Si en 10 mi
 
 ## 2. Subir el código desde el PC
 
+**Antes, cierra la app de Iris en el celular.** Con la app conectada por Bluetooth, una subida se cortó a la mitad ("Connection was reset"); al repetirla con la app cerrada funcionó. Si se corta, la placa sigue con el firmware anterior: vuelve a ponerla en modo actualización y repite.
+
 ```bash
 cd Hardware_ESP32
 python tools/subir_por_wifi.py
