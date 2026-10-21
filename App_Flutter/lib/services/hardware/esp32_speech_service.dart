@@ -376,6 +376,7 @@ class Esp32SpeechService {
     });
 
     await _discoverCharacteristics(device);
+    await _requestHighPriority(device);
 
     isConnected = true;
     debugPrint('Conectado a Iris ${device.remoteId.str} por BLE (MTU ${device.mtuNow}).');
@@ -682,6 +683,10 @@ class Esp32SpeechService {
     // La placa tiene un bufer de 32 s en PSRAM y empieza a sonar con ~0,4 s (o al terminar el
     // envio): se manda toda la respuesta lo mas rapido que acepte el BLE, con await en cada
     // escritura, y solo se frena si se adelanta mas de 30 s a la reproduccion.
+    // Android puede dejar la conexion en un intervalo largo (ahorro) y entonces el envio va mas
+    // lento que la reproduccion (13 KB/s vs 32 KB/s): pedir prioridad alta antes de cada voz.
+    final highPriority = await _requestHighPriority(device);
+
     final stopwatch = Stopwatch()..start();
     try {
       for (int offset = 0; offset < scaled.length; offset += chunkSize) {
@@ -696,11 +701,26 @@ class Esp32SpeechService {
           await Future.delayed(const Duration(milliseconds: 50));
         }
       }
-      debugPrint('Audio a la placa: ${scaled.length} bytes en ${stopwatch.elapsedMilliseconds} ms');
+      final ms = math.max(1, stopwatch.elapsedMilliseconds);
+      debugPrint('Audio a la placa: ${scaled.length} bytes en $ms ms '
+          '(${(scaled.length / ms).toStringAsFixed(1)} KB/s, se necesitan 32; '
+          'prioridad alta: ${highPriority ? 'si' : 'no'}, chunk $chunkSize, MTU ${device.mtuNow})');
     } catch (e) {
       debugPrint('Error enviando audio a la placa: $e');
     } finally {
       if (session == _audioSession) _isSendingAudio = false;
+    }
+  }
+
+  /// Intervalo de conexion corto (ConnectionPriority.high). Solo Android; true si se pudo pedir.
+  Future<bool> _requestHighPriority(BluetoothDevice device) async {
+    if (defaultTargetPlatform != TargetPlatform.android) return false;
+    try {
+      await device.requestConnectionPriority(connectionPriorityRequest: ConnectionPriority.high);
+      return true;
+    } catch (e) {
+      debugPrint('No se pudo pedir prioridad BLE alta: $e');
+      return false;
     }
   }
 
@@ -725,7 +745,9 @@ class Esp32SpeechService {
   void startThinkingSound() {
     _thinkingTimer?.cancel();
     _sendCommand('CMD_BEEP_THINKING');
-    _thinkingTimer = Timer.periodic(const Duration(seconds: 2), (_) => _sendCommand('CMD_BEEP_THINKING'));
+    _thinkingTimer = Timer.periodic(const Duration(seconds: 2), (_) {
+      if (!_isSendingAudio) _sendCommand('CMD_BEEP_THINKING');
+    });
   }
 
   void stopThinkingSound() {
