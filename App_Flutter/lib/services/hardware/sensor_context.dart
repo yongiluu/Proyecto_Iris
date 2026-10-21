@@ -40,6 +40,23 @@ class SensorContext {
     _proximityTime = DateTime.now();
   }
 
+  /// Lo ultimo que detecto la vision local (ej. "una persona"), o null. Respaldo si la foto falla.
+  String? lastSeen() {
+    final now = DateTime.now();
+    MapEntry<String, DateTime>? newest;
+    for (final entry in _visionEvents.entries) {
+      if (now.difference(entry.value) < _eventMaxAge && (newest == null || entry.value.isAfter(newest.value))) {
+        newest = entry;
+      }
+    }
+    if (newest != null) return _visionNames[newest.key] ?? newest.key;
+    final vision = _vision;
+    if (vision != null && vision.label != 'nada' && now.difference(vision.time) < _contextMaxAge) {
+      return _visionNames[vision.label] ?? vision.label;
+    }
+    return null;
+  }
+
   /// Texto para la IA, o null si no hay nada reciente.
   String? describe() {
     final now = DateTime.now();

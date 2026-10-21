@@ -499,6 +499,7 @@ class _AssistantScreenState extends State<AssistantScreen>
       },
       captureImageCallback: _captureImage,
       sensorContext: _sensorContext.describe(),
+      visionFallback: _sensorContext.lastSeen,
     );
     if (desc != null && mounted) {
       setState(() {
@@ -587,6 +588,11 @@ class _AssistantScreenState extends State<AssistantScreen>
         },
         captureImageCallback: _captureImage,
         sensorContext: _sensorContext.describe(),
+        visionFallback: _sensorContext.lastSeen,
+        // En modo Modulo la foto tarda unos segundos por Bluetooth: avisar que ya esta mirando.
+        onVisionStart: _hardwareMode == HardwareMode.esp32
+            ? () => _ttsService.speakStatus('Dejame mirar', esp32Service: _activeEsp32)
+            : null,
       );
       
       if (_hardwareMode == HardwareMode.esp32) _stopThinking();

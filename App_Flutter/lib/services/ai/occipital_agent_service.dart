@@ -19,6 +19,31 @@ class OccipitalAgentService {
   static const Duration _toolTimeout = Duration(seconds: 15);
   static const int _maxTokens = 300;
 
+  static const String cameraFailedMessage = 'No pude ver con la camara, intenta de nuevo en unos segundos.';
+
+  // Preguntas que piden mirar al frente: se pide la foto al tiro, sin esperar a que el LLM
+  // decida llamar analyze_surroundings (eso costaba una vuelta completa al modelo).
+  static final RegExp _visionRequest = RegExp(
+    r'(que hay (en)?frente|que hay (a|de)?delante|describ|que ves|que estoy viendo|\bmira\b|\bmirame\b|'
+    r'analiza(r)? (la )?vision|que tengo (al |en )?frente|que tengo (a|de)?delante|que hay al frente)',
+  );
+
+  /// true si la pregunta pide describir lo que hay adelante (sin tildes ni mayusculas).
+  static bool wantsVision(String prompt) => _visionRequest.hasMatch(_normalize(prompt));
+
+  static String _normalize(String text) {
+    const from = 'áéíóúüñ';
+    const to = 'aeiouun';
+    final lower = text.toLowerCase();
+    final buffer = StringBuffer();
+    for (final rune in lower.runes) {
+      final char = String.fromCharCode(rune);
+      final i = from.indexOf(char);
+      buffer.write(i >= 0 ? to[i] : char);
+    }
+    return buffer.toString().replaceAll(RegExp(r'[¿?¡!.,;:]'), ' ').replaceAll(RegExp(r'\s+'), ' ').trim();
+  }
+
   static const String systemPrompt = '''
 Eres Occipital, un asistente visual y de razonamiento avanzado y altamente confiable. ERES LOS OJOS DE UNA PERSONA CIEGA.
 Tu directiva principal es la seguridad del usuario y la precision absoluta.
@@ -102,6 +127,8 @@ RESPONDE SIEMPRE EN ESPANOL Y DE FORMA MUY BREVE, CORTA Y CONCISA. No des explic
     required Future<Uint8List?> Function() captureImageCallback,
     Function(String status)? onStatusUpdate,
     String? sensorContext,
+    void Function()? onVisionStart,
+    String? Function()? visionFallback,
   }) async {
     debugPrint('🧠 OccipitalAgentService: Thinking about prompt: $userPrompt');
     onStatusUpdate?.call('Pensando...');
@@ -112,6 +139,20 @@ RESPONDE SIEMPRE EN ESPANOL Y DE FORMA MUY BREVE, CORTA Y CONCISA. No des explic
     }
 
     final deployment = EnvConfig.azureFoundryDeployment;
+
+    if (wantsVision(userPrompt)) {
+      return _describeNow(
+        url,
+        deployment,
+        userPrompt: userPrompt,
+        captureImageCallback: captureImageCallback,
+        onStatusUpdate: onStatusUpdate,
+        sensorContext: sensorContext,
+        onVisionStart: onVisionStart,
+        visionFallback: visionFallback,
+      );
+    }
+
     final messages = <Map<String, dynamic>>[
       {'role': 'system', 'content': systemPrompt},
       // Lo que oyen y ven los modelos locales de la placa (ver SensorContext).
@@ -148,6 +189,8 @@ RESPONDE SIEMPRE EN ESPANOL Y DE FORMA MUY BREVE, CORTA Y CONCISA. No des explic
           captureImageCallback: captureImageCallback,
           onStatusUpdate: onStatusUpdate,
         );
+        // Si la camara fallo, responder al tiro en vez de hacer otra vuelta al modelo.
+        if (result.cameraFailed) return _cameraFailed(visionFallback);
         messages.add({
           'role': 'tool',
           'tool_call_id': call['id'],
@@ -179,7 +222,63 @@ RESPONDE SIEMPRE EN ESPANOL Y DE FORMA MUY BREVE, CORTA Y CONCISA. No des explic
     }
   }
 
-  Future<({String text, Map<String, dynamic>? imageMessage})> _runTool(
+  /// Pregunta de "que hay adelante": foto de inmediato (en paralelo con el aviso "Dejame mirar")
+  /// y una sola llamada al modelo con la imagen.
+  Future<String?> _describeNow(
+    Uri url,
+    String deployment, {
+    required String userPrompt,
+    required Future<Uint8List?> Function() captureImageCallback,
+    Function(String status)? onStatusUpdate,
+    String? sensorContext,
+    void Function()? onVisionStart,
+    String? Function()? visionFallback,
+  }) async {
+    onStatusUpdate?.call('Mirando...');
+    final photo = captureImageCallback();
+    onVisionStart?.call();
+    final imageBytes = await photo;
+    if (imageBytes == null) return _cameraFailed(visionFallback);
+
+    onStatusUpdate?.call('Analizando vision...');
+    try {
+      final response = await _postChat(url, {
+        'model': deployment,
+        'messages': [
+          {'role': 'system', 'content': systemPrompt},
+          if (sensorContext != null) {'role': 'system', 'content': sensorContext},
+          {
+            'role': 'user',
+            'content': [
+              {'type': 'text', 'text': userPrompt},
+              {'type': 'image_url', 'image_url': {'url': 'data:image/jpeg;base64,${base64Encode(imageBytes)}'}},
+            ],
+          },
+        ],
+        'max_tokens': _maxTokens,
+      });
+      if (response.statusCode != 200) {
+        debugPrint('Azure Error ${response.statusCode}: ${response.body}');
+        return 'Error al analizar la imagen.';
+      }
+      return jsonDecode(response.body)['choices'][0]['message']['content']?.toString();
+    } on TimeoutException {
+      return 'La conexion tardo demasiado. Intentalo de nuevo.';
+    } catch (e) {
+      debugPrint('Exception in OccipitalAgentService (vision): $e');
+      return 'Hubo un problema de conexion. Intentalo de nuevo.';
+    }
+  }
+
+  /// Respuesta rapida si la foto fallo, con lo ultimo que vio la vision local de respaldo.
+  String _cameraFailed(String? Function()? visionFallback) {
+    final seen = visionFallback?.call();
+    return seen == null
+        ? cameraFailedMessage
+        : '$cameraFailedMessage Lo ultimo que detecto la placa fue $seen.';
+  }
+
+  Future<({String text, Map<String, dynamic>? imageMessage, bool cameraFailed})> _runTool(
     Map<String, dynamic> call, {
     required String userPrompt,
     required Future<Uint8List?> Function() captureImageCallback,
@@ -192,9 +291,10 @@ RESPONDE SIEMPRE EN ESPANOL Y DE FORMA MUY BREVE, CORTA Y CONCISA. No des explic
         onStatusUpdate?.call('Analizando vision...');
         final imageBytes = await captureImageCallback();
         if (imageBytes == null) {
-          return (text: 'Error: No se pudo capturar la imagen.', imageMessage: null);
+          return (text: 'Error: No se pudo capturar la imagen.', imageMessage: null, cameraFailed: true);
         }
         return (
+          cameraFailed: false,
           text: 'Imagen capturada exitosamente.',
           imageMessage: {
             'role': 'user',
@@ -207,7 +307,7 @@ RESPONDE SIEMPRE EN ESPANOL Y DE FORMA MUY BREVE, CORTA Y CONCISA. No des explic
 
       case 'get_weather_and_location':
         onStatusUpdate?.call('Obteniendo Clima y GPS...');
-        return (text: await _fetchLocationAndWeather(), imageMessage: null);
+        return (text: await _fetchLocationAndWeather(), imageMessage: null, cameraFailed: false);
 
       case 'search_medical_database':
         onStatusUpdate?.call('Consultando Base de Datos Medica...');
@@ -218,10 +318,10 @@ RESPONDE SIEMPRE EN ESPANOL Y DE FORMA MUY BREVE, CORTA Y CONCISA. No des explic
         } catch (e) {
           debugPrint('Argumentos invalidos para search_medical_database: $e');
         }
-        return (text: await _searchMedicalDB(query), imageMessage: null);
+        return (text: await _searchMedicalDB(query), imageMessage: null, cameraFailed: false);
 
       default:
-        return (text: 'Herramienta desconocida: $name', imageMessage: null);
+        return (text: 'Herramienta desconocida: $name', imageMessage: null, cameraFailed: false);
     }
   }
 

@@ -31,7 +31,12 @@ class Esp32SpeechService {
 
   static const Duration _scanTimeout = Duration(seconds: 6);
   static const Duration _watchdogPeriod = Duration(seconds: 5);
-  static const Duration _photoTimeout = Duration(seconds: 15);
+  // Sin CMD_PHOTO_END en 8 s (contados de nuevo al llegar CMD_PHOTO_START) se da por fallida.
+  static const Duration _photoTimeout = Duration(seconds: 8);
+  Timer? _photoTimer;
+
+  /// Motivo del ultimo fallo de foto (ej. "camara", "sin respuesta"), para depurar.
+  String? lastPhotoError;
   static const Duration _transcriptionTimeout = Duration(seconds: 30);
 
   BluetoothDevice? _device;
@@ -486,6 +491,7 @@ class Esp32SpeechService {
     } else if (command == 'CMD_PTT_STOP') {
       _finishRecording(null);
     } else if (command.startsWith('CMD_PHOTO_START:')) {
+      _restartPhotoTimer();
       _isReceivingPhoto = true;
       _photoBuffer.clear();
       _expectedPhotoSize = int.tryParse(command.split(':')[1]) ?? 0;
@@ -521,7 +527,10 @@ class Esp32SpeechService {
       _isReceivingFrame = true;
     } else if (command == 'CMD_FRAME_END' || command == 'CMD_FRAME_ERROR') {
       _finishFrame(ok: command == 'CMD_FRAME_END');
-    } else if (command == 'CMD_PHOTO_ERROR') {
+    } else if (command == 'CMD_PHOTO_ERROR' || command.startsWith('CMD_PHOTO_ERROR:')) {
+      final reason = command.contains(':') ? command.substring(command.indexOf(':') + 1) : 'sin motivo';
+      lastPhotoError = reason;
+      debugPrint('La placa no pudo sacar la foto: $reason');
       _isReceivingPhoto = false;
       _photoBuffer.clear();
       _completePhoto(null);
@@ -554,6 +563,7 @@ class Esp32SpeechService {
     final isComplete = bytes.length == _expectedPhotoSize;
     final isJpeg = bytes.length > 2 && bytes[0] == 0xFF && bytes[1] == 0xD8;
     if (!isComplete || !isJpeg) {
+      lastPhotoError = 'foto incompleta';
       debugPrint('Foto descartada: ${bytes.length} de $_expectedPhotoSize bytes, jpeg=$isJpeg');
       _completePhoto(null);
       return;
@@ -563,7 +573,20 @@ class Esp32SpeechService {
     _completePhoto(bytes);
   }
 
+  void _restartPhotoTimer() {
+    final completer = _photoCompleter;
+    if (completer == null || completer.isCompleted) return;
+    _photoTimer?.cancel();
+    _photoTimer = Timer(_photoTimeout, () {
+      lastPhotoError = 'sin CMD_PHOTO_END en ${_photoTimeout.inSeconds} s';
+      debugPrint('Foto fallida: $lastPhotoError');
+      _isReceivingPhoto = false;
+      _completePhoto(null);
+    });
+  }
+
   void _completePhoto(Uint8List? bytes) {
+    _photoTimer?.cancel();
     final completer = _photoCompleter;
     if (completer != null && !completer.isCompleted) completer.complete(bytes);
   }
@@ -580,19 +603,18 @@ class Esp32SpeechService {
     _photoCompleter = completer;
     _isReceivingPhoto = false;
     _photoBuffer.clear();
-
-    final timeout = Timer(_photoTimeout, () {
-      if (!completer.isCompleted) completer.complete(null);
-    });
+    lastPhotoError = null;
+    _restartPhotoTimer();
 
     try {
       await command.write(utf8.encode('CMD_TAKE_PHOTO'), withoutResponse: true);
       return await completer.future;
     } catch (e) {
+      lastPhotoError = 'no se pudo pedir: $e';
       debugPrint('Error pidiendo foto: $e');
       return null;
     } finally {
-      timeout.cancel();
+      _photoTimer?.cancel();
       _isReceivingPhoto = false;
       if (!completer.isCompleted) completer.complete(null);
     }
