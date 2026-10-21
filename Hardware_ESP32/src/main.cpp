@@ -389,11 +389,9 @@ void loop() {
     queuePush(samples, sampleCount, kTxQueueSamples);
     // Doble velocidad hasta vaciar el audio previo. Si el BLE esta ocupado no se espera: queda en la
     // cola y sale en las proximas vueltas (esperar aqui cortaba la lectura del microfono).
-    if (bleManager.canSendNow()) {
-      int16_t out[2 * kMicMaxSamples];
-      const size_t count = queuePop(out, 2 * kMicMaxSamples);
-      if (count > 0) bleManager.sendAudioChunk((const uint8_t*)out, count * sizeof(int16_t));
-    }
+    int16_t out[2 * kMicMaxSamples];
+    const size_t count = queuePop(out, 2 * kMicMaxSamples);
+    if (count > 0) bleManager.sendAudioChunk((const uint8_t*)out, count * sizeof(int16_t));
     if (wakeSession) updateWakeSession(samples, sampleCount);
   } else {
     queuePush(samples, sampleCount, kPrerollSamples);

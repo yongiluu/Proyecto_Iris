@@ -28,7 +28,8 @@ public:
     bool canSendNow() const;
 
 private:
-    bool notifyInChunks(NimBLECharacteristic* characteristic, const uint8_t* data, size_t length);
+    bool notifyInChunks(NimBLECharacteristic* characteristic, const uint8_t* data, size_t length,
+                        bool waitForBuffers = false);
 
     NimBLEServer* pServer;
     NimBLECharacteristic* pTxCharacteristic;    // Audio del microfono

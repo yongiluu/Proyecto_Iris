@@ -22,10 +22,10 @@ constexpr TickType_t kEndOfStreamTicks = pdMS_TO_TICKS(250);
 constexpr TickType_t kNewAnswerGapTicks = pdMS_TO_TICKS(1500);
 constexpr size_t kChunkSamples = 256;
 constexpr TickType_t kEnqueueTimeoutTicks = pdMS_TO_TICKS(50);
-// Volumen: el parlante va en el oido. Con 2.0 sonaba roto y con 1.0/0.5 muy bajito. La salida nunca pasa
+// Volumen: el parlante va en el oido. 2.0 y 1.5/0.7 sonaban rotos; 1.0/0.5 muy bajito. La salida nunca pasa
 // de kMaxOutputLevel del maximo del amplificador (tope de seguridad auditiva).
-constexpr float kOutputGain = 1.5f;
-constexpr float kMaxOutputLevel = 0.7f;
+constexpr float kOutputGain = 1.2f;
+constexpr float kMaxOutputLevel = 0.6f;
 // El parlante de ~1 cm no reproduce graves: solo distorsionan (suena a estatica). Pasa-altos a 300 Hz.
 constexpr float kHighPassHz = 300.0f;
 
@@ -36,6 +36,8 @@ constexpr int16_t kBeepAmplitude = 8000;
 StreamBufferHandle_t playbackStream = nullptr;
 StaticStreamBuffer_t playbackStreamStruct;
 volatile TickType_t lastEnqueueTick = 0;
+// Los tonos ("te escucho", "pensando") suenan al instante, sin esperar a juntar audio.
+volatile bool playNowRequested = false;
 
 // Biquad pasa-altos (RBJ, Q = 0,707).
 struct HighPass {
@@ -76,11 +78,12 @@ void playbackTask(void*) {
       const TickType_t sinceEnqueue = xTaskGetTickCount() - lastEnqueueTick;
       if (sinceEnqueue > kNewAnswerGapTicks) prebuffer = kPrebufferBytes;  // respuesta nueva
       const bool stillArriving = sinceEnqueue < kEndOfStreamTicks;
-      if (available == 0 || (available < prebuffer && stillArriving)) {
+      if (available == 0 || (available < prebuffer && stillArriving && !playNowRequested)) {
         vTaskDelay(pdMS_TO_TICKS(10));
         continue;
       }
       playing = true;
+      playNowRequested = false;
       highPass.reset();
     }
 
@@ -189,6 +192,7 @@ void playTone(float frequencyHz, int durationMs) {
     playAudioBuffer((const uint8_t*)chunk, count * sizeof(int16_t));
     produced += count;
   }
+  playNowRequested = true;
 }
 
 void playThinkingBeep() {

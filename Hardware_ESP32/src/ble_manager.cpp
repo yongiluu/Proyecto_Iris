@@ -117,7 +117,8 @@ bool BleManager::canSendNow() const {
 }
 
 // Una notificacion mas grande que MTU-3 se trunca en silencio, asi que se parte aqui.
-bool BleManager::notifyInChunks(NimBLECharacteristic* characteristic, const uint8_t* data, size_t length) {
+bool BleManager::notifyInChunks(NimBLECharacteristic* characteristic, const uint8_t* data, size_t length,
+                                bool waitForBuffers) {
     if (!deviceConnected || characteristic == nullptr || data == nullptr) return false;
 
     const size_t maxPayload = payloadSize();
@@ -125,7 +126,7 @@ bool BleManager::notifyInChunks(NimBLECharacteristic* characteristic, const uint
     while (offset < length) {
         size_t chunk = length - offset;
         if (chunk > maxPayload) chunk = maxPayload;
-        if (!waitForBleBuffers(deviceConnected)) return false;
+        if (waitForBuffers && !waitForBleBuffers(deviceConnected)) return false;
         characteristic->notify(data + offset, chunk);
         offset += chunk;
     }
@@ -142,5 +143,7 @@ bool BleManager::sendCommand(const char* command) {
 }
 
 bool BleManager::sendPhotoChunk(const uint8_t* data, size_t length) {
-    return notifyInChunks(pPhotoCharacteristic, data, length);
+    // Solo la foto espera buffers libres (corre en su propia tarea): si se pierde un paquete la app
+    // descarta el JPEG. El audio y los comandos no esperan: el loop no debe dejar de leer el microfono.
+    return notifyInChunks(pPhotoCharacteristic, data, length, true);
 }
