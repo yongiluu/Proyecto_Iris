@@ -104,6 +104,19 @@ SEGURIDAD: Si la imagen esta borrosa, oscura o no puedes distinguir algo con cer
 RESPONDE SIEMPRE EN ESPANOL Y DE FORMA MUY BREVE, CORTA Y CONCISA. No des explicaciones largas.
 ''';
 
+  /// Instrucciones cuando la foto ya va adjunta (sin herramientas). Con el systemPrompt general el
+  /// modelo respondia "dejame analizar la imagen" (creia que debia llamar a analyze_surroundings).
+  static const String visionPrompt = '''
+Eres Iris, los ojos de una persona ciega. La imagen adjunta es lo que esta justo frente a ella ahora,
+tomada por la camara que lleva puesta. YA TIENES LA IMAGEN: describela directamente.
+- No digas que vas a analizar, mirar o usar herramientas. Responde de inmediato con lo que ves.
+- Primero lo importante para moverse con seguridad: obstaculos, escalones, puertas, personas, vehiculos.
+- Despues lo que ayude a entender la escena (lugar, objetos, texto legible).
+- Usa referencias utiles: "adelante", "a tu izquierda", "cerca", "a unos metros".
+- Si la imagen esta borrosa u oscura, dilo en vez de adivinar.
+RESPONDE EN ESPANOL, EN 2 A 4 FRASES CORTAS.
+''';
+
   static const List<Map<String, dynamic>> _tools = [
     {
       'type': 'function',
@@ -272,7 +285,10 @@ RESPONDE SIEMPRE EN ESPANOL Y DE FORMA MUY BREVE, CORTA Y CONCISA. No des explic
         imageMessage ??= result.imageMessage;
       }
       // El mensaje con la imagen va despues de todos los mensajes "tool".
-      if (imageMessage != null) messages.add(imageMessage);
+      if (imageMessage != null) {
+        messages.add(imageMessage);
+        messages.add({'role': 'system', 'content': visionPrompt});
+      }
 
       // SEGUNDA PASADA: respuesta final con los resultados
       final secondResponse = await _postChat(url, {
@@ -317,7 +333,7 @@ RESPONDE SIEMPRE EN ESPANOL Y DE FORMA MUY BREVE, CORTA Y CONCISA. No des explic
       final response = await _postChat(url, {
         'model': deployment,
         'messages': [
-          {'role': 'system', 'content': systemPrompt},
+          {'role': 'system', 'content': visionPrompt},
           if (sensorContext != null) {'role': 'system', 'content': sensorContext},
           {
             'role': 'user',
