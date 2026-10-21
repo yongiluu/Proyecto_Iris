@@ -102,6 +102,8 @@ void onCommandReceived(const char* command) {
     collectingAudio = false;
   } else if (strcmp(command, "CMD_COLLECT_FRAME") == 0) {
     requestGrayFrameCapture();
+  } else if (strncmp(command, "CMD_AUDIO_BEGIN:", 16) == 0) {
+    beginAudioStream((size_t)strtoul(command + 16, nullptr, 10));
   } else if (strcmp(command, "CMD_OTA_WIFI") == 0) {
     otaRequested = true;
   } else if (strcmp(command, "CMD_APP_PTT_START") == 0) {
@@ -409,6 +411,15 @@ void loop() {
     const float level = rmsOf(samples, sampleCount);
     noiseFloor += (level < noiseFloor ? 0.1f : 0.001f) * (level - noiseFloor);
     if (collectingAudio) bleManager.sendAudioChunk((const uint8_t*)samples, byteCount);
+  }
+
+  // Cuanto audio de la respuesta llego (diagnostico de paquetes BLE perdidos).
+  size_t audioReceived, audioExpected;
+  if (takeAudioStreamReport(&audioReceived, &audioExpected)) {
+    char report[48];
+    snprintf(report, sizeof(report), "CMD_AUDIO_RX:%u:%u", (unsigned)audioReceived, (unsigned)audioExpected);
+    bleManager.sendCommand(report);
+    Serial.printf("[Audio] Respuesta: %u de %u bytes\n", (unsigned)audioReceived, (unsigned)audioExpected);
   }
 
   // 3. "Oye Iris" detectado por la tarea de audio

@@ -41,6 +41,28 @@ volatile TickType_t lastEnqueueTick = 0;
 volatile bool playNowRequested = false;
 volatile bool playingNow = false;
 volatile bool flushRequested = false;
+// Respuesta anunciada por la app (CMD_AUDIO_BEGIN): tamano total, cuanto llego y desde cuando.
+volatile size_t expectedBytes = 0;
+volatile size_t receivedBytes = 0;
+volatile TickType_t beginTick = 0;
+volatile bool reportReady = false;
+size_t reportReceived = 0, reportExpected = 0;
+
+// Con respuesta anunciada: empezar si lo que falta llega antes de que se acabe lo que hay (margen 20%).
+bool readyToStart(size_t available) {
+  const size_t expected = expectedBytes;
+  if (expected == 0) return false;
+  const size_t received = receivedBytes;
+  if (received >= expected) return true;
+  const TickType_t now = xTaskGetTickCount();
+  if (now - lastEnqueueTick > pdMS_TO_TICKS(1000)) return true;  // dejo de llegar: suena lo que hay
+  const uint32_t elapsedMs = (now - beginTick) * portTICK_PERIOD_MS;
+  if (elapsedMs < 200 || received == 0) return false;
+  const float rate = received * 1000.0f / elapsedMs;              // bytes/s que llegan
+  const float secondsToArrive = (expected - received) / rate;
+  const float secondsBuffered = available / (float)kBytesPerSecond;
+  return secondsToArrive <= secondsBuffered * 0.8f;
+}
 
 // Biquad pasa-altos (RBJ, Q = 0,707).
 struct HighPass {
@@ -88,7 +110,10 @@ void playbackTask(void*) {
       const TickType_t sinceEnqueue = xTaskGetTickCount() - lastEnqueueTick;
       if (sinceEnqueue > kNewAnswerGapTicks) prebuffer = kPrebufferBytes;  // respuesta nueva
       const bool stillArriving = sinceEnqueue < kEndOfStreamTicks;
-      if (available == 0 || (available < prebuffer && stillArriving && !playNowRequested)) {
+      const bool announced = expectedBytes > 0;
+      const bool wait = announced ? !readyToStart(available)
+                                  : (available < prebuffer && stillArriving);
+      if (available == 0 || (wait && !playNowRequested)) {
         vTaskDelay(pdMS_TO_TICKS(10));
         continue;
       }
@@ -181,6 +206,15 @@ void playAudioBuffer(const uint8_t* payload, size_t length) {
 
   size_t sent = xStreamBufferSend(playbackStream, payload, length, kEnqueueTimeoutTicks);
   lastEnqueueTick = xTaskGetTickCount();
+  if (expectedBytes > 0) {
+    receivedBytes = receivedBytes + sent;
+    if (receivedBytes >= expectedBytes) {
+      reportReceived = receivedBytes;
+      reportExpected = expectedBytes;
+      reportReady = true;
+      expectedBytes = 0;  // completa: lo que queda en el buffer se reproduce normal
+    }
+  }
   if (sent < length) {
     Serial.println("[Audio] Buffer de reproduccion lleno: audio descartado");
   }
@@ -207,7 +241,27 @@ void playTone(float frequencyHz, int durationMs) {
   playNowRequested = true;
 }
 
+void beginAudioStream(size_t totalBytes) {
+  if (expectedBytes > 0 && receivedBytes < expectedBytes) {
+    reportReceived = receivedBytes;  // la anterior quedo incompleta
+    reportExpected = expectedBytes;
+    reportReady = true;
+  }
+  receivedBytes = 0;
+  beginTick = xTaskGetTickCount();
+  expectedBytes = totalBytes;
+}
+
+bool takeAudioStreamReport(size_t* received, size_t* expected) {
+  if (!reportReady) return false;
+  reportReady = false;
+  *received = reportReceived;
+  *expected = reportExpected;
+  return true;
+}
+
 void stopPlayback() {
+  expectedBytes = 0;
   flushRequested = true;
   lastEnqueueTick = 0;
 }

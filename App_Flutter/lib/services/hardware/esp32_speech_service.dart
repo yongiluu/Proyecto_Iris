@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 import 'dart:math' as math;
 import 'dart:typed_data';
 
@@ -504,6 +505,9 @@ class Esp32SpeechService {
       debugPrint('Esperando foto de $_expectedPhotoSize bytes');
     } else if (command == 'CMD_PHOTO_END') {
       _finishPhoto();
+    } else if (command.startsWith('CMD_AUDIO_RX:')) {
+      // CMD_AUDIO_RX:<recibidos>:<anunciados> - si faltan bytes, se perdieron paquetes BLE.
+      debugPrint('La placa recibio audio: ${command.substring(13)}');
     } else if (command.startsWith('CMD_AUDIO_EVENT:')) {
       // CMD_AUDIO_EVENT:<clase>:<porcentaje>
       final parts = command.split(':');
@@ -683,6 +687,13 @@ class Esp32SpeechService {
     final characteristic = _ttsAudioCharacteristic;
     if (device == null || characteristic == null || !isConnected || session != _audioSession) return;
 
+    // Audio y foto a la vez saturan el BLE y la foto se corta: primero termina la foto (max 8 s).
+    final photoWait = Stopwatch()..start();
+    while (_isReceivingPhoto && photoWait.elapsed < const Duration(seconds: 8)) {
+      await Future.delayed(const Duration(milliseconds: 50));
+    }
+    if (session != _audioSession) return;
+
     final scaled = _scaleVolume(pcmData);
 
     // Cada escritura debe caber en MTU-3; si no, el stack la rechaza o la trunca.
@@ -693,6 +704,8 @@ class Esp32SpeechService {
     // Android puede dejar la conexion en un intervalo largo (ahorro): pedir prioridad alta.
     final highPriority = await _requestHighPriority(device);
     _isSendingAudio = true;
+    // La placa empieza a sonar cuando sabe que el resto llegara a tiempo (no se corta a la mitad).
+    await _sendCommand('CMD_AUDIO_BEGIN:${scaled.length - scaled.length % 2}');
 
     // Dosificado: a toda velocidad (52-136 KB/s) la placa bota paquetes y la voz sale en
     // pedacitos; muy lento (13 KB/s) se queda sin audio. Ritmo de 40 KB/s (1,25 veces la
@@ -785,6 +798,15 @@ class Esp32SpeechService {
     final pcm = _micBuffer.takeBytes();
     if (pcm.length < _minRecordingBytes) return '';
     final wav = _buildWav(pcm);
+    // Diagnostico: la ultima pregunta queda en el celular para revisarla desde el PC
+    // (adb pull /sdcard/Android/data/com.iris.visual.iris_app/files/ultima_pregunta.wav).
+    try {
+      File('/storage/emulated/0/Android/data/com.iris.visual.iris_app/files/ultima_pregunta.wav')
+        ..createSync(recursive: true)
+        ..writeAsBytesSync(wav);
+    } catch (e) {
+      debugPrint('No se pudo guardar ultima_pregunta.wav: $e');
+    }
     // Groq (Whisper gratis) primero; despues Azure Speech y Hugging Face, si tienen llave.
     final groq = await _transcribeWithGroq(wav);
     if (groq.isNotEmpty) return groq;

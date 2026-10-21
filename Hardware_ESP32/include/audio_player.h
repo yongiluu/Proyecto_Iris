@@ -19,6 +19,14 @@ bool isIrisSpeaking();
 // Calla a Iris: descarta el audio que quedaba por reproducir (al apretar el boton para preguntar otra cosa).
 void stopPlayback();
 
+// La app avisa cuanto audio viene (CMD_AUDIO_BEGIN:<bytes>). Con eso la placa empieza a sonar solo cuando
+// lo que falta llegara antes de que se acabe lo que ya tiene: una vez que empieza, no se corta.
+void beginAudioStream(size_t totalBytes);
+
+// Al terminar de recibir una respuesta: true una vez, con los bytes recibidos y los anunciados
+// (si recibidos < anunciados se perdieron paquetes BLE). Llamar desde el loop.
+bool takeAudioStreamReport(size_t* received, size_t* expected);
+
 // Tono senoidal (ej. pitidos de cercania). Llamar desde el loop, no desde callbacks BLE.
 void playTone(float frequencyHz, int durationMs);
 
