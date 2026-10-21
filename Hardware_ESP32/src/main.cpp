@@ -115,6 +115,7 @@ void onCommandReceived(const char* command) {
 
 // Se ejecuta en la tarea de inferencia de audio. Formato: CMD_AUDIO_EVENT:<clase>:<porcentaje>
 void onAudioEvent(const char* label, int confidencePercent) {
+  if (isIrisSpeaking()) return;  // no cortar la respuesta de Iris
   char command[48];
   snprintf(command, sizeof(command), "CMD_AUDIO_EVENT:%s:%d", label, confidencePercent);
   bleManager.sendCommand(command);
@@ -122,6 +123,7 @@ void onAudioEvent(const char* label, int confidencePercent) {
 
 // Se ejecuta en la tarea de vision. Formato: CMD_VISION_EVENT:<clase>:<porcentaje>
 void onVisionEvent(const char* label, int confidencePercent) {
+  if (isIrisSpeaking()) return;  // no cortar la respuesta de Iris
   char command[48];
   snprintf(command, sizeof(command), "CMD_VISION_EVENT:%s:%d", label, confidencePercent);
   bleManager.sendCommand(command);
@@ -162,6 +164,7 @@ void handleProximityBeeps() {
 
 // Se ejecuta en la tarea de inferencia de audio: solo avisa al loop.
 void onWakeWord(int confidencePercent) {
+  if (isIrisSpeaking()) return;  // el microfono oye la voz de Iris por el parlante
   wakePercent = confidencePercent > 0 ? confidencePercent : 1;
 }
 
@@ -171,6 +174,7 @@ void startPushToTalk() {
     return;
   }
   Serial.println("Boton Presionado -> CMD_PTT_START");
+  stopPlayback();  // si Iris estaba hablando, se calla para escuchar la pregunta nueva
   txCount = 0;  // con el boton no se manda el audio de antes
   isTransmitting = true;
   setVisionPaused(true);
@@ -381,7 +385,13 @@ void loop() {
 
   const size_t byteCount = sampleCount * sizeof(int16_t);
 
-  // 1. Procesamiento local (Edge AI audio)
+  // 1. Procesamiento local (Edge AI audio). Mientras Iris habla no se escucha: el microfono oiria su voz.
+  static bool wasSpeaking = false;
+  const bool speaking = isIrisSpeaking();
+  if (speaking != wasSpeaking && !isTransmitting) {
+    setAudioEventsPaused(speaking);
+    wasSpeaking = speaking;
+  }
   feedAudioEvents(samples, sampleCount);
 
   // 2. Transmision Bluetooth (push-to-talk / "Oye Iris" o recoleccion de datos)

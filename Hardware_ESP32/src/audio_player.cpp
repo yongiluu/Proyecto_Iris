@@ -22,10 +22,11 @@ constexpr TickType_t kEndOfStreamTicks = pdMS_TO_TICKS(250);
 constexpr TickType_t kNewAnswerGapTicks = pdMS_TO_TICKS(1500);
 constexpr size_t kChunkSamples = 256;
 constexpr TickType_t kEnqueueTimeoutTicks = pdMS_TO_TICKS(50);
-// Volumen: el parlante va en el oido. 2.0 y 1.5/0.7 sonaban rotos; 1.0/0.5 muy bajito. La salida nunca pasa
+// Volumen: el parlante va en el oido. 2.0, 1.5/0.7 y 1.2/0.6 sonaban rotos en algunas palabras; 1.0/0.5 se
+// escucha bajito pero limpio (lo eligio el usuario). La salida nunca pasa
 // de kMaxOutputLevel del maximo del amplificador (tope de seguridad auditiva).
-constexpr float kOutputGain = 1.2f;
-constexpr float kMaxOutputLevel = 0.6f;
+constexpr float kOutputGain = 1.0f;
+constexpr float kMaxOutputLevel = 0.5f;
 // El parlante de ~1 cm no reproduce graves: solo distorsionan (suena a estatica). Pasa-altos a 300 Hz.
 constexpr float kHighPassHz = 300.0f;
 
@@ -38,6 +39,8 @@ StaticStreamBuffer_t playbackStreamStruct;
 volatile TickType_t lastEnqueueTick = 0;
 // Los tonos ("te escucho", "pensando") suenan al instante, sin esperar a juntar audio.
 volatile bool playNowRequested = false;
+volatile bool playingNow = false;
+volatile bool flushRequested = false;
 
 // Biquad pasa-altos (RBJ, Q = 0,707).
 struct HighPass {
@@ -73,6 +76,13 @@ void playbackTask(void*) {
   size_t prebuffer = kPrebufferBytes;
 
   for (;;) {
+    if (flushRequested) {
+      // Solo esta tarea lee el stream: aqui se puede vaciar sin carreras.
+      xStreamBufferReset(playbackStream);
+      flushRequested = false;
+      playing = false;
+      playingNow = false;
+    }
     if (!playing) {
       const size_t available = xStreamBufferBytesAvailable(playbackStream);
       const TickType_t sinceEnqueue = xTaskGetTickCount() - lastEnqueueTick;
@@ -83,6 +93,7 @@ void playbackTask(void*) {
         continue;
       }
       playing = true;
+      playingNow = true;
       playNowRequested = false;
       highPass.reset();
     }
@@ -90,6 +101,7 @@ void playbackTask(void*) {
     size_t bytes = xStreamBufferReceive(playbackStream, input, sizeof(input), pdMS_TO_TICKS(20));
     if (bytes == 0) {
       playing = false;  // se vacio: vuelve a juntar antes de seguir
+      playingNow = false;
       if (xTaskGetTickCount() - lastEnqueueTick < kEndOfStreamTicks) {
         // Se quedo sin audio a la mitad de la respuesta: la proxima vez junta el doble.
         prebuffer = prebuffer * 2 > kMaxPrebufferBytes ? kMaxPrebufferBytes : prebuffer * 2;
@@ -193,6 +205,17 @@ void playTone(float frequencyHz, int durationMs) {
     produced += count;
   }
   playNowRequested = true;
+}
+
+void stopPlayback() {
+  flushRequested = true;
+  lastEnqueueTick = 0;
+}
+
+bool isIrisSpeaking() {
+  if (playbackStream == nullptr) return false;
+  return playingNow || xStreamBufferBytesAvailable(playbackStream) > 0 ||
+         xTaskGetTickCount() - lastEnqueueTick < pdMS_TO_TICKS(800);
 }
 
 void playThinkingBeep() {
