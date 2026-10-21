@@ -2,6 +2,7 @@
 #include "config.h"
 #include <freertos/FreeRTOS.h>
 #include <freertos/semphr.h>
+#include <esp_heap_caps.h>
 
 namespace {
 enum class CameraMode { Gray, Jpeg };
@@ -69,9 +70,31 @@ bool startCamera(CameraMode mode) {
   return true;
 }
 
+// Cada foto para la IA cambia la camara de grises a JPEG y de vuelta. Si un cambio falla (ej. sin memoria
+// interna para el DMA), antes la camara quedaba apagada hasta reiniciar la placa: ahora se reintenta.
 bool restartCamera(CameraMode mode) {
-  esp_camera_deinit();
-  return startCamera(mode);
+  for (int attempt = 1; attempt <= 3; attempt++) {
+    esp_camera_deinit();
+    if (startCamera(mode)) return true;
+    Serial.printf("[Camara] Reintento %d (RAM interna libre %u)\n", attempt,
+                  (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL));
+    delay(150);
+  }
+  return false;
+}
+
+// Si la camara quedo apagada por un error, se intenta encender de nuevo cada kRecoverEveryMs.
+constexpr uint32_t kRecoverEveryMs = 3000;
+uint32_t lastRecoverMs = 0;
+bool shutdownRequested = false;
+
+void tryRecover() {
+  if (cameraReady || shutdownRequested || millis() - lastRecoverMs < kRecoverEveryMs) return;
+  lastRecoverMs = millis();
+  if (xSemaphoreTake(cameraMutex, 0) != pdTRUE) return;
+  cameraReady = restartCamera(CameraMode::Gray);
+  Serial.printf("[Camara] Recuperacion %s\n", cameraReady ? "OK" : "fallida, se reintenta");
+  xSemaphoreGive(cameraMutex);
 }
 }
 
@@ -84,7 +107,10 @@ bool initCamera() {
 }
 
 camera_fb_t* acquireGrayFrame() {
-  if (!cameraReady) return nullptr;
+  if (!cameraReady) {
+    tryRecover();
+    if (!cameraReady) return nullptr;
+  }
   if (xSemaphoreTake(cameraMutex, kGrayLockTimeoutTicks) != pdTRUE) return nullptr;
 
   camera_fb_t* frame = esp_camera_fb_get();
@@ -99,7 +125,10 @@ void releaseGrayFrame(camera_fb_t* frame) {
 }
 
 camera_fb_t* acquireJpegFrame() {
-  if (!cameraReady) return nullptr;
+  if (!cameraReady) {
+    tryRecover();
+    if (!cameraReady) return nullptr;
+  }
   if (xSemaphoreTake(cameraMutex, kJpegLockTimeoutTicks) != pdTRUE) return nullptr;
 
   if (!restartCamera(CameraMode::Jpeg)) {
@@ -132,6 +161,7 @@ void shutdownCamera() {
   if (cameraMutex == nullptr || !cameraReady) return;
   // Espera a que nadie este usando un frame; despues la camara queda apagada (acquire* devuelve nullptr).
   xSemaphoreTake(cameraMutex, portMAX_DELAY);
+  shutdownRequested = true;
   cameraReady = false;
   esp_camera_deinit();
   xSemaphoreGive(cameraMutex);

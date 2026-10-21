@@ -1,5 +1,7 @@
 #include "ble_manager.h"
 
+#include "nimble/porting/nimble/include/os/os_mbuf.h"
+
 BleManager bleManager;
 
 class ServerCallbacks : public NimBLEServerCallbacks {
@@ -93,6 +95,23 @@ size_t BleManager::payloadSize() const {
     return mtu > BLE_ATT_HEADER_BYTES ? mtu - BLE_ATT_HEADER_BYTES : 1;
 }
 
+namespace {
+// notify() descarta el paquete EN SILENCIO si NimBLE no tiene buffers libres (fotos incompletas que la
+// app descarta, CMD_PTT_STOP perdido). Antes de cada paquete se espera a que haya buffers (cada
+// notificacion de ~500 bytes usa unos 3).
+constexpr int kMinFreeBuffers = 6;
+constexpr uint32_t kBufferWaitMs = 400;
+
+bool waitForBleBuffers(volatile bool& connected) {
+    const uint32_t start = millis();
+    while (os_msys_num_free() < kMinFreeBuffers) {
+        if (!connected || millis() - start > kBufferWaitMs) return false;
+        delay(2);
+    }
+    return true;
+}
+}  // namespace
+
 // Una notificacion mas grande que MTU-3 se trunca en silencio, asi que se parte aqui.
 bool BleManager::notifyInChunks(NimBLECharacteristic* characteristic, const uint8_t* data, size_t length) {
     if (!deviceConnected || characteristic == nullptr || data == nullptr) return false;
@@ -102,6 +121,7 @@ bool BleManager::notifyInChunks(NimBLECharacteristic* characteristic, const uint
     while (offset < length) {
         size_t chunk = length - offset;
         if (chunk > maxPayload) chunk = maxPayload;
+        if (!waitForBleBuffers(deviceConnected)) return false;
         characteristic->notify(data + offset, chunk);
         offset += chunk;
     }
