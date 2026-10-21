@@ -243,6 +243,10 @@ void enterOtaMode(const char* reason) {
     playTone(880.0f, 120);
     playTone(1175.0f, 120);
     playTone(1568.0f, 200);
+    // Bluetooth apagado mientras se escribe la flash: con BLE activo algunas subidas se cortaban a la
+    // mitad ("Connection was reset"). Al terminar (o a los 10 min) la placa se reinicia y vuelve.
+    delay(300);
+    NimBLEDevice::deinit(true);
   } else {
     bleManager.sendCommand("CMD_OTA_ERROR");
     playTone(330.0f, 600);
