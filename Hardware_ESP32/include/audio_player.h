@@ -19,6 +19,10 @@ bool isIrisSpeaking();
 // Bytes de voz escritos al amplificador desde la ultima llamada (diagnostico sin monitor serial).
 size_t takePlayedBytes();
 
+// Volumen de la voz y los tonos, 5-100 (50 por defecto). save = guardarlo para el proximo arranque.
+void setVolumePercent(int percent, bool save = true);
+int getVolumePercent();
+
 // Calla a Iris: descarta el audio que quedaba por reproducir (al apretar el boton para preguntar otra cosa).
 void stopPlayback();
 

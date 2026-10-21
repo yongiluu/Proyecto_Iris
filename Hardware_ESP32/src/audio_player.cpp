@@ -3,6 +3,7 @@
 #include <driver/i2s.h>
 #include <esp_heap_caps.h>
 #include <esp_system.h>
+#include <Preferences.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/stream_buffer.h>
 #include <freertos/task.h>
@@ -28,9 +29,10 @@ constexpr TickType_t kEnqueueTimeoutTicks = pdMS_TO_TICKS(50);
 // de kMaxOutputLevel del maximo del amplificador (tope de seguridad auditiva).
 constexpr float kOutputGain = 1.0f;
 constexpr float kMaxOutputLevel = 0.5f;
-// Iris blanca (MAC 44:B1:76:AF:46:24) tiene 2 parlantes en paralelo: la voz no sonaba (se sospecha que
-// el amplificador o la alimentacion no dan la corriente). Prueba: la mitad de volumen solo en esa placa.
+// Volumen ajustable desde la app (CMD_VOLUME:<0-100>), guardado en la placa: cada amplificador suena
+// distinto (ej. su pin GAIN) y con el mismo nivel la Iris blanca no se oia. 50 = kMaxOutputLevel.
 float outputLevel = kMaxOutputLevel;
+int volumePercent = 50;
 volatile uint32_t playedBytes = 0;  // voz realmente escrita al amplificador (diagnostico)
 // El parlante de ~1 cm no reproduce graves: solo distorsionan (suena a estatica). Pasa-altos a 300 Hz.
 constexpr float kHighPassHz = 300.0f;
@@ -188,9 +190,10 @@ bool initAudioPlayer() {
   }
 
   highPass.setup(kHighPassHz, AUDIO_SAMPLE_RATE);
-  uint8_t mac[6] = {};
-  esp_efuse_mac_get_default(mac);
-  if (mac[3] == 0xAF && mac[4] == 0x46 && mac[5] == 0x24) outputLevel = kMaxOutputLevel * 0.5f;
+  Preferences prefs;
+  prefs.begin("iris", true);
+  setVolumePercent(prefs.getInt("vol", 50), false);
+  prefs.end();
   Serial.printf("[Audio] Volumen de salida %.2f\n", outputLevel);
 
   uint8_t* storage = (uint8_t*)heap_caps_malloc(kStreamBufferBytes + 1, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
@@ -274,6 +277,23 @@ void stopPlayback() {
   expectedBytes = 0;
   flushRequested = true;
   lastEnqueueTick = 0;
+}
+
+void setVolumePercent(int percent, bool save) {
+  if (percent < 5) percent = 5;
+  if (percent > 100) percent = 100;
+  volumePercent = percent;
+  outputLevel = percent / 100.0f;  // 50 % = 0,5 (lo que sonaba limpio en la Iris negra)
+  if (save) {
+    Preferences prefs;
+    prefs.begin("iris", false);
+    prefs.putInt("vol", percent);
+    prefs.end();
+  }
+}
+
+int getVolumePercent() {
+  return volumePercent;
 }
 
 size_t takePlayedBytes() {

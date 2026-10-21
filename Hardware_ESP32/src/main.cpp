@@ -103,6 +103,8 @@ void onCommandReceived(const char* command) {
     collectingAudio = false;
   } else if (strcmp(command, "CMD_COLLECT_FRAME") == 0) {
     requestGrayFrameCapture();
+  } else if (strncmp(command, "CMD_VOLUME:", 11) == 0) {
+    setVolumePercent(atoi(command + 11));
   } else if (strncmp(command, "CMD_AUDIO_BEGIN:", 16) == 0) {
     beginAudioStream((size_t)strtoul(command + 16, nullptr, 10));
   } else if (strcmp(command, "CMD_OTA_WIFI") == 0) {
@@ -391,9 +393,9 @@ void loop() {
                                            "bajo_voltaje", "sdio"};
     const int reason = (int)esp_reset_reason();
     char hello[64];
-    snprintf(hello, sizeof(hello), "CMD_HELLO:%lu:%s:%u", (unsigned long)(millis() / 1000),
+    snprintf(hello, sizeof(hello), "CMD_HELLO:%lu:%s:%u:%d", (unsigned long)(millis() / 1000),
              reason >= 0 && reason <= 10 ? kReasons[reason] : "?",
-             (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL));
+             (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL), getVolumePercent());
     bleManager.sendCommand(hello);
   }
   wasConnected = connectedNow;
