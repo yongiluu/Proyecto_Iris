@@ -1,0 +1,11 @@
+{
+  "name": "iris-backend-tests",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node test_schema.mjs"
+  },
+  "dependencies": {
+    "@electric-sql/pglite": "^0.3.16"
+  }
+}
