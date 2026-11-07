@@ -3,6 +3,7 @@ import 'package:flutter/semantics.dart';
 
 import '../../core/theme/app_theme.dart';
 import '../../services/backend/backend_service.dart';
+import '../data_collection/training_upload_queue.dart';
 import 'history_screen.dart';
 
 /// Mi cuenta: memoria, acompañantes y privacidad. Todo con controles grandes y legibles por TalkBack.
@@ -246,7 +247,10 @@ class _AccountScreenState extends State<AccountScreen> {
                   title: const Text('Donar mis grabaciones para mejorar Iris'),
                   subtitle: const Text('Las misiones de datos se suben para entrenar los modelos de la placa'),
                   value: prefs['training_data_consent'] as bool? ?? false,
-                  onChanged: (v) => _setPref('training_data_consent', v),
+                  onChanged: (v) async {
+                    await _setPref('training_data_consent', v);
+                    await TrainingUploadQueue.instance.consentChanged(v);
+                  },
                 ),
 
                 const SizedBox(height: 24),

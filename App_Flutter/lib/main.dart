@@ -4,12 +4,15 @@
 /// Application entry point. Initializes the camera and launches the UI.
 /// ============================================================================
 
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:camera/camera.dart';
 
 import 'app.dart';
 import 'core/constants/env_config.dart';
+import 'features/data_collection/training_upload_queue.dart';
 import 'services/backend/backend_service.dart';
 
 /// Global list of available cameras on the device.
@@ -24,6 +27,8 @@ Future<void> main() async {
 
   // Cuentas y agente en el servidor (si el .env tiene SUPABASE_URL; si no, la app funciona sin cuentas).
   await BackendService.instance.init();
+  // Retoma en segundo plano las subidas de Misiones de datos que quedaron pendientes.
+  unawaited(TrainingUploadQueue.instance.init());
 
   // Force portrait orientation for consistent accessibility
   await SystemChrome.setPreferredOrientations([

@@ -2,6 +2,12 @@
 
     python import_phone_data.py iris_dataset_20261020_153000.zip     # el zip exportado desde la app
     python import_phone_data.py "E:/Android/data/.../files/iris_dataset"   # o la carpeta copiada por USB
+    python import_phone_data.py --supabase      # o lo que la app subio a Supabase (con consentimiento)
+
+--supabase baja el bucket privado 'datos-entrenamiento' segun la tabla training_uploads. Necesita las
+variables de entorno SUPABASE_URL y SUPABASE_SERVICE_ROLE_KEY (la clave de servicio: NUNCA en el repo
+ni en la app). Lo bajado queda en data/supabase_cache/<user_id>/{audio,vision}/<clase>/ (misma forma
+que el zip) y en cada corrida solo se descargan los archivos nuevos.
 
 Copia:
   audio/<clase>/*.wav   -> data/board/<clase>/         (lo usa audio/prepare_dataset.py)
@@ -19,8 +25,13 @@ Despues:
 """
 import argparse
 import importlib.util
+import json
+import os
 import shutil
 import tempfile
+import urllib.error
+import urllib.parse
+import urllib.request
 import wave
 import zipfile
 from collections import Counter
@@ -33,6 +44,8 @@ PROXIMITY_LABEL = "cercania"
 WAKEWORD_LABELS = {"oye_iris", "no_wake"}
 WAKEWORD_DIR = ML_DIR / "data" / "wakeword_board"
 PROXIMITY_DIR = ML_DIR / "data" / "proximity_board"
+SUPABASE_CACHE = ML_DIR / "data" / "supabase_cache"
+SUPABASE_BUCKET = "datos-entrenamiento"
 
 
 def load_config(name: str):
@@ -105,27 +118,93 @@ def import_photos(source: Path, config, counts: Counter, skipped: Counter) -> No
         counts[f"vision/{label}"] += 1
 
 
+def _supabase_get(url: str, key: str) -> bytes:
+    request = urllib.request.Request(url, headers={"apikey": key, "Authorization": f"Bearer {key}"})
+    with urllib.request.urlopen(request, timeout=120) as response:
+        return response.read()
+
+
+def download_supabase() -> list[Path]:
+    """Baja a data/supabase_cache/ lo registrado en training_uploads. Devuelve una carpeta por persona,
+    con la misma estructura que el zip (audio/<clase>/ y vision/<clase>/)."""
+    base = os.environ.get("SUPABASE_URL", "").rstrip("/")
+    key = os.environ.get("SUPABASE_SERVICE_ROLE_KEY", "")
+    if not base or not key:
+        raise SystemExit("Faltan SUPABASE_URL y/o SUPABASE_SERVICE_ROLE_KEY en las variables de entorno.")
+
+    rows, page = [], 1000
+    while True:
+        query = urllib.parse.urlencode(
+            {"select": "id,kind,label,storage_path", "order": "id.asc", "limit": page, "offset": len(rows)})
+        batch = json.loads(_supabase_get(f"{base}/rest/v1/training_uploads?{query}", key))
+        rows.extend(batch)
+        if len(batch) < page:
+            break
+
+    users, new, missing = set(), 0, 0
+    for row in rows:
+        parts = row["storage_path"].split("/")  # <user_id>/<clase>/<archivo>
+        if len(parts) != 3 or any(p in ("", ".", "..") or "\\" in p for p in parts):
+            print(f"  - ruta rara, se salta: {row['storage_path']}")
+            continue
+        user_id, label, name = parts
+        folder = "audio" if row["kind"] == "audio" else "vision"
+        target = SUPABASE_CACHE / user_id / folder / label / name
+        users.add(SUPABASE_CACHE / user_id)
+        if target.exists():
+            continue
+        url = f"{base}/storage/v1/object/{SUPABASE_BUCKET}/{urllib.parse.quote(row['storage_path'])}"
+        try:
+            data = _supabase_get(url, key)
+        except urllib.error.HTTPError as e:
+            if e.code in (400, 404):  # registrado, pero ya no esta en el bucket
+                missing += 1
+                continue
+            raise
+        target.parent.mkdir(parents=True, exist_ok=True)
+        partial = target.with_name(target.name + ".part")
+        partial.write_bytes(data)
+        partial.replace(target)
+        new += 1
+
+    extra = f", {missing} ya no estaban en el bucket" if missing else ""
+    print(f"Supabase: {len(rows)} registros, {new} archivos nuevos bajados{extra} -> {SUPABASE_CACHE}")
+    return sorted(users)
+
+
+def import_folder(source: Path, counts: Counter, skipped: Counter) -> None:
+    import_audio(source, load_config("audio"), counts, skipped)
+    import_photos(source, load_config("vision"), counts, skipped)
+    import_proximity(source, counts, skipped)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("source", help="zip exportado por la app o carpeta iris_dataset")
+    parser.add_argument("source", nargs="?", help="zip exportado por la app o carpeta iris_dataset")
+    parser.add_argument("--supabase", action="store_true",
+                        help="bajar lo que la app subio a Supabase (SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY)")
     args = parser.parse_args()
+    if not args.source and not args.supabase:
+        parser.error("indica un zip o carpeta, o usa --supabase")
 
-    source = Path(args.source)
-    with tempfile.TemporaryDirectory() as temp:
-        if source.suffix.lower() == ".zip":
-            with zipfile.ZipFile(source) as zf:
-                zf.extractall(temp)
-            source = Path(temp)
-        if not (source / "audio").exists() and not (source / "vision").exists():
-            nested = next(source.glob("*/audio"), None) or next(source.glob("*/vision"), None)
-            if nested is None:
-                raise SystemExit(f"No encontre carpetas audio/ ni vision/ en {args.source}")
-            source = nested.parent
+    counts, skipped = Counter(), Counter()
+    if args.supabase:
+        for folder in download_supabase():
+            import_folder(folder, counts, skipped)
 
-        counts, skipped = Counter(), Counter()
-        import_audio(source, load_config("audio"), counts, skipped)
-        import_photos(source, load_config("vision"), counts, skipped)
-        import_proximity(source, counts, skipped)
+    if args.source:
+        source = Path(args.source)
+        with tempfile.TemporaryDirectory() as temp:
+            if source.suffix.lower() == ".zip":
+                with zipfile.ZipFile(source) as zf:
+                    zf.extractall(temp)
+                source = Path(temp)
+            if not (source / "audio").exists() and not (source / "vision").exists():
+                nested = next(source.glob("*/audio"), None) or next(source.glob("*/vision"), None)
+                if nested is None:
+                    raise SystemExit(f"No encontre carpetas audio/ ni vision/ en {args.source}")
+                source = nested.parent
+            import_folder(source, counts, skipped)
 
     for key, n in sorted(counts.items()):
         print(f"  ✔ {key}: {n}")

@@ -13,6 +13,7 @@ import '../../services/hardware/esp32_speech_service.dart';
 import 'dataset_store.dart';
 import 'missions.dart';
 import 'phone_capture.dart';
+import 'training_upload_queue.dart';
 
 /// Lista de misiones de recoleccion con su progreso (ej. "Audio de calle 3/8").
 class MissionsScreen extends StatefulWidget {
@@ -52,7 +53,13 @@ class _MissionsScreenState extends State<MissionsScreen> {
   }
 
   Future<void> _load() async {
-    if (!_ready) await _store.init();
+    if (!_ready) {
+      await _store.init();
+      final uploads = TrainingUploadQueue.instance;
+      await uploads.init();
+      // Sin internet esto puede tardar: no bloquea la pantalla.
+      unawaited(uploads.refreshConsent().then((_) => uploads.kick()));
+    }
     for (final mission in missions) {
       _progress[mission.id] = await _store.progress(mission);
     }
@@ -108,6 +115,7 @@ class _MissionsScreenState extends State<MissionsScreen> {
                           '${(totals.bytes / 1e6).toStringAsFixed(1)} MB\n${_store.root.path}'),
                   isThreeLine: totals != null,
                 ),
+                _uploadTile(),
                 const Divider(),
                 for (final (i, mission) in missions.indexed) ...[
                   if (mission.section != null && (i == 0 || missions[i - 1].section != mission.section))
@@ -116,6 +124,34 @@ class _MissionsScreenState extends State<MissionsScreen> {
                 ],
               ],
             ),
+    );
+  }
+
+  /// "X archivos pendientes de subir": se anuncia con el lector de pantalla cuando cambia.
+  Widget _uploadTile() {
+    final uploads = TrainingUploadQueue.instance;
+    return ValueListenableBuilder<int>(
+      valueListenable: uploads.pending,
+      builder: (context, pending, _) {
+        final String text;
+        if (pending > 0) {
+          text = pending == 1 ? '1 archivo pendiente de subir' : '$pending archivos pendientes de subir';
+        } else if (uploads.active) {
+          text = 'Todo subido a Iris';
+        } else {
+          return const SizedBox.shrink(); // sin sesion o sin consentimiento: solo se guarda aqui
+        }
+        return Semantics(
+          liveRegion: true,
+          child: ListTile(
+            leading: Icon(pending > 0 ? Icons.cloud_upload_outlined : Icons.cloud_done_outlined,
+                color: pending > 0 ? Colors.orange : Colors.green),
+            title: Text(text),
+            subtitle: pending > 0 ? const Text('Se suben solos cuando hay internet') : null,
+            onTap: pending > 0 ? uploads.kick : null,
+          ),
+        );
+      },
     );
   }
 
@@ -407,6 +443,13 @@ class _MissionScreenState extends State<MissionScreen> {
       ),
     );
     if (ok != true) return;
+    final uploaded = <File>[];
+    for (final file in toDelete) {
+      uploaded.add(file);
+      final color = File(file.path.replaceAll(RegExp(r'\.bmp$'), '.jpg'));
+      if (color.path != file.path) uploaded.add(color);
+    }
+    unawaited(TrainingUploadQueue.instance.forget(uploaded));
     for (final file in toDelete) {
       await file.delete();
       // El JPEG a color de las misiones de cercania va junto a su BMP.

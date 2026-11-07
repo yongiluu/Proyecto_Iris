@@ -6,6 +6,7 @@ import 'package:path_provider/path_provider.dart';
 
 import '../../services/hardware/esp32_speech_service.dart';
 import 'missions.dart';
+import 'training_upload_queue.dart';
 
 /// Guarda en el celular lo que se recolecta, con la misma estructura que espera
 /// ML_Training/import_phone_data.py:
@@ -63,6 +64,7 @@ class DatasetStore {
     await file.writeAsBytes(Esp32SpeechService.buildWav(pcm));
     await _log(mission, file, 'audio ${(pcm.length / 32000).toStringAsFixed(1)} s, '
         'recibido ${(receivedRatio * 100).round()}%');
+    await _upload(mission, file, source);
     return file;
   }
 
@@ -75,6 +77,7 @@ class DatasetStore {
     await File(wavPath).delete();
     final seconds = (await file.length() - 44) / 32000;
     await _log(mission, file, 'audio ${seconds.toStringAsFixed(1)} s, microfono del celular');
+    await _upload(mission, file, source);
     return file;
   }
 
@@ -85,9 +88,25 @@ class DatasetStore {
     final base = '${folder.path}/${_prefix(mission)}${take}_${index.toString().padLeft(3, '0')}';
     final file = File('$base.bmp');
     await file.writeAsBytes(encodeGrayBmp(frame));
-    if (colorJpeg != null) await File('$base.jpg').writeAsBytes(colorJpeg);
+    final source = take.startsWith('placa') ? 'placa' : 'cel';
+    await _upload(mission, file, source);
+    if (colorJpeg != null) {
+      final jpg = File('$base.jpg');
+      await jpg.writeAsBytes(colorJpeg);
+      await _upload(mission, jpg, source);
+    }
     return file;
   }
+
+  /// Ademas de guardarlo aqui, lo encola para subirlo a Supabase (solo con sesion y
+  /// consentimiento; si no, no hace nada). No espera a la subida.
+  Future<void> _upload(Mission mission, File file, String source) => TrainingUploadQueue.instance.enqueue(
+        file,
+        isAudio: mission.kind == MissionKind.audio,
+        label: mission.label,
+        environment: mission.scene,
+        source: source == 'placa' ? 'placa' : 'celular',
+      );
 
   String newTakeStamp({String source = 'placa'}) => '$source-${_stamp()}';
 
