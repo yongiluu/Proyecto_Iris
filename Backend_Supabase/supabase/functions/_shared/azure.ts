@@ -70,3 +70,6 @@ export async function chat(body: {
     clearTimeout(timer);
   }
 }
+
+// Las pruebas reemplazan ai.chat por un modelo simulado (supabase/functions/tests/).
+export const ai = { chat };

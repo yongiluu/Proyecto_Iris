@@ -7,7 +7,7 @@
 // recordar_dia (lee el diario en markdown de ese dia, ~150 palabras, no la conversacion completa).
 // El diario de cada dia se escribe cuando empieza el dia siguiente (o al pedirlo).
 import type { SupabaseClient } from "npm:@supabase/supabase-js@2";
-import { chat, summaryDeployment } from "./azure.ts";
+import { ai, summaryDeployment } from "./azure.ts";
 import { DIARY_PROMPT, SUMMARY_PROMPT } from "./prompts.ts";
 
 export const RECENT_TURNS = 10;
@@ -61,7 +61,7 @@ export async function maybeUpdateSummary(db: SupabaseClient, day: Day, timezone:
   const fresh = data as Message[];
   if (fresh.length < SUMMARY_EVERY) return false;
 
-  const result = await chat({
+  const result = await ai.chat({
     model: summaryDeployment(),
     temperature: 0,
     max_tokens: 600,
@@ -91,7 +91,7 @@ export async function writeDiary(db: SupabaseClient, userId: string, day: Day, t
   let conversation = transcript(messages.filter((m) => m.id > day.summarized_until), timezone);
   if (conversation.length > MAX_DIARY_SOURCE_CHARS) conversation = conversation.slice(-MAX_DIARY_SOURCE_CHARS);
 
-  const result = await chat({
+  const result = await ai.chat({
     model: summaryDeployment(),
     temperature: 0,
     max_tokens: 500,
