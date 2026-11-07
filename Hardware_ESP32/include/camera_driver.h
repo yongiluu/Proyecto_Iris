@@ -20,6 +20,11 @@ bool captureGray96(uint8_t* out);
 camera_fb_t* acquireJpegFrame();
 void releaseJpegFrame(camera_fb_t* frame);
 
+// Detector de luz: con exposicion y ganancia FIJAS el brillo del frame mide la luz real (con la
+// automatica, la camara compensa y todo se ve igual de claro). Se mantiene aunque la camara se
+// reinicie para sacar una foto JPEG.
+void setCameraFixedExposure(bool fixed);
+
 // Apaga la camara (antes de actualizar por WiFi: su tarea se cae mientras se escribe la flash).
 void shutdownCamera();
 

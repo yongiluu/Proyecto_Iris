@@ -99,6 +99,9 @@ class Esp32SpeechService {
   final ValueNotifier<int> boardVolume = ValueNotifier(50);
 
   /// Cambia el volumen de la placa (la placa lo aplica al tiro y lo guarda).
+  /// Enciende o apaga el detector de luz de la placa (tono mas agudo con mas luz).
+  Future<void> setLightMeter(bool on) => _sendCommand(on ? 'CMD_LIGHT_ON' : 'CMD_LIGHT_OFF');
+
   Future<void> setBoardVolume(int volume) async {
     final clamped = volume.clamp(5, 100);
     boardVolume.value = clamped;
@@ -134,6 +137,11 @@ class Esp32SpeechService {
 
   /// Cercania de la placa (ella misma pita): 0 libre, 1 cerca, 2 muy cerca. Solo al cambiar.
   void Function(int level, int percent)? onProximity;
+
+  /// Detector de luz de la placa: true/false al encenderse/apagarse (tambien se apaga solo).
+  final ValueNotifier<bool> lightMeterOn = ValueNotifier(false);
+  /// Nivel de luz 0-100 (~1 vez por segundo mientras esta encendido).
+  final ValueNotifier<int?> lightLevel = ValueNotifier(null);
 
   /// Audio crudo del microfono (PCM 16-bit, 16 kHz) para la recoleccion de datos.
   void Function(List<int> pcm)? onRawMicAudio;
@@ -535,6 +543,14 @@ class Esp32SpeechService {
       if (parts.length >= 3) onVisionEvent?.call(parts[1], int.tryParse(parts[2]) ?? 0);
     } else if (command.startsWith('CMD_WAKE_WORD:')) {
       onWakeWord?.call(int.tryParse(command.split(':')[1]) ?? 0);
+    } else if (command.startsWith('CMD_LIGHT:')) {
+      final value = command.substring('CMD_LIGHT:'.length);
+      if (value == 'ON' || value == 'OFF') {
+        lightMeterOn.value = value == 'ON';
+        if (value == 'OFF') lightLevel.value = null;
+      } else {
+        lightLevel.value = int.tryParse(value);
+      }
     } else if (command.startsWith('CMD_PROXIMITY:')) {
       // CMD_PROXIMITY:<nivel>:<porcentaje>
       final parts = command.split(':');

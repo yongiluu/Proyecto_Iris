@@ -4,6 +4,10 @@
 
 namespace {
 struct Writer {
+    // Constructor explicito: el compilador de la placa (C++11) no acepta inicializar con {} una
+    // estructura que tiene valores por defecto.
+    Writer(char* buffer, size_t bufferSize) : out(buffer), size(bufferSize) {}
+
     char* out;
     size_t size;
     size_t len = 0;

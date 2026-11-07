@@ -10,6 +10,18 @@ enum class CameraMode { Color, Jpeg };
 
 SemaphoreHandle_t cameraMutex = nullptr;
 bool cameraReady = false;
+volatile bool fixedExposure = false;  // detector de luz
+
+void applyExposure() {
+  sensor_t* sensor = esp_camera_sensor_get();
+  if (sensor == nullptr) return;
+  sensor->set_exposure_ctrl(sensor, fixedExposure ? 0 : 1);
+  sensor->set_gain_ctrl(sensor, fixedExposure ? 0 : 1);
+  if (fixedExposure) {
+    sensor->set_aec_value(sensor, LIGHT_METER_EXPOSURE);
+    sensor->set_agc_gain(sensor, 0);
+  }
+}
 
 constexpr TickType_t kColorLockTimeoutTicks = pdMS_TO_TICKS(50);
 constexpr TickType_t kJpegLockTimeoutTicks = pdMS_TO_TICKS(3000);
@@ -64,6 +76,8 @@ bool startCamera(CameraMode mode) {
                   mode == CameraMode::Color ? "color" : "jpeg", err);
     return false;
   }
+
+  if (mode == CameraMode::Color) applyExposure();
 
   // Si la camara queda "de cabeza" (180 grados), descomentar:
   // sensor_t* sensor = esp_camera_sensor_get();
@@ -175,5 +189,13 @@ void shutdownCamera() {
   shutdownRequested = true;
   cameraReady = false;
   esp_camera_deinit();
+  xSemaphoreGive(cameraMutex);
+}
+
+void setCameraFixedExposure(bool fixed) {
+  if (cameraMutex == nullptr) return;
+  xSemaphoreTake(cameraMutex, portMAX_DELAY);
+  fixedExposure = fixed;
+  if (cameraReady) applyExposure();
   xSemaphoreGive(cameraMutex);
 }

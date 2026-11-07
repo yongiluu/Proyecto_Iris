@@ -27,6 +27,15 @@
 // ==========================================
 #define PHOTO_FRAME_SIZE        FRAMESIZE_VGA // 640x480
 #define CAMERA_COLOR_FRAME_SIZE FRAMESIZE_QQVGA // 160x120 RGB565: lo que miran los modelos locales
+
+// Detector de luz (como Seeing AI): tono mas agudo con mas luz. Ajustable en la placa real con LIGHT_METER_DEBUG.
+#define LIGHT_METER_EXPOSURE    300    // exposicion fija (0-1200): mas alto = mas sensible en penumbra
+#define LIGHT_METER_PERIOD_MS   160    // un pitido cada ~0,16 s
+#define LIGHT_METER_TONE_MS     110
+#define LIGHT_METER_MIN_HZ      150.0f // oscuridad total
+#define LIGHT_METER_MAX_HZ      2400.0f// luz directa
+#define LIGHT_METER_TIMEOUT_MS  180000 // se apaga solo a los 3 minutos (bateria)
+#define LIGHT_METER_DEBUG       0      // 1 = imprime el brillo medido por serial
 #define PHOTO_JPEG_QUALITY      12            // 0-63, menor = mejor calidad
 #define PHOTO_SETTLE_FRAMES     3             // Frames descartados para que la autoexposicion se estabilice
 #define PHOTO_CHUNK_DELAY_MS    20            // Backpressure entre notificaciones de foto

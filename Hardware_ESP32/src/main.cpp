@@ -14,6 +14,7 @@
 #include "proximity.h"
 #include "tflite_vision.h"
 #include "vision_task.h"
+#include "light_meter.h"
 #include "ota_update.h"
 
 namespace {
@@ -113,6 +114,10 @@ void onCommandReceived(const char* command) {
     appPttStartRequested = true;
   } else if (strcmp(command, "CMD_APP_PTT_STOP") == 0) {
     appPttStopRequested = true;
+  } else if (strcmp(command, "CMD_LIGHT_ON") == 0) {
+    requestLightMeter(true);
+  } else if (strcmp(command, "CMD_LIGHT_OFF") == 0) {
+    requestLightMeter(false);
   } else {
     Serial.printf("[BLE] Comando desconocido: %s\n", command);
   }

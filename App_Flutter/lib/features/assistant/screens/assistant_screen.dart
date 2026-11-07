@@ -798,6 +798,34 @@ class _AssistantScreenState extends State<AssistantScreen>
     );
   }
 
+  /// Detector de luz de la placa: la placa pita mas agudo con mas luz (como Seeing AI).
+  Widget _buildLightMeterButton() {
+    return ValueListenableBuilder<bool>(
+      valueListenable: _esp32SpeechService.lightMeterOn,
+      builder: (context, on, _) => Padding(
+        padding: const EdgeInsets.only(right: 8),
+        child: Semantics(
+          toggled: on,
+          child: IconButton(
+            tooltip: on ? 'Apagar detector de luz' : 'Detector de luz',
+            iconSize: 26,
+            constraints: const BoxConstraints(minWidth: 48, minHeight: 48),
+            style: IconButton.styleFrom(backgroundColor: on ? AppTheme.alertAmber : AppTheme.cardDark),
+            icon: Icon(on ? Icons.light_mode : Icons.light_mode_outlined,
+                color: on ? AppTheme.textDark : AppTheme.textOnDarkMuted),
+            onPressed: () async {
+              if (!_esp32SpeechService.isConnected) {
+                await _ttsService.speakStatus('Primero conecta el modulo');
+                return;
+              }
+              await _esp32SpeechService.setLightMeter(!on);
+            },
+          ),
+        ),
+      ),
+    );
+  }
+
   /// Mi cuenta: memoria, acompañantes y privacidad (solo con backend configurado).
   Widget _buildAccountButton() {
     return Padding(
@@ -944,6 +972,7 @@ class _AssistantScreenState extends State<AssistantScreen>
                     children: [
                       Expanded(child: _buildHardwareToggle()),
                       if (kShowDataMissions) _buildMissionsButton(),
+                      if (_hardwareMode == HardwareMode.esp32) _buildLightMeterButton(),
                       if (BackendService.instance.enabled) _buildAccountButton(),
                     ],
                   ),

@@ -4,6 +4,9 @@
 #include "proximity.h"
 #include "config.h"
 #include "image_convert.h"
+#include "light_meter.h"
+#include "ble_manager.h"
+#include <stdio.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
 
@@ -13,8 +16,31 @@ uint8_t gray96[kGrayModelSize * kGrayModelSize];
 
 void visionTask(void*) {
   bool wasPaused = false;
+  bool lightWasOn = false;
+  int lightSteps = 0;
   for (;;) {
-    vTaskDelay(pdMS_TO_TICKS(VISION_INTERVAL_MS));
+    const bool lightOn = lightMeterUpdate();
+    vTaskDelay(pdMS_TO_TICKS(lightOn ? LIGHT_METER_PERIOD_MS : VISION_INTERVAL_MS));
+
+    // Detector de luz: reemplaza a los modelos mientras esta encendido (con exposicion fija la imagen
+    // no es la que conocen). Calla mientras la persona habla.
+    if (lightOn != lightWasOn) {
+      bleManager.sendCommand(lightOn ? "CMD_LIGHT:ON" : "CMD_LIGHT:OFF");  // la app sabe si sigue encendido
+      lightWasOn = lightOn;
+      wasPaused = true;  // al volver, no mezclar con lo de antes
+    }
+    if (lightOn) {
+      if (!visionPaused && captureGray96(gray96)) {
+        const int level = lightMeterStep(gray96, sizeof(gray96));
+        if (level >= 0 && ++lightSteps % 6 == 0) {  // ~1 vez por segundo a la app
+          char command[24];
+          snprintf(command, sizeof(command), "CMD_LIGHT:%d", level);
+          bleManager.sendCommand(command);
+        }
+      }
+      continue;
+    }
+
     if (visionPaused) {
       wasPaused = true;
       continue;
