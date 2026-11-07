@@ -4,7 +4,7 @@
 
 import 'package:flutter/material.dart';
 
-import 'features/assistant/screens/assistant_screen.dart';
+import 'features/account/auth_gate.dart';
 import 'core/theme/app_theme.dart';
 
 /// Root widget of the Iris application.
@@ -17,7 +17,7 @@ class IrisApp extends StatelessWidget {
       title: 'Iris - Visual Assistant',
       debugShowCheckedModeBanner: false,
       theme: AppTheme.lightTheme,
-      home: const AssistantScreen(),
+      home: const AuthGate(),  // pide iniciar sesion si hay backend configurado
     );
   }
 }

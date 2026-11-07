@@ -22,7 +22,7 @@ Backend_Supabase/
 │   └── functions/
 │       ├── agent/      # el agente: memoria diaria + herramientas + Azure
 │       ├── voice/      # texto -> voz PCM 16 kHz para la placa (Azure TTS)
-│       ├── transcribe/ # audio WAV -> texto (Whisper)
+│       ├── transcribe/ # audio WAV -> texto (Whisper en Groq, Azure o Hugging Face)
 │       └── _shared/    # cliente de Azure, prompts, memoria, herramientas
 └── tests/test_schema.mjs # prueba la base de datos y sus reglas sin Docker (PGlite)
 ```
@@ -71,7 +71,7 @@ cd Backend_Supabase/tests && npm install && npm test
 3. **Pasar las claves al servidor** (las mismas de `App_Flutter/.env`):
    ```bash
    npx supabase secrets set AZURE_FOUNDRY_ENDPOINT=... AZURE_FOUNDRY_KEY=... AZURE_FOUNDRY_DEPLOYMENT=gpt-4.1-mini
-   npx supabase secrets set AZURE_SPEECH_KEY=... AZURE_SPEECH_REGION=... HUGGINGFACE_API_KEY=...
+   npx supabase secrets set AZURE_SPEECH_KEY=... AZURE_SPEECH_REGION=... GROQ_API_KEY=... HUGGINGFACE_API_KEY=...
    npx supabase secrets set LOCATIONIQ_KEY=... OPENWEATHER_KEY=... AZURE_SEARCH_ENDPOINT=... AZURE_SEARCH_KEY=...
    ```
    Opcional: `AZURE_SUMMARY_DEPLOYMENT=gpt-4.1-nano` (más barato para los resúmenes).
@@ -80,9 +80,35 @@ cd Backend_Supabase/tests && npm install && npm test
 4. **Login con Google.** En [Google Cloud Console](https://console.cloud.google.com):
    1. Crea un proyecto y configura la "Pantalla de consentimiento de OAuth".
    2. Crea un **ID de cliente OAuth tipo "Web"**. Su ID y su secreto van en Supabase, en *Authentication → Providers → Google*.
-   3. Crea un **ID de cliente OAuth tipo "Android"** con el paquete `com.iris.visual.iris_app` y la huella SHA-1 de la llave con que se firma la app. Para la llave de firma, ver `App_Flutter/README` cuando la configuremos.
+   3. Crea un **ID de cliente OAuth tipo "Android"** con el paquete `com.iris.visual.iris_app` y la huella **SHA-1** de la llave con que se firma la app. Hoy la app se firma con la llave de depuración de tu PC; su SHA-1 sale con:
+      ```bash
+      keytool -list -v -keystore "%USERPROFILE%\.android\debug.keystore" -alias androiddebugkey -storepass android -keypass android
+      ```
+      Antes de publicar en Play Store hay que crear una llave propia y agregar también su SHA-1.
    4. En Supabase, agrega el ID Android junto al Web en "Client IDs" (separados por coma).
 5. **Pasarme estos dos valores** (son públicos y van en la app): la **URL del proyecto** y la **anon key**, que están en *Project Settings → API*.
+
+## Conectar la app
+
+Con los valores del paso 5, en `App_Flutter/.env`:
+
+```env
+SUPABASE_URL=https://<id-del-proyecto>.supabase.co
+SUPABASE_ANON_KEY=<anon key>
+GOOGLE_WEB_CLIENT_ID=<id de cliente OAuth "Web">.apps.googleusercontent.com
+```
+
+Con eso la app pide **"Continuar con Google"** al abrir. Desde ese momento usa el servidor para el agente (con memoria), para la voz de la placa y para la transcripción.
+
+En "Mi cuenta" (ícono arriba a la derecha) están:
+
+- **Memoria:** activarla o desactivarla, cuánto tiempo guardarla, el historial y borrarla.
+- **Acompañantes:** invitar con un código de 6 dígitos o vincularse como acompañante.
+- **Privacidad:** compartir la ubicación y donar grabaciones para entrenar.
+
+Cuando todo funcione, **borra las llaves de Azure, Groq, Hugging Face y del clima del `.env`** antes de compilar el APK que se reparte: ya no hacen falta en el celular.
+
+Sin `SUPABASE_URL`, la app funciona como antes: sin cuentas y con las llaves locales.
 
 ## Probar todo localmente (opcional)
 

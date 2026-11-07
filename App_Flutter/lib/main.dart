@@ -10,6 +10,7 @@ import 'package:camera/camera.dart';
 
 import 'app.dart';
 import 'core/constants/env_config.dart';
+import 'services/backend/backend_service.dart';
 
 /// Global list of available cameras on the device.
 late List<CameraDescription> cameras;
@@ -20,6 +21,9 @@ Future<void> main() async {
   
   // Load environment variables
   await EnvConfig.init();
+
+  // Cuentas y agente en el servidor (si el .env tiene SUPABASE_URL; si no, la app funciona sin cuentas).
+  await BackendService.instance.init();
 
   // Force portrait orientation for consistent accessibility
   await SystemChrome.setPreferredOrientations([

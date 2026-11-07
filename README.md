@@ -11,6 +11,7 @@ El sistema funciona al 100% mediante **Bluetooth Low Energy (BLE)**, sin Wi-Fi n
 - **Transmisión de audio bidireccional:** El audio del micrófono I2S viaja en tiempo real a Flutter, y las respuestas (TTS) vuelven para reproducirse en el altavoz.
 - **Visión artificial inalámbrica:** La app pide una foto JPEG a la placa; esta la envía en fragmentos por BLE con *backpressure* y la app valida que llegue completa.
 - **Edge AI en la placa:** detección de personas y de sonidos de alerta (bocina, sirena, perro) con TensorFlow Lite Micro, sin internet. Los modelos se entrenan en [`ML_Training/`](ML_Training/README.md).
+- **Backend (Supabase):** login con Google, memoria diaria del agente ("¿qué desayuné hoy?", "¿qué pasó ayer?"), acompañantes con alertas y ubicación compartida, y las llaves de IA solo en el servidor. Ver [`Backend_Supabase/README.md`](Backend_Supabase/README.md).
 - **Agente en la nube:** la app transcribe (Whisper), consulta al agente (modelo en Azure AI Foundry, por defecto `gpt-4.1-mini`) y devuelve la voz.
 
 ## Estructura del Proyecto
@@ -19,7 +20,8 @@ El sistema funciona al 100% mediante **Bluetooth Low Energy (BLE)**, sin Wi-Fi n
 Proyecto_Iris_Release/
 ├── App_Flutter/      # App móvil (frontend + IA)
 ├── Hardware_ESP32/   # Firmware del microcontrolador (ESP32-S3)
-└── ML_Training/      # Entrenamiento de los modelos Edge AI (TFLite)
+├── ML_Training/      # Entrenamiento de los modelos Edge AI (TFLite)
+└── Backend_Supabase/ # Cuentas, memoria diaria del agente, acompañantes y llaves de IA en el servidor
 ```
 
 ## 1. Aplicación Móvil (App_Flutter)

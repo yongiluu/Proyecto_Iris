@@ -21,6 +21,13 @@ class EnvConfig {
   static String get locationIqKey => _read('LOCATIONIQ_KEY');
   static String get openWeatherKey => _read('OPENWEATHER_KEY');
 
+  // Backend (Supabase). Son valores PUBLICOS (la anon key solo permite lo que dejan las reglas RLS).
+  // Si SUPABASE_URL esta vacio, la app funciona como antes: sin cuentas y con las llaves de arriba.
+  static String get supabaseUrl => _read('SUPABASE_URL');
+  static String get supabaseAnonKey => _read('SUPABASE_ANON_KEY');
+  static String get googleWebClientId => _read('GOOGLE_WEB_CLIENT_ID');
+  static bool get backendConfigured => supabaseUrl.isNotEmpty && supabaseAnonKey.isNotEmpty;
+
   static Future<void> init() async {
     await dotenv.load(fileName: '.env');
   }

@@ -7,6 +7,7 @@ import 'package:http/http.dart' as http;
 import '../../core/constants/app_constants.dart';
 import '../../core/constants/env_config.dart';
 import '../hardware/esp32_speech_service.dart';
+import '../backend/backend_service.dart';
 
 class TtsService {
   static const Duration _cloudTtsTimeout = Duration(seconds: 20);
@@ -73,6 +74,17 @@ class TtsService {
 
   /// Modo ESP32: Azure TTS en PCM 16 kHz 16-bit mono, enviado por BLE a la placa.
   Future<void> _speakThroughEsp32(String text, String lang, Esp32SpeechService esp32Service) async {
+    // Con cuenta: la voz se genera en el servidor (la llave de Azure Speech no esta en el celular).
+    if (BackendService.instance.useServer) {
+      _isSpeaking = true;
+      try {
+        final pcm = await BackendService.instance.boardVoice(text, lang: lang == 'en-US' ? 'en-US' : 'es-CL');
+        if (pcm != null) unawaited(esp32Service.sendAudioToEsp32(pcm));
+      } finally {
+        _isSpeaking = false;
+      }
+      return;
+    }
     if (EnvConfig.azureSpeechKey.isEmpty || EnvConfig.azureSpeechRegion.isEmpty) {
       debugPrint('⚠️ No hay API Keys configuradas para Azure TTS en Modo ESP32');
       return;

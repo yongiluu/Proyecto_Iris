@@ -7,6 +7,7 @@ import 'package:geolocator/geolocator.dart';
 import 'package:http/http.dart' as http;
 
 import '../../core/constants/env_config.dart';
+import '../backend/backend_service.dart';
 
 class OccipitalAgentService {
   static final OccipitalAgentService _instance = OccipitalAgentService._internal();
@@ -191,6 +192,18 @@ RESPONDE EN ESPANOL, EN 2 A 4 FRASES CORTAS.
     debugPrint('🧠 OccipitalAgentService: Thinking about prompt: $userPrompt');
     onStatusUpdate?.call('Pensando...');
 
+    // Con cuenta: el agente corre en el servidor (memoria diaria, herramientas y llaves de IA alla).
+    if (BackendService.instance.useServer) {
+      return _askServer(
+        userPrompt: userPrompt,
+        captureImageCallback: captureImageCallback,
+        onStatusUpdate: onStatusUpdate,
+        sensorContext: sensorContext,
+        onVisionStart: onVisionStart,
+        visionFallback: visionFallback,
+      );
+    }
+
     final url = _chatCompletionsUri();
     if (url == null || EnvConfig.azureFoundryKey.isEmpty) {
       return 'Las claves de API para Azure OpenAI no estan configuradas.';
@@ -307,6 +320,50 @@ RESPONDE EN ESPANOL, EN 2 A 4 FRASES CORTAS.
     } catch (e) {
       debugPrint('Exception in OccipitalAgentService: $e');
       return 'Hubo un problema de conexion. Intentalo de nuevo.';
+    }
+  }
+
+  /// Agente en el servidor. Si la pregunta es de vision, la foto va desde el principio; si el modelo
+  /// decide mirar (need_image), se saca la foto y se pregunta de nuevo con ella.
+  Future<String?> _askServer({
+    required String userPrompt,
+    required Future<Uint8List?> Function() captureImageCallback,
+    Function(String status)? onStatusUpdate,
+    String? sensorContext,
+    void Function()? onVisionStart,
+    String? Function()? visionFallback,
+  }) async {
+    final backend = BackendService.instance;
+    // Ultima posicion conocida: es instantanea (no espera al GPS) y le sirve al clima/ubicacion.
+    Position? position;
+    try {
+      position = await Geolocator.getLastKnownPosition();
+    } catch (_) {}
+
+    Future<String?> withPhoto() async {
+      onStatusUpdate?.call('Mirando...');
+      final photo = captureImageCallback();
+      onVisionStart?.call();
+      final image = await photo;
+      if (image == null) return _cameraFailed(visionFallback);
+      onStatusUpdate?.call('Analizando vision...');
+      final reply = await backend.askAgent(
+          text: userPrompt, image: image, sensorContext: sensorContext,
+          lat: position?.latitude, lon: position?.longitude);
+      return _speakable(reply.text);
+    }
+
+    try {
+      if (wantsVision(userPrompt)) return await withPhoto();
+      final reply = await backend.askAgent(
+          text: userPrompt, sensorContext: sensorContext, lat: position?.latitude, lon: position?.longitude);
+      if (reply.needsImage) return await withPhoto();
+      return _speakable(reply.text);
+    } on TimeoutException {
+      return 'La conexion tardo demasiado. Intentalo de nuevo.';
+    } catch (e) {
+      debugPrint('Agente del servidor: $e');
+      return 'Hubo un problema de conexion con el servidor de Iris. Intentalo de nuevo.';
     }
   }
 

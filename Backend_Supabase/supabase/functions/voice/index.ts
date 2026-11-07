@@ -1,5 +1,5 @@
 // Voz de Iris para la placa: texto -> Azure TTS en PCM 16 kHz 16-bit mono (lo que reproduce el ESP32).
-// POST /functions/v1/voice  { "text": "...", "lang"?: "es-CL" | "en-US" }  ->  audio/L16 (bytes PCM)
+// POST /functions/v1/voice  { "text": "...", "lang"?: "es-CL" | "en-US" }  ->  bytes PCM 16 kHz 16-bit mono
 import { json, sessionUser } from "../_shared/auth.ts";
 
 const VOICES: Record<string, string> = { "es-CL": "es-CL-CatalinaNeural", "en-US": "en-US-AriaNeural" };
@@ -37,5 +37,6 @@ Deno.serve(async (request) => {
     console.error("Azure TTS", response.status, await response.text());
     return json({ error: "Fallo la voz" }, 502);
   }
-  return new Response(response.body, { headers: { "Content-Type": "audio/L16; rate=16000; channels=1" } });
+  // octet-stream: el cliente de Supabase en la app lo entrega como bytes (PCM 16 kHz 16-bit mono).
+  return new Response(response.body, { headers: { "Content-Type": "application/octet-stream" } });
 });

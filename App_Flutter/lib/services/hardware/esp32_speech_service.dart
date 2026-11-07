@@ -11,6 +11,7 @@ import 'package:permission_handler/permission_handler.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../core/constants/env_config.dart';
+import '../backend/backend_service.dart';
 
 /// Comunicacion BLE con la placa Iris_ESP32: audio del microfono, audio TTS,
 /// comandos (boton push-to-talk, beep, foto) y fotos JPEG.
@@ -823,6 +824,8 @@ class Esp32SpeechService {
     } catch (e) {
       debugPrint('No se pudo guardar ultima_pregunta.wav: $e');
     }
+    // Con cuenta: transcribe el servidor (las llaves no estan en el celular).
+    if (BackendService.instance.useServer) return BackendService.instance.transcribe(wav);
     // Groq (Whisper gratis) primero; despues Azure Speech y Hugging Face, si tienen llave.
     final groq = await _transcribeWithGroq(wav);
     if (groq.isNotEmpty) return groq;

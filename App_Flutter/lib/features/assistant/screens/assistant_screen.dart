@@ -19,6 +19,8 @@ import '../../../services/hardware/camera_service.dart';
 import '../../../services/hardware/esp32_speech_service.dart';
 import '../../../services/ai/speech_service.dart';
 import '../../../services/ai/occipital_agent_service.dart';
+import '../../../services/backend/backend_service.dart';
+import '../../account/account_screen.dart';
 import '../../../services/ai/phone_vision_service.dart';
 import '../../../services/hardware/sensor_context.dart';
 import '../../data_collection/missions_screen.dart';
@@ -314,6 +316,7 @@ class _AssistantScreenState extends State<AssistantScreen>
     setState(() => _statusText = 'Se escucha $what ($confidence%)');
     await _hapticService.vibrateTick();
     await _ttsService.speakStatus('Atencion, se escucha $what', esp32Service: _activeEsp32);
+    unawaited(BackendService.instance.reportAlert(label, detail: 'Se escucha $what'));  // la ven sus acompañantes
   }
 
   // ─── Avisos de la camara de la placa (Edge AI) ───
@@ -347,6 +350,9 @@ class _AssistantScreenState extends State<AssistantScreen>
     setState(() => _statusText = 'Adelante: $what ($confidence%)');
     await _hapticService.vibrateTick();
     await _ttsService.speakStatus('Adelante hay $what', esp32Service: _activeEsp32);
+    if (label == 'vehiculo') {
+      unawaited(BackendService.instance.reportAlert(label, detail: 'Vehiculo adelante'));  // la ven sus acompañantes
+    }
   }
 
   /// Doble pitido al mandar una consulta a la IA: una persona ciega no ve la pantalla y necesita
@@ -792,6 +798,21 @@ class _AssistantScreenState extends State<AssistantScreen>
     );
   }
 
+  /// Mi cuenta: memoria, acompañantes y privacidad (solo con backend configurado).
+  Widget _buildAccountButton() {
+    return Padding(
+      padding: const EdgeInsets.only(right: 8),
+      child: IconButton(
+        tooltip: 'Mi cuenta',
+        iconSize: 26,
+        constraints: const BoxConstraints(minWidth: 48, minHeight: 48),
+        style: IconButton.styleFrom(backgroundColor: AppTheme.cardDark),
+        icon: const Icon(Icons.account_circle_outlined, color: AppTheme.textOnDarkMuted),
+        onPressed: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const AccountScreen())),
+      ),
+    );
+  }
+
   /// Pantalla de recoleccion de datos (para el equipo, no para el usuario final).
   Widget _buildMissionsButton() {
     return Padding(
@@ -923,6 +944,7 @@ class _AssistantScreenState extends State<AssistantScreen>
                     children: [
                       Expanded(child: _buildHardwareToggle()),
                       if (kShowDataMissions) _buildMissionsButton(),
+                      if (BackendService.instance.enabled) _buildAccountButton(),
                     ],
                   ),
                   Expanded(
