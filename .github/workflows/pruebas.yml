@@ -1,0 +1,97 @@
+# Pruebas automaticas de Iris: corren solas en cada push y en cada pull request.
+# Si algo se rompe (el firmware no compila, la placa calcula distinto que el entrenamiento, una regla
+# de seguridad de la base de datos deja de funcionar...), GitHub marca el commit con una X roja.
+name: Pruebas
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: pruebas-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  firmware:
+    name: Firmware compila (XIAO y devkit)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.platformio
+            Hardware_ESP32/.pio/libdeps
+          key: pio-${{ hashFiles('Hardware_ESP32/platformio.ini') }}
+      - run: pip install platformio
+      - name: Compilar
+        working-directory: Hardware_ESP32
+        run: pio run -e seeed_xiao_esp32s3 -e esp32-s3-devkitc-1
+
+  placa-igual-que-entrenamiento:
+    name: La placa calcula igual que el entrenamiento
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      # tensorflow-cpu: test_scene_describe usa las formas de salida del modelo de escenas
+      - run: pip install numpy scipy ziglang tensorflow-cpu
+      - name: Front-end de audio (log-mel) C++ vs Python
+        working-directory: ML_Training
+        run: python tests/test_frontend.py
+      - name: Conversion de imagen de la camara C++ vs Python
+        working-directory: ML_Training
+        run: python tests/test_image_convert.py
+      - name: Frases de escenas C++ vs Python
+        working-directory: ML_Training
+        run: python tests/test_scene_describe.py
+      - name: Las tablas generadas para el firmware estan al dia
+        run: git diff --exit-code -- Hardware_ESP32/include/scene_vocab.h Hardware_ESP32/src/scene_vocab.cpp
+
+  backend:
+    name: Backend (reglas de seguridad y agente con memoria)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Reglas de seguridad de la base de datos (Postgres en memoria)
+        working-directory: Backend_Supabase/tests
+        run: npm ci && npm test
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+      - name: Tipos de las funciones del servidor
+        working-directory: Backend_Supabase/supabase/functions
+        run: deno check agent/index.ts voice/index.ts transcribe/index.ts
+      - name: Agente con memoria diaria
+        working-directory: Backend_Supabase/supabase/functions
+        run: deno test --allow-env tests/
+
+  app:
+    name: App Flutter (analisis)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: "3.44.0"
+          channel: stable
+          cache: true
+      - name: Dependencias
+        working-directory: App_Flutter
+        run: |
+          cp .env.template .env   # el .env real no esta en el repo (tiene llaves)
+          flutter pub get
+      - name: Analisis (errores y advertencias)
+        working-directory: App_Flutter
+        run: flutter analyze --no-fatal-infos
