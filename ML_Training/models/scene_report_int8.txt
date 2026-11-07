@@ -1,0 +1,51 @@
+Modelo int8: 1132 KB de flash; activaciones del peor paso ~281 KB (arena estimada ~382 KB, va en PSRAM)
+
+== Test (int8, lo que correria en la placa) (940 fotos) ==
+Objetos: precision 58.1%, recall 53.1%, F1 55.5% (umbral 0,5)
+  peores: espejo 0% (n=10), paraguas 0% (n=10), cortina 11% (n=16), poste 15% (n=11), lampara 17% (n=18), puerta 17% (n=47)
+  mejores: computador 67% (n=40), auto 69% (n=112), gato 69% (n=33), persona 73% (n=261), bus 75% (n=30), taza 77% (n=44)
+Posicion (objetos presentes con etiqueta): 67.9% de acierto (n=1812)
+Distancia (objetos presentes con etiqueta): 73.6% de acierto (n=1812)
+Color (objetos presentes con etiqueta): 43.9% de acierto (n=818)
+Personas: 80.0% de acierto (n=940)
+Lugar: 80.7% de acierto (n=140)
+Calidad: 99.7% de acierto (n=940)
+Peligros: sin etiquetas todavia (las pone el profesor)
+
+Frases de ejemplo (alumno | etiquetas):
+- openimages/a309797eb790b812.jpg
+    alumno:    Parece que estás en la calle. Adelante hay una persona, una moto negra y una bicicleta gris.
+    etiquetas: Adelante hay dos personas. Al fondo hay una moto negra.
+- openimages/4b5db81b7145ad1e.jpg
+    alumno:    Parece que estás en la calle. Adelante, muy cerca, hay un árbol y un edificio. Al fondo hay una persona.
+    etiquetas: Parece que estás en la calle. Adelante, muy cerca, hay un edificio blanco. A tu derecha hay un árbol. Al fondo hay un auto negro y una ventana.
+- openimages/f9796848b90791a9.jpg
+    alumno:    Parece que estás en la calle. Adelante, muy cerca, hay un árbol, una planta y una persona.
+    etiquetas: Adelante hay un semáforo. A tu derecha hay un árbol.
+- openimages/dde9828bc53087c2.jpg
+    alumno:    Adelante, muy cerca, hay una botella azul.
+    etiquetas: Adelante, muy cerca, hay un semáforo.
+- openimages/bf9c1ddbe87e34a0.jpg
+    alumno:    Parece que estás en la calle. Adelante, muy cerca, hay un árbol. Al fondo hay varias personas.
+    etiquetas: Adelante, muy cerca, hay un árbol. Al fondo hay un semáforo.
+- openimages/243cb9f462917e8a.jpg
+    alumno:    Parece que estás en la calle. Adelante, muy cerca, hay un árbol. A tu derecha hay un edificio gris.
+    etiquetas: Parece que estás en la calle. Adelante, muy cerca, hay un árbol. A tu derecha hay un edificio gris. Al fondo hay un auto, varias personas y un semáforo.
+- openimages/644395d01b541528.jpg
+    alumno:    Adelante, muy cerca, hay un edificio y una planta. A tu izquierda hay un árbol.
+    etiquetas: A tu izquierda hay un árbol. A tu derecha hay un semáforo. Al fondo hay un poste de luz y una señal de tránsito.
+- openimages/e0beab2586c099f5.jpg
+    alumno:    No reconozco objetos claros adelante.
+    etiquetas: A tu izquierda hay un grifo café. A tu derecha hay una persona.
+- openimages/356bf0a5a6207913.jpg
+    alumno:    Parece que estás en la calle. No reconozco objetos claros adelante.
+    etiquetas: Adelante, muy cerca, hay un grifo amarillo.
+- openimages/fe01815e982763e4.jpg
+    alumno:    Parece que estás en la calle. Adelante, muy cerca, hay un árbol y una planta.
+    etiquetas: Adelante, muy cerca, hay un grifo azul.
+- openimages/c9cb6dea5678d078.jpg
+    alumno:    Parece que estás en la calle. Adelante, muy cerca, hay un árbol. A tu derecha hay una planta.
+    etiquetas: Adelante, muy cerca, hay un grifo rojo.
+- openimages/c3b69f07da136c4b.jpg
+    alumno:    Parece que estás en la calle. Adelante, muy cerca, hay un árbol y una planta.
+    etiquetas: Adelante, muy cerca, hay un árbol, un grifo rojo y una planta.

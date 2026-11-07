@@ -90,6 +90,35 @@ python vision/capture_photos.py --label puerta --note casa   # con clase: ademá
 
 Las fotos a color quedan en `data/scene_board/`, y `label_teacher.py` las etiqueta junto con las de Open Images (fuente `board`). Prioriza **lugares reales de uso**: pasillos, escaleras, veredas, cruces, micro, la universidad.
 
+## Resultados
+
+### v0 (2026-11-07): solo etiquetas automáticas, entrenado en CPU
+
+12 mil fotos de Open Images (10 mil para entrenar), 14 épocas (~1 h). Medido sobre 940 fotos de test con el **modelo int8**, que es lo que correría en la placa:
+
+| | |
+|---|---|
+| Tamaño | 1,13 MB de flash (reemplazando al modelo de clases, el programa crece solo ~0,14 MB). Arena ~380 KB en PSRAM |
+| Ops | ADD, CONV_2D, DEPTHWISE_CONV_2D, FULLY_CONNECTED, LOGISTIC, MUL, RESHAPE, SOFTMAX: todas existen en el TFLM de la placa |
+| Objetos | precisión 58 %, recall 53 %, F1 55,5 %. Lo mejor: persona 73 %, auto 69 %, bus 75 %. Lo peor: espejo, paraguas, cortina y poste (cosas chicas o con pocos ejemplos) |
+| Posición / distancia / color | 68 % / 74 % / 44 % de acierto |
+| Personas / lugar / calidad | 80 % / 81 % / 99,7 % |
+| Peligros | sin entrenar: las etiquetas automáticas no los tienen, así que el modelo **no dice nada de peligros** |
+| int8 frente a float32 | F1 55,5 % frente a 56 %: la cuantización casi no pierde |
+
+Frases reales del test:
+
+- *"Parece que estás en la calle. Adelante, muy cerca, hay un árbol. A tu derecha hay un edificio gris."* Es correcta, pero se le escapan los semáforos, autos y personas de una esquina.
+- *"Parece que estás en la calle. Adelante hay una persona, una moto negra y una bicicleta gris."* Viene de una foto de motos en una pista: **la bicicleta es inventada**.
+
+**Lectura:** la cadena completa funciona, de la foto 160x120 a la frase en español. Los techos son conocidos:
+
+- las etiquetas automáticas son ruidosas y no tienen peligros,
+- los colores de las etiquetas automáticas son heurísticos (de ahí el 44 %),
+- los objetos chicos casi no se ven en 160x120.
+
+El siguiente salto viene del profesor en Lambda y de las fotos reales de la placa.
+
 ## Métricas (para el paper)
 
 `train.py` y `export_model.py` reportan sobre el test (fotos que el modelo no vio):

@@ -1,0 +1,9 @@
+{
+  "labels": "auto",
+  "sources": {
+    "auto_openimages": 12000
+  },
+  "hazards_trained": false,
+  "alpha": 0.35,
+  "train_images": 10139
+}
