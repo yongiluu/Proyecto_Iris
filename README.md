@@ -68,7 +68,7 @@ Asegúrate de conectar los pines a sus respectivos VCC (3.3V o 5V) y GND. La fue
 - El otro pin -> GND (usa resistencia pull-up interna).
 
 **📷 Cámara (OV2640)**
-Configuración estándar D0-D7, XCLK, PCLK, VSYNC, HREF, SIOD, SIOC, PWDN, RESET definidos en `config.h`. Normalmente trabaja en escala de grises 96x96 (Edge AI). Cuando la app pide una foto (`CMD_TAKE_PHOTO`) se reconfigura a JPEG 640x480, se envía por BLE (`CMD_PHOTO_START:<bytes>` → fragmentos → `CMD_PHOTO_END`) y vuelve a grises.
+Configuración estándar D0-D7, XCLK, PCLK, VSYNC, HREF, SIOD, SIOC, PWDN, RESET definidos en `config.h`. Normalmente trabaja a color en 160x120 (RGB565): los modelos locales en grises reciben el cuadrado central convertido a 96x96 en la placa, y la descripción de escenas (en desarrollo, `ML_Training/scene`) usa el frame completo a color. Cuando la app pide una foto (`CMD_TAKE_PHOTO`) se reconfigura a JPEG 640x480, se envía por BLE (`CMD_PHOTO_START:<bytes>` → fragmentos → `CMD_PHOTO_END`) y vuelve a color 160x120.
 
 ### XIAO ESP32S3 Sense (prototipo 2)
 - Micrófono PDM integrado: CLK -> GPIO42, DATA -> GPIO41.

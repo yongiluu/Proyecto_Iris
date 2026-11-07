@@ -1,5 +1,6 @@
 #include "photo_transfer.h"
 #include "camera_driver.h"
+#include "image_convert.h"
 #include "ble_manager.h"
 #include "config.h"
 #include <freertos/FreeRTOS.h>
@@ -44,17 +45,13 @@ uint8_t grayCopy[96 * 96];
 
 // Frame 96x96 en grises para recolectar datos de entrenamiento desde la app.
 void sendGrayFrame() {
-  camera_fb_t* frame = acquireGrayFrame();
-  if (frame == nullptr || frame->len > sizeof(grayCopy)) {
-    if (frame) releaseGrayFrame(frame);
+  // captureGray96 copia y libera enseguida: la vision local no se queda sin camara durante el envio.
+  if (!captureGray96(grayCopy)) {
     bleManager.sendCommand("CMD_FRAME_ERROR");
     return;
   }
-  // Copiar y liberar enseguida: la vision local no debe quedarse sin camara durante el envio.
-  const size_t length = frame->len;
-  const unsigned width = frame->width, height = frame->height;
-  memcpy(grayCopy, frame->buf, length);
-  releaseGrayFrame(frame);
+  const size_t length = sizeof(grayCopy);
+  const unsigned width = kGrayModelSize, height = kGrayModelSize;
 
   char header[40];
   snprintf(header, sizeof(header), "CMD_FRAME_START:%u:%u", width, height);

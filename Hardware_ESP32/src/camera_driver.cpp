@@ -1,16 +1,17 @@
 #include "camera_driver.h"
 #include "config.h"
+#include "image_convert.h"
 #include <freertos/FreeRTOS.h>
 #include <freertos/semphr.h>
 #include <esp_heap_caps.h>
 
 namespace {
-enum class CameraMode { Gray, Jpeg };
+enum class CameraMode { Color, Jpeg };
 
 SemaphoreHandle_t cameraMutex = nullptr;
 bool cameraReady = false;
 
-constexpr TickType_t kGrayLockTimeoutTicks = pdMS_TO_TICKS(50);
+constexpr TickType_t kColorLockTimeoutTicks = pdMS_TO_TICKS(50);
 constexpr TickType_t kJpegLockTimeoutTicks = pdMS_TO_TICKS(3000);
 
 camera_config_t baseConfig() {
@@ -43,11 +44,12 @@ camera_config_t baseConfig() {
 bool startCamera(CameraMode mode) {
   camera_config_t config = baseConfig();
 
-  if (mode == CameraMode::Gray) {
-    // Las redes neuronales ligeras usan imagenes pequenas en blanco y negro (1 byte por pixel).
-    config.pixel_format = PIXFORMAT_GRAYSCALE;
-    config.frame_size = FRAMESIZE_96X96;
-    config.jpeg_quality = 12; // Irrelevante en grises
+  if (mode == CameraMode::Color) {
+    // Lo que miran los modelos locales: color y el campo de vision completo de la camara (4:3).
+    // Los modelos en grises reciben el cuadrado central reducido a 96x96 (captureGray96).
+    config.pixel_format = PIXFORMAT_RGB565;
+    config.frame_size = CAMERA_COLOR_FRAME_SIZE;
+    config.jpeg_quality = 12; // Irrelevante en RGB565
     config.fb_count = 2;
   } else {
     config.pixel_format = PIXFORMAT_JPEG;
@@ -59,7 +61,7 @@ bool startCamera(CameraMode mode) {
   esp_err_t err = esp_camera_init(&config);
   if (err != ESP_OK) {
     Serial.printf("[Camara] Error al inicializar (modo %s): 0x%x\n",
-                  mode == CameraMode::Gray ? "grises" : "jpeg", err);
+                  mode == CameraMode::Color ? "color" : "jpeg", err);
     return false;
   }
 
@@ -70,7 +72,7 @@ bool startCamera(CameraMode mode) {
   return true;
 }
 
-// Cada foto para la IA cambia la camara de grises a JPEG y de vuelta. Si un cambio falla (ej. sin memoria
+// Cada foto para la IA cambia la camara de color a JPEG y de vuelta. Si un cambio falla (ej. sin memoria
 // interna para el DMA), antes la camara quedaba apagada hasta reiniciar la placa: ahora se reintenta.
 bool restartCamera(CameraMode mode) {
   for (int attempt = 1; attempt <= 3; attempt++) {
@@ -92,7 +94,7 @@ void tryRecover() {
   if (cameraReady || shutdownRequested || millis() - lastRecoverMs < kRecoverEveryMs) return;
   lastRecoverMs = millis();
   if (xSemaphoreTake(cameraMutex, 0) != pdTRUE) return;
-  cameraReady = restartCamera(CameraMode::Gray);
+  cameraReady = restartCamera(CameraMode::Color);
   Serial.printf("[Camara] Recuperacion %s\n", cameraReady ? "OK" : "fallida, se reintenta");
   xSemaphoreGive(cameraMutex);
 }
@@ -102,26 +104,35 @@ bool initCamera() {
   if (cameraMutex == nullptr) cameraMutex = xSemaphoreCreateMutex();
   if (cameraMutex == nullptr) return false;
 
-  cameraReady = startCamera(CameraMode::Gray);
+  cameraReady = startCamera(CameraMode::Color);
   return cameraReady;
 }
 
-camera_fb_t* acquireGrayFrame() {
+camera_fb_t* acquireColorFrame() {
   if (!cameraReady) {
     tryRecover();
     if (!cameraReady) return nullptr;
   }
-  if (xSemaphoreTake(cameraMutex, kGrayLockTimeoutTicks) != pdTRUE) return nullptr;
+  if (xSemaphoreTake(cameraMutex, kColorLockTimeoutTicks) != pdTRUE) return nullptr;
 
   camera_fb_t* frame = esp_camera_fb_get();
   if (frame == nullptr) xSemaphoreGive(cameraMutex);
   return frame;
 }
 
-void releaseGrayFrame(camera_fb_t* frame) {
+void releaseColorFrame(camera_fb_t* frame) {
   if (frame == nullptr) return;
   esp_camera_fb_return(frame);
   xSemaphoreGive(cameraMutex);
+}
+
+bool captureGray96(uint8_t* out) {
+  camera_fb_t* frame = acquireColorFrame();
+  if (frame == nullptr) return false;
+  bool ok = frame->format == PIXFORMAT_RGB565 && frame->len >= frame->width * frame->height * 2u;
+  if (ok) rgb565ToGray96(frame->buf, frame->width, frame->height, out);
+  releaseColorFrame(frame);
+  return ok;
 }
 
 camera_fb_t* acquireJpegFrame() {
@@ -132,7 +143,7 @@ camera_fb_t* acquireJpegFrame() {
   if (xSemaphoreTake(cameraMutex, kJpegLockTimeoutTicks) != pdTRUE) return nullptr;
 
   if (!restartCamera(CameraMode::Jpeg)) {
-    cameraReady = restartCamera(CameraMode::Gray);
+    cameraReady = restartCamera(CameraMode::Color);
     xSemaphoreGive(cameraMutex);
     return nullptr;
   }
@@ -145,7 +156,7 @@ camera_fb_t* acquireJpegFrame() {
 
   camera_fb_t* frame = esp_camera_fb_get();
   if (frame == nullptr) {
-    cameraReady = restartCamera(CameraMode::Gray);
+    cameraReady = restartCamera(CameraMode::Color);
     xSemaphoreGive(cameraMutex);
   }
   return frame;
@@ -153,7 +164,7 @@ camera_fb_t* acquireJpegFrame() {
 
 void releaseJpegFrame(camera_fb_t* frame) {
   if (frame != nullptr) esp_camera_fb_return(frame);
-  cameraReady = restartCamera(CameraMode::Gray);
+  cameraReady = restartCamera(CameraMode::Color);
   xSemaphoreGive(cameraMutex);
 }
 

@@ -26,6 +26,7 @@
 // Foto (JPEG hacia GPT) y vision local (Edge AI)
 // ==========================================
 #define PHOTO_FRAME_SIZE        FRAMESIZE_VGA // 640x480
+#define CAMERA_COLOR_FRAME_SIZE FRAMESIZE_QQVGA // 160x120 RGB565: lo que miran los modelos locales
 #define PHOTO_JPEG_QUALITY      12            // 0-63, menor = mejor calidad
 #define PHOTO_SETTLE_FRAMES     3             // Frames descartados para que la autoexposicion se estabilice
 #define PHOTO_CHUNK_DELAY_MS    20            // Backpressure entre notificaciones de foto

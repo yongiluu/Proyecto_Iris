@@ -1,7 +1,8 @@
 """Constantes compartidas por todo el pipeline de vision.
 
-La entrada del modelo DEBE coincidir con la camara del firmware (camera_driver.cpp:
-OV2640, FRAMESIZE_96X96, PIXFORMAT_GRAYSCALE). No edites los archivos generados a mano:
+La entrada del modelo DEBE coincidir con lo que le da el firmware: la camara (OV2640) entrega color
+160x120 RGB565 y la placa le pasa a estos modelos el cuadrado central en grises 96x96
+(image_convert.cpp; referencia en Python: board_image.py). No edites los archivos generados a mano:
 cambia este archivo y vuelve a correr export_model.py, que regenera
 Hardware_ESP32/include/vision_model_data.h y src/vision_model_data.cpp.
 """
@@ -15,6 +16,7 @@ DATA_DIR = ML_DIR / "data"
 RAW_DIR = DATA_DIR / "raw" / "openimages"     # CSV de anotaciones de Open Images
 IMAGES_DIR = DATA_DIR / "vision_images"       # imagenes reducidas (grises, lado corto STORE_SHORT_SIDE)
 BOARD_DIR = DATA_DIR / "vision_board"         # fotos reales de la placa (capture_photos.py), por clase
+SCENE_BOARD_DIR = DATA_DIR / "scene_board"    # fotos reales a color 160x120 de la placa (descripcion de escenas)
 SELECTION_FILE = DATA_DIR / "vision_selection.csv"
 DATASET_FILE = DATA_DIR / "vision_dataset.npz"
 MODELS_DIR = ML_DIR / "models"

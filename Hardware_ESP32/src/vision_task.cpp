@@ -3,11 +3,13 @@
 #include "tflite_vision.h"
 #include "proximity.h"
 #include "config.h"
+#include "image_convert.h"
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
 
 namespace {
 volatile bool visionPaused = false;
+uint8_t gray96[kGrayModelSize * kGrayModelSize];
 
 void visionTask(void*) {
   bool wasPaused = false;
@@ -24,12 +26,12 @@ void visionTask(void*) {
       wasPaused = false;
     }
 
-    camera_fb_t* frame = acquireGrayFrame();
-    if (frame == nullptr) continue;
+    // La camara entrega color; los modelos actuales reciben el cuadrado central en grises 96x96.
+    // Se convierte y se libera el frame antes de inferir, asi la camara no queda tomada.
+    if (!captureGray96(gray96)) continue;
 
-    runVisionInference(frame->buf, frame->len);
-    runProximityInference(frame->buf, frame->len);
-    releaseGrayFrame(frame);
+    runVisionInference(gray96, sizeof(gray96));
+    runProximityInference(gray96, sizeof(gray96));
   }
 }
 }

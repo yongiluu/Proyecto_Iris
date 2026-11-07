@@ -18,7 +18,7 @@ Hace, uno a la vez (el PC tiene ~7 GB de RAM):
      (cercania: vision/proximity_export.py --tflite ...).
   6. Verifica la libreria del firmware (tests/test_tflm_kernels.py) y compila la XIAO.
 
-Todo queda en ciclo_<fecha>.log. Despues: revisar el informe, subir el firmware y probar.
+Todo queda en logs/ciclo_<fecha>.log. Despues: revisar el informe, subir el firmware y probar.
 """
 import argparse
 import shutil
@@ -72,7 +72,8 @@ def main() -> None:
     python = sys.executable
 
     stamp = f"{datetime.now():%Y%m%d_%H%M}"
-    log = Logger(ML_DIR / f"ciclo_{stamp}.log")
+    (ML_DIR / "logs").mkdir(exist_ok=True)
+    log = Logger(ML_DIR / "logs" / f"ciclo_{stamp}.log")
     backup = MODELS / f"antes_{stamp}"
     backup.mkdir(parents=True, exist_ok=True)
     for target in targets:
@@ -128,7 +129,7 @@ def main() -> None:
         log.step("Compilando el firmware de la XIAO")
         log.run(PIO, "run", "-e", "seeed_xiao_esp32s3", "-j", "4", cwd=ML_DIR.parent / "Hardware_ESP32")
 
-    log.step(f"Listo. Revisa las comparaciones en ciclo_{stamp}.log (antes vs. despues sobre el mismo test).")
+    log.step(f"Listo. Revisa las comparaciones en logs/ciclo_{stamp}.log (antes vs. despues sobre el mismo test).")
 
 
 if __name__ == "__main__":

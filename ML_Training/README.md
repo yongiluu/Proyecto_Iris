@@ -8,6 +8,9 @@ Entrenamiento de los modelos TensorFlow Lite Micro que corren **dentro de la pla
 | Visión (`vision/`) | ✅ modelo v5 (MobileNet 0,5, Open Images) reforzado con fotos de la app | `nada`, `persona`, `vehiculo`, `escalera`, `puerta`, `cruce` |
 | Cercanía (`vision/proximity_*`) | ✅ v2 reforzada con fotos de la app; pitidos apagados por ahora | `libre`, `cerca`, `muy_cerca` |
 | Wake word (`wakeword/`) | ✅ v1 con las tomas de la app (una voz) | "Oye Iris" |
+| **Descripción de escenas (`scene/`)** | 🧪 en desarrollo: pipeline completo, profesor en Lambda pendiente | frase en español: lugar, objetos con color y posición, personas, peligros. Ver [`scene/README.md`](scene/README.md) |
+
+La cámara de la placa ahora entrega **color 160x120**. Los modelos de esta tabla, que son en grises, reciben el cuadrado central convertido a 96x96 en grises (`Hardware_ESP32/src/image_convert.cpp`, igual a `vision/board_image.py`, verificado por `tests/test_image_convert.py`). Los registros de entrenamiento van a `logs/`.
 
 ## Recolectar datos reales con la app (con o sin prototipo)
 
@@ -254,7 +257,7 @@ python wakeword/export_wake.py --umbral 0.9        # fijar el umbral (por defect
 # Modelo de visión (`vision/`)
 
 ```text
-cámara OV2640 96×96 grises ─► MobileNetV1 0.5 int8 (cada 0,5 s) ─► promedio de 2 frames ─► CMD_VISION_EVENT por BLE ─► la app vibra y avisa
+cámara OV2640 160x120 color ─► cuadrado central 96×96 grises ─► MobileNetV1 0.5 int8 (cada 0,5 s) ─► promedio de 2 frames ─► CMD_VISION_EVENT por BLE ─► la app vibra y avisa
 ```
 
 - Clases (en `vision/config.py`): `nada`, `persona`, `vehiculo`, `escalera`, `puerta`, `cruce` (paso de cebra). Se avisa de todas menos `nada`, con umbral `ALERT_THRESHOLD` = 0,75 y sin repetir la misma clase antes de 8 s (`VISION_EVENT_COOLDOWN_MS`). La app además calla cada clase por 20 s.
@@ -420,13 +423,14 @@ Es lo que más va a mejorar el modelo: la cámara real, a la altura y con el án
 
 ```bash
 cd Hardware_ESP32
-pio run -e seeed_xiao_esp32s3_photo_capture -t upload     # manda los frames 96x96 por USB (~5 por segundo)
+pio run -e seeed_xiao_esp32s3_photo_capture -t upload     # manda los frames a color 160x120 por USB (~2 por segundo)
 cd ../ML_Training
 python vision/capture_photos.py --label nada --count 300 --note casa       # una foto cada 0,5 s mientras caminas
 python vision/capture_photos.py --label puerta --count 100 --note casa
 python vision/capture_photos.py --label escalera --count 100 --note edificio
 python vision/capture_photos.py --label vehiculo --count 100 --note calle
 python vision/capture_photos.py --label persona --manual                     # ESPACIO guarda cada foto
+python vision/capture_photos.py --note pasillo --count 300                   # sin clase: solo a color, para describir escenas
 ```
 
 Las fotos quedan en `data/vision_board/<clase>/`. Después corre `prepare_dataset.py`, `train.py --finetune` y `export_model.py`, y vuelve a subir el firmware normal. Prioriza `nada` en muchos lugares distintos: es lo que evita los avisos falsos. Sirve también para revisar si la cámara quedó al revés (en ese caso, ver `camera_driver.cpp`).
