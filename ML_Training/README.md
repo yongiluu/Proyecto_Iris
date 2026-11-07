@@ -8,6 +8,7 @@ Entrenamiento de los modelos TensorFlow Lite Micro que corren **dentro de la pla
 | Visión (`vision/`) | ✅ modelo v5 (MobileNet 0,5, Open Images) reforzado con fotos de la app | `nada`, `persona`, `vehiculo`, `escalera`, `puerta`, `cruce` |
 | Cercanía (`vision/proximity_*`) | ✅ v2 reforzada con fotos de la app; pitidos apagados por ahora | `libre`, `cerca`, `muy_cerca` |
 | Wake word (`wakeword/`) | ✅ v1 con las tomas de la app (una voz) | "Oye Iris" |
+| **Lector de texto (`ocr/`)** | 🧪 en desarrollo: lector de líneas entrenado con texto sintético; falta el detector de dónde hay texto | letreros, etiquetas, precios, horarios, direcciones (texto impreso grande) |
 | **Descripción de escenas (`scene/`)** | 🧪 en desarrollo: pipeline completo, profesor en Lambda pendiente | frase en español: lugar, objetos con color y posición, personas, peligros. Ver [`scene/README.md`](scene/README.md) |
 
 La cámara de la placa ahora entrega **color 160x120**. Los modelos de esta tabla, que son en grises, reciben el cuadrado central convertido a 96x96 en grises (`Hardware_ESP32/src/image_convert.cpp`, igual a `vision/board_image.py`, verificado por `tests/test_image_convert.py`). Los registros de entrenamiento van a `logs/`.

@@ -77,13 +77,31 @@ Configuración estándar D0-D7, XCLK, PCLK, VSYNC, HREF, SIOD, SIOC, PWDN, RESET
 - Amplificador MAX98357A: LRC -> GPIO1 (D0), BCLK -> GPIO2 (D1), DIN -> GPIO3 (D2).
 - Botón push-to-talk -> GPIO4 (D3).
 
+## Detector de luz (en la placa)
+
+Como el de Seeing AI, pero sin celular de por medio: la placa pita cada ~0,16 s, más agudo cuanta más luz ve (de 150 a 2400 Hz). Sirve para saber si hay una luz prendida o dónde está la ventana.
+
+- **Cómo funciona:** apaga la exposición automática de la cámara para que el brillo mida la luz real, y vuelve a encenderla al terminar.
+- **Cómo se usa:** se enciende con el botón ☀ de la app (en modo placa) y se apaga con el mismo botón o solo, a los 3 minutos.
+- **Calibración:** `LIGHT_METER_*` en `config.h`. Con `LIGHT_METER_DEBUG 1`, la placa imprime el brillo medido.
+
+## Pruebas automáticas
+
+Cada push corre `.github/workflows/pruebas.yml` en GitHub y comprueba:
+
+- que el firmware compila para la XIAO y el devkit,
+- que la placa calcula **exactamente** lo mismo que el entrenamiento (audio, imagen y frases de escenas),
+- las reglas de seguridad de la base de datos,
+- el agente con memoria diaria,
+- el análisis de la app.
+
 ## Protocolo BLE
 
 | Característica | UUID | Sentido | Contenido |
 |---|---|---|---|
 | RX | `6E400002-...` | app -> placa | Solo audio TTS (PCM 16-bit mono 16 kHz) |
 | TX | `6E400003-...` | placa -> app | Audio del micrófono (PCM 16-bit mono 16 kHz) |
-| CMD | `6E400004-...` | ambos | `CMD_PTT_START/STOP`, `CMD_TAKE_PHOTO`, `CMD_BEEP_THINKING`, `CMD_PHOTO_START:<n>`, `CMD_PHOTO_END`, `CMD_PHOTO_ERROR`, `CMD_AUDIO_EVENT:<clase>:<%>` |
+| CMD | `6E400004-...` | ambos | `CMD_PTT_START/STOP`, `CMD_TAKE_PHOTO`, `CMD_BEEP_THINKING`, `CMD_PHOTO_START:<n>`, `CMD_PHOTO_END`, `CMD_PHOTO_ERROR`, `CMD_AUDIO_EVENT:<clase>:<%>`, `CMD_LIGHT_ON/OFF` (app → placa), `CMD_LIGHT:ON/OFF/<0-100>` (placa → app) |
 | PHOTO | `6E400005-...` | placa -> app | Fragmentos de la foto JPEG |
 
 ## Problemas Frecuentes
