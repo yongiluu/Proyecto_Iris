@@ -1,6 +1,7 @@
 import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:iris_app/services/ai/known_faces_service.dart';
 import 'package:iris_app/services/ai/phone_text_reader.dart';
 import 'package:iris_app/services/ai/voice_intents.dart';
 import 'package:iris_app/services/hardware/phone_light_meter.dart';
@@ -85,5 +86,11 @@ void main() {
       (top: 400, left: 10, text: '|'),
     ]);
     expect(text, 'FARMACIA. ABIERTO. Lunes a viernes');
+  });
+
+  test('Nombres: con o sin tildes es la misma persona', () {
+    expect(KnownFacesService.nameKey('Raúl'), 'Raul');
+    expect(KnownFacesService.nameKey('  maría   josé '), 'Maria Jose');
+    expect(KnownFacesService.nameKey(VoiceIntents.parse('olvida a Raúl').name!), 'Raul');
   });
 }
