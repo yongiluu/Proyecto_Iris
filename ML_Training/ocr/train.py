@@ -18,6 +18,7 @@ import numpy as np
 import tensorflow as tf
 
 import config
+from awake import keep_awake
 from model import build_model, character_error_rate, ctc_loss, greedy_decode
 
 KERAS_MODEL = config.MODELS_DIR / "ocr_reader.keras"
@@ -75,6 +76,7 @@ def main() -> None:
     parser.add_argument("--desde-epoca", type=int, default=0, dest="start_epoch",
                         help="seguir desde models/ocr_reader.keras como si ya se hubieran hecho N epocas")
     args = parser.parse_args()
+    keep_awake()
 
     tf.keras.utils.set_random_seed(config.SEED)
     train = Lines("train", args.batch_size, shuffle=True, workers=2, use_multiprocessing=False)

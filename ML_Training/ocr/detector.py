@@ -235,6 +235,8 @@ def main() -> None:
     if args.step == "synth":
         synth(args.workers)
     elif args.step == "train":
+        from awake import keep_awake
+        keep_awake()
         train(args.epochs, args.batch_size)
     elif args.step == "preview":
         image, target = SceneMaker(11).scene()
