@@ -41,7 +41,11 @@ class SceneMaker:
         self.np_rng = np.random.default_rng(seed)
         self.fonts = load_fonts()
         self.sentences = load_sentences()
-        self.photos = sorted(config.BACKGROUNDS_DIR.glob("*.jpg"))
+        # Solo fondos sin texto real (ocr/backgrounds.py): si no, aprende a ignorar el texto de verdad.
+        clean = config.DATA_DIR / "fondos_sin_texto.txt"
+        if not clean.exists():
+            raise SystemExit("Falta data/ocr/fondos_sin_texto.txt: corre python ocr/backgrounds.py")
+        self.photos = [config.BACKGROUNDS_DIR / f"{i}.jpg" for i in clean.read_text(encoding="utf-8").split()]
 
     def photo(self) -> Image.Image:
         image = Image.open(self.rng.choice(self.photos)).convert("L")
@@ -231,7 +235,7 @@ def main() -> None:
     elif args.step == "train":
         train(args.epochs, args.batch_size)
     elif args.step == "preview":
-        image, target = SceneMaker(5).scene()
+        image, target = SceneMaker(11).scene()
         preview = Image.fromarray(image).convert("RGB")
         overlay = Image.fromarray((target * 255).astype(np.uint8)).resize((W, H), Image.NEAREST)
         preview.paste((255, 0, 0), mask=overlay.point(lambda v: 90 if v else 0))
