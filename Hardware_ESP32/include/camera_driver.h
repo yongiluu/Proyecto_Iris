@@ -16,6 +16,10 @@ void releaseColorFrame(camera_fb_t* frame);
 // modelos en grises (escenas y cercania). out debe tener 96*96 bytes. false si no hubo frame.
 bool captureGray96(uint8_t* out);
 
+// Foto 640x480 en grises para el lector de texto (OCR). Reconfigura la camara y la restaura en release.
+camera_fb_t* acquireGrayVgaFrame();
+void releaseGrayVgaFrame(camera_fb_t* frame);
+
 // Foto JPEG para enviar al telefono. Reconfigura la camara y la restaura en release.
 camera_fb_t* acquireJpegFrame();
 void releaseJpegFrame(camera_fb_t* frame);

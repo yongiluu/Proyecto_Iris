@@ -99,6 +99,9 @@ class Esp32SpeechService {
   final ValueNotifier<int> boardVolume = ValueNotifier(50);
 
   /// Cambia el volumen de la placa (la placa lo aplica al tiro y lo guarda).
+  /// Pide a la placa que lea el texto que tiene adelante (lector de texto en la placa, sin internet).
+  Future<void> requestReadText() => _sendCommand('CMD_READ_TEXT');
+
   /// Enciende o apaga el detector de luz de la placa (tono mas agudo con mas luz).
   Future<void> setLightMeter(bool on) => _sendCommand(on ? 'CMD_LIGHT_ON' : 'CMD_LIGHT_OFF');
 
@@ -140,6 +143,9 @@ class Esp32SpeechService {
 
   /// Detector de luz de la placa: true/false al encenderse/apagarse (tambien se apaga solo).
   final ValueNotifier<bool> lightMeterOn = ValueNotifier(false);
+  /// Lector de texto de la placa: el texto leido (vacio si no encontro texto).
+  void Function(String text)? onTextRead;
+
   /// Nivel de luz 0-100 (~1 vez por segundo mientras esta encendido).
   final ValueNotifier<int?> lightLevel = ValueNotifier(null);
 
@@ -543,6 +549,8 @@ class Esp32SpeechService {
       if (parts.length >= 3) onVisionEvent?.call(parts[1], int.tryParse(parts[2]) ?? 0);
     } else if (command.startsWith('CMD_WAKE_WORD:')) {
       onWakeWord?.call(int.tryParse(command.split(':')[1]) ?? 0);
+    } else if (command.startsWith('CMD_TEXT:')) {
+      onTextRead?.call(command.substring('CMD_TEXT:'.length).trim());
     } else if (command.startsWith('CMD_LIGHT:')) {
       final value = command.substring('CMD_LIGHT:'.length);
       if (value == 'ON' || value == 'OFF') {

@@ -6,7 +6,7 @@
 #include <esp_heap_caps.h>
 
 namespace {
-enum class CameraMode { Color, Jpeg };
+enum class CameraMode { Color, Jpeg, GrayVga };
 
 SemaphoreHandle_t cameraMutex = nullptr;
 bool cameraReady = false;
@@ -63,6 +63,12 @@ bool startCamera(CameraMode mode) {
     config.frame_size = CAMERA_COLOR_FRAME_SIZE;
     config.jpeg_quality = 12; // Irrelevante en RGB565
     config.fb_count = 2;
+  } else if (mode == CameraMode::GrayVga) {
+    // Lector de texto: 640x480 en grises (1 byte por pixel, 300 KB en PSRAM). Las letras necesitan detalle.
+    config.pixel_format = PIXFORMAT_GRAYSCALE;
+    config.frame_size = FRAMESIZE_VGA;
+    config.jpeg_quality = 12;
+    config.fb_count = 1;
   } else {
     config.pixel_format = PIXFORMAT_JPEG;
     config.frame_size = PHOTO_FRAME_SIZE;
@@ -73,7 +79,7 @@ bool startCamera(CameraMode mode) {
   esp_err_t err = esp_camera_init(&config);
   if (err != ESP_OK) {
     Serial.printf("[Camara] Error al inicializar (modo %s): 0x%x\n",
-                  mode == CameraMode::Color ? "color" : "jpeg", err);
+                  mode == CameraMode::Color ? "color" : mode == CameraMode::Jpeg ? "jpeg" : "grises VGA", err);
     return false;
   }
 
@@ -176,6 +182,33 @@ camera_fb_t* acquireJpegFrame() {
   return frame;
 }
 
+camera_fb_t* acquireGrayVgaFrame() {
+  if (!cameraReady) {
+    tryRecover();
+    if (!cameraReady) return nullptr;
+  }
+  if (xSemaphoreTake(cameraMutex, kJpegLockTimeoutTicks) != pdTRUE) return nullptr;
+
+  if (!restartCamera(CameraMode::GrayVga)) {
+    cameraReady = restartCamera(CameraMode::Color);
+    xSemaphoreGive(cameraMutex);
+    return nullptr;
+  }
+
+  // Los primeros frames salen mal expuestos: se descartan.
+  for (int i = 0; i < PHOTO_SETTLE_FRAMES; i++) {
+    camera_fb_t* warmup = esp_camera_fb_get();
+    if (warmup) esp_camera_fb_return(warmup);
+  }
+
+  camera_fb_t* frame = esp_camera_fb_get();
+  if (frame == nullptr) {
+    cameraReady = restartCamera(CameraMode::Color);
+    xSemaphoreGive(cameraMutex);
+  }
+  return frame;
+}
+
 void releaseJpegFrame(camera_fb_t* frame) {
   if (frame != nullptr) esp_camera_fb_return(frame);
   cameraReady = restartCamera(CameraMode::Color);
@@ -198,4 +231,8 @@ void setCameraFixedExposure(bool fixed) {
   fixedExposure = fixed;
   if (cameraReady) applyExposure();
   xSemaphoreGive(cameraMutex);
+}
+
+void releaseGrayVgaFrame(camera_fb_t* frame) {
+  releaseJpegFrame(frame);  // mismo camino: devolver el frame y volver a color 160x120
 }

@@ -143,6 +143,7 @@ class _AssistantScreenState extends State<AssistantScreen>
       };
 
       _esp32SpeechService.onAudioEvent = _onAudioEvent;
+      _esp32SpeechService.onTextRead = _onTextRead;
       _esp32SpeechService.onVisionEvent = _onVisionEvent;
       _esp32SpeechService.onAudioContext = _sensorContext.onAudioContext;
       _esp32SpeechService.onVisionContext = _sensorContext.onVisionContext;
@@ -652,6 +653,7 @@ class _AssistantScreenState extends State<AssistantScreen>
     _proximityTimer?.cancel();
     _localThinkingTimer?.cancel();
     _phoneVision.dispose();
+    _readTextTimeout?.cancel();
     _pulseController.dispose();
     _fadeController.dispose();
     _nativeCameraService.dispose();
@@ -794,6 +796,50 @@ class _AssistantScreenState extends State<AssistantScreen>
             ),
           ],
         ),
+      ),
+    );
+  }
+
+  // ─── Lector de texto en la placa (sin internet) ───
+  Timer? _readTextTimeout;
+
+  Future<void> _readText() async {
+    if (!_esp32SpeechService.isConnected) {
+      await _ttsService.speakStatus('Primero conecta el modulo');
+      return;
+    }
+    if (_readTextTimeout != null) return; // ya hay una lectura en curso
+    setState(() => _statusText = 'Leyendo texto...');
+    await _hapticService.vibrateTick();
+    _readTextTimeout = Timer(const Duration(seconds: 20), () {
+      _readTextTimeout = null;
+      if (!mounted) return;
+      setState(() => _statusText = 'La placa no respondio');
+      _ttsService.speakStatus('La placa no respondio. Puede que no tenga el lector de texto instalado.',
+          esp32Service: _activeEsp32);
+    });
+    await _esp32SpeechService.requestReadText();
+  }
+
+  Future<void> _onTextRead(String text) async {
+    _readTextTimeout?.cancel();
+    _readTextTimeout = null;
+    if (!mounted) return;
+    setState(() => _statusText = text.isEmpty ? 'No encontre texto' : 'Texto: $text');
+    await _ttsService.speak(text.isEmpty ? 'No encontre texto. Acerca un poco el letrero.' : 'Dice: $text',
+        esp32Service: _activeEsp32);
+  }
+
+  Widget _buildReadTextButton() {
+    return Padding(
+      padding: const EdgeInsets.only(right: 8),
+      child: IconButton(
+        tooltip: 'Leer texto',
+        iconSize: 26,
+        constraints: const BoxConstraints(minWidth: 48, minHeight: 48),
+        style: IconButton.styleFrom(backgroundColor: AppTheme.cardDark),
+        icon: const Icon(Icons.chrome_reader_mode_outlined, color: AppTheme.textOnDarkMuted),
+        onPressed: _readText,
       ),
     );
   }
@@ -972,6 +1018,7 @@ class _AssistantScreenState extends State<AssistantScreen>
                     children: [
                       Expanded(child: _buildHardwareToggle()),
                       if (kShowDataMissions) _buildMissionsButton(),
+                      if (_hardwareMode == HardwareMode.esp32) _buildReadTextButton(),
                       if (_hardwareMode == HardwareMode.esp32) _buildLightMeterButton(),
                       if (BackendService.instance.enabled) _buildAccountButton(),
                     ],

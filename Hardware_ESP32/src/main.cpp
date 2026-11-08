@@ -15,6 +15,7 @@
 #include "tflite_vision.h"
 #include "vision_task.h"
 #include "light_meter.h"
+#include "ocr_task.h"
 #include "ota_update.h"
 
 namespace {
@@ -118,6 +119,10 @@ void onCommandReceived(const char* command) {
     requestLightMeter(true);
   } else if (strcmp(command, "CMD_LIGHT_OFF") == 0) {
     requestLightMeter(false);
+#ifdef IRIS_OCR
+  } else if (strcmp(command, "CMD_READ_TEXT") == 0) {
+    requestReadText();
+#endif
   } else {
     Serial.printf("[BLE] Comando desconocido: %s\n", command);
   }
@@ -132,6 +137,15 @@ void onAudioEvent(const char* label, int confidencePercent) {
 }
 
 // Se ejecuta en la tarea de vision. Formato: CMD_VISION_EVENT:<clase>:<porcentaje>
+#ifdef IRIS_OCR
+// Se ejecuta en la tarea del lector de texto. Formato: CMD_TEXT:<texto> (vacio si no encontro texto).
+void onTextRead(const char* text) {
+  static char command[440];
+  snprintf(command, sizeof(command), "CMD_TEXT:%s", text);
+  bleManager.sendCommand(command);
+}
+#endif
+
 void onVisionEvent(const char* label, int confidencePercent) {
   if (isIrisSpeaking()) return;  // no cortar la respuesta de Iris
   char command[48];
@@ -343,6 +357,9 @@ void setup() {
 
   if (!startPhotoTask()) Serial.println("Error al crear la tarea de fotos");
   if (!startVisionTask()) Serial.println("Error al crear la tarea de vision");
+#ifdef IRIS_OCR
+  if (!startOcrTask(onTextRead)) Serial.println("Error al iniciar el lector de texto");
+#endif
 
   Serial.printf("[Memoria] RAM interna libre %u bytes (bloque mayor %u), PSRAM libre %u bytes\n",
                 (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
