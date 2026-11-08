@@ -11,3 +11,6 @@ models/antes_*/
 models/*_candidato/
 # Alumno de escenas: pesado (11 MB) y se reemplaza seguido; se versiona el .tflite y los reportes
 models/scene_student.keras
+
+# Respaldos para retomar entrenamientos cortados
+models/*_respaldo/

@@ -81,7 +81,7 @@ jobs:
         run: deno test --allow-env tests/
 
   app:
-    name: App Flutter (analisis)
+    name: App Flutter (analisis y pruebas)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -98,3 +98,6 @@ jobs:
       - name: Analisis (errores y advertencias)
         working-directory: App_Flutter
         run: flutter analyze --no-fatal-infos
+      - name: Pruebas (comandos de voz, detector de luz, pantalla)
+        working-directory: App_Flutter
+        run: flutter test

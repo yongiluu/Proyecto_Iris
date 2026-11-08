@@ -209,7 +209,9 @@ def train(epochs: int, batch_size: int) -> None:
                   loss=bce_dice)
     model.fit(Batches(), validation_data=(val_images[..., np.newaxis].astype(np.float32), val_targets[..., np.newaxis].astype(np.float32)),
               epochs=epochs, verbose=2,
-              callbacks=[tf.keras.callbacks.ModelCheckpoint(KERAS_MODEL, monitor="val_loss", save_best_only=True)])
+              callbacks=[tf.keras.callbacks.BackupAndRestore(str(config.MODELS_DIR / "ocr_detector_respaldo"),
+                                                             delete_checkpoint=False),  # se puede cortar y seguir
+                         tf.keras.callbacks.ModelCheckpoint(KERAS_MODEL, monitor="val_loss", save_best_only=True)])
     model = tf.keras.models.load_model(KERAS_MODEL, compile=False)
     pred = model.predict(val_images[..., np.newaxis].astype(np.float32), batch_size=64, verbose=0)[..., 0] >= 0.5
     truth = val_targets.astype(bool)

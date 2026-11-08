@@ -1,6 +1,9 @@
 package com.iris.visual.iris_app
 
+import android.media.AudioAttributes
+import android.media.AudioFormat
 import android.media.AudioManager
+import android.media.AudioTrack
 import android.media.ToneGenerator
 import android.os.Handler
 import android.os.Looper
@@ -36,6 +39,14 @@ class MainActivity : FlutterActivity() {
                 }
                 return@setMethodCallHandler
             }
+            // Tono de una frecuencia dada (detector de luz del celular: mas agudo = mas luz).
+            if (call.method == "pitch") {
+                val hz = (call.argument<Int>("hz") ?: 440).coerceIn(80, 4000)
+                val ms = (call.argument<Int>("ms") ?: 120).coerceIn(20, 1000)
+                Thread { playPitch(hz, ms) }.start()
+                result.success(null)
+                return@setMethodCallHandler
+            }
             // querySent = doble pitido (consulta enviada); listening = un pitido (Iris escucha).
             val toneType = when (call.method) {
                 "querySent" -> ToneGenerator.TONE_PROP_ACK
@@ -55,6 +66,39 @@ class MainActivity : FlutterActivity() {
             } else {
                 result.notImplemented()
             }
+        }
+    }
+
+    private fun playPitch(hz: Int, ms: Int) {
+        try {
+            val rate = 22050
+            val n = rate * ms / 1000
+            val fade = minOf(n / 4, rate / 200) // 5 ms de entrada y salida: sin chasquidos
+            val samples = ShortArray(n) { i ->
+                val env = when {
+                    i < fade -> i.toDouble() / fade
+                    i > n - fade -> (n - i).toDouble() / fade
+                    else -> 1.0
+                }
+                (Math.sin(2.0 * Math.PI * hz * i / rate) * env * 0.6 * Short.MAX_VALUE).toInt().toShort()
+            }
+            val track = AudioTrack.Builder()
+                .setAudioAttributes(AudioAttributes.Builder()
+                    .setUsage(AudioAttributes.USAGE_MEDIA)
+                    .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION).build())
+                .setAudioFormat(AudioFormat.Builder()
+                    .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
+                    .setSampleRate(rate)
+                    .setChannelMask(AudioFormat.CHANNEL_OUT_MONO).build())
+                .setTransferMode(AudioTrack.MODE_STATIC)
+                .setBufferSizeInBytes(n * 2)
+                .build()
+            track.write(samples, 0, n)
+            track.play()
+            Thread.sleep(ms.toLong() + 30)
+            track.release()
+        } catch (e: Exception) {
+            // Sin audio no hay nada que hacer; el detector sigue vibrando.
         }
     }
 

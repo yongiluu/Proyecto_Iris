@@ -1,6 +1,10 @@
-/// ============================================================================
-/// IRIS - Main Assistant Screen (Dual Mode: Standalone & ESP32)
-/// ============================================================================
+// ============================================================================
+// IRIS - Main Assistant Screen (Dual Mode: Standalone & ESP32)
+// ============================================================================
+//
+// Pantalla principal: camara de fondo, una barra compacta arriba y un carrusel de modos
+// (Iris, Leer texto, Buscar luz, Personas). Todo se puede pedir tambien por voz desde
+// cualquier pagina ("Oye Iris, ¿que dice aqui?"). Los ajustes poco usados van en el engranaje.
 
 import 'dart:async';
 
@@ -11,14 +15,27 @@ import 'package:permission_handler/permission_handler.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:vibration/vibration.dart';
 
-import '../../../core/theme/app_theme.dart';
-import '../widgets/iris_logo.dart';
-import '../widgets/shimmer_text.dart';
+import '../assistant_modes.dart';
+import '../modes/assistant_mode_page.dart';
+import '../modes/light_mode_page.dart';
+import '../modes/people_mode_page.dart';
+import '../modes/read_text_mode_page.dart';
+import '../widgets/assistant_header.dart';
+import '../widgets/assistant_layout.dart';
+import '../widgets/board_picker.dart';
+import '../widgets/mode_carousel.dart';
+import '../widgets/people_sheets.dart';
+import '../widgets/settings_sheet.dart';
+import '../widgets/streaming_answer.dart';
 import '../widgets/vision_alert_banner.dart';
 import '../../../services/hardware/camera_service.dart';
 import '../../../services/hardware/esp32_speech_service.dart';
+import '../../../services/hardware/phone_light_meter.dart';
+import '../../../services/ai/known_faces_service.dart';
+import '../../../services/ai/phone_text_reader.dart';
 import '../../../services/ai/speech_service.dart';
 import '../../../services/ai/occipital_agent_service.dart';
+import '../../../services/ai/voice_intents.dart';
 import '../../../services/backend/backend_service.dart';
 import '../../account/account_screen.dart';
 import '../../../services/ai/phone_vision_service.dart';
@@ -27,7 +44,6 @@ import '../../data_collection/missions_screen.dart';
 import '../../../services/ai/tts_service.dart';
 import '../../../services/hardware/haptic_service.dart';
 
-enum HardwareMode { standalone, esp32 }
 
 class AssistantScreen extends StatefulWidget {
   const AssistantScreen({super.key});
@@ -38,7 +54,7 @@ class AssistantScreen extends StatefulWidget {
 
 class _AssistantScreenState extends State<AssistantScreen>
     with TickerProviderStateMixin {
-  
+
   // ─── Services ───
   final CameraService _nativeCameraService = CameraService();
   final SpeechService _nativeSpeechService = SpeechService();
@@ -48,6 +64,12 @@ class _AssistantScreenState extends State<AssistantScreen>
   final HapticService _hapticService = HapticService();
   final SensorContext _sensorContext = SensorContext();
   final PhoneVisionService _phoneVision = PhoneVisionService();
+  late final PhoneLightMeter _phoneLight = PhoneLightMeter(_nativeCameraService);
+  // Se crean al primer uso (abren recursos nativos).
+  PhoneTextReader? _textReaderInstance;
+  KnownFacesService? _facesInstance;
+  PhoneTextReader get _textReader => _textReaderInstance ??= PhoneTextReader();
+  KnownFacesService get _faces => _facesInstance ??= KnownFacesService();
 
   // ─── State ───
   HardwareMode _hardwareMode = HardwareMode.standalone;
@@ -55,8 +77,28 @@ class _AssistantScreenState extends State<AssistantScreen>
   bool _isInitialized = false;
   bool _isProcessing = false;
   String _lastDescription = '';
-  String _statusText = 'Presiona el boton para hablar';
-  
+  String _answerTitle = 'Respuesta';
+  /// En reposo no hay linea de estado: el texto bajo el boton ya dice que hacer.
+  static const String _idleStatus = '';
+  String _statusText = _idleStatus;
+
+  // ─── Carrusel de modos ───
+  IrisMode _mode = IrisMode.assistant;
+  final PageController _pageController = PageController();
+  /// true mientras el carrusel se mueve por codigo (comando de voz o pestaña): no anunciar
+  /// cada pagina intermedia.
+  bool _programmaticPageChange = false;
+
+  /// Sube con cada setState: la hoja de ajustes (otra ruta) se reconstruye con el estado nuevo.
+  final ValueNotifier<int> _revision = ValueNotifier(0);
+  bool _settingsOpen = false;
+
+  // ─── Tareas de los modos ───
+  bool _readingText = false;
+  bool _peopleBusy = false;
+  String? _enrollStatus;
+  int _enrollGeneration = 0;
+
   // ─── Continuous Mode ───
   bool _continuousMode = false;
   Timer? _continuousTimer;
@@ -74,11 +116,17 @@ class _AssistantScreenState extends State<AssistantScreen>
   DateTime? _lastVolumeUpTime;
 
   @override
+  void setState(VoidCallback fn) {
+    super.setState(fn);
+    _revision.value++;
+  }
+
+  @override
   void initState() {
     super.initState();
     _initAnimations();
     _initServices();
-    
+
     _volumeChannel.setMethodCallHandler((call) async {
       if (call.method == 'volumeUpPressed') {
         _handleVolumeUpPress();
@@ -120,7 +168,7 @@ class _AssistantScreenState extends State<AssistantScreen>
           _processAudio();
         }
       };
-      
+
       // Callback Nativo
       _nativeSpeechService.onSpeechDone = () {
         // Tambien en modo Modulo: ahi el microfono del celular se activa con el doble toque de volumen.
@@ -130,6 +178,12 @@ class _AssistantScreenState extends State<AssistantScreen>
       };
 
       _esp32SpeechService.onConnectionChanged = (bool connected) {
+        _boardHasNoReader = false; // otra placa (o la misma con firmware nuevo): volver a probar
+        if (!connected) {
+          // El detector de luz de la placa se apago con ella.
+          _esp32SpeechService.lightMeterOn.value = false;
+          _esp32SpeechService.lightLevel.value = null;
+        }
         if (mounted && _hardwareMode == HardwareMode.esp32) {
           setState(() {
             _statusText = connected ? 'Modulo conectado (Bluetooth)' : 'Buscando el modulo por Bluetooth...';
@@ -172,12 +226,13 @@ class _AssistantScreenState extends State<AssistantScreen>
         _initSafely('voz', _ttsService.initialize()),
         _initSafely('vibracion', _hapticService.initialize()),
         _initSafely('vision local', _phoneVision.load()),
+        _initSafely('personas', _faces.load()),
       ]);
       if (!mounted) return;
 
       setState(() => _isInitialized = true);
       _updatePhoneVision();
-      
+
       if (_hardwareMode == HardwareMode.esp32) {
          setState(() {
             _statusText = _esp32SpeechService.isConnected ? 'Modulo conectado (Bluetooth)' : 'Buscando el modulo por Bluetooth...';
@@ -202,7 +257,13 @@ class _AssistantScreenState extends State<AssistantScreen>
   /// Foto para el analisis de vision, segun el hardware activo.
   Future<Uint8List?> _captureImage() async {
     if (_hardwareMode == HardwareMode.esp32) return _esp32SpeechService.captureSingleFrame();
-    // La camara saca una foto a la vez: esperar a la de la vision local si hay una en curso.
+    return _capturePhonePhoto();
+  }
+
+  /// Foto con la camara del celular (tambien en modo Modulo: leer texto y personas la usan).
+  /// La camara saca una foto a la vez: espera a la de la vision local si hay una en curso.
+  Future<Uint8List?> _capturePhonePhoto() async {
+    if (!_nativeCameraService.isInitialized) return null;
     _cloudCaptureBusy = true;
     try {
       await _phoneVision.waitIdle();
@@ -230,6 +291,10 @@ class _AssistantScreenState extends State<AssistantScreen>
       !_isListening &&
       !_isProcessing &&
       !_cloudCaptureBusy &&
+      // Leer texto, personas y el detector de luz usan la misma camara.
+      !_readingText &&
+      !_peopleBusy &&
+      !_phoneLight.isOn &&
       // Las misiones de datos usan la misma camara.
       (ModalRoute.of(context)?.isCurrent ?? true);
 
@@ -237,6 +302,9 @@ class _AssistantScreenState extends State<AssistantScreen>
   /// la placa no tenga altavoz) suena en el celular aunque el modo sea Modulo.
   Esp32SpeechService? get _activeEsp32 =>
       _hardwareMode == HardwareMode.esp32 && !_answersOnPhone ? _esp32SpeechService : null;
+
+  /// Modo Modulo con la placa conectada: leer texto y luz usan la placa.
+  bool get _moduleConnected => _hardwareMode == HardwareMode.esp32 && _esp32SpeechService.isConnected;
 
   // ─── Modo prueba de la final (temporal): placa sin altavoz ni boton ───
   /// Misiones de recoleccion ocultas por ahora (el codigo queda).
@@ -281,7 +349,7 @@ class _AssistantScreenState extends State<AssistantScreen>
       context: context,
       backgroundColor: const Color(0xFF0B1116),
       isScrollControlled: true,
-      builder: (context) => _BoardPicker(service: _esp32SpeechService),
+      builder: (context) => BoardPicker(service: _esp32SpeechService),
     );
     _boardSheetOpen = false;
     if (mounted) setState(() {});
@@ -340,7 +408,7 @@ class _AssistantScreenState extends State<AssistantScreen>
         ? _hardwareMode == HardwareMode.standalone
         : _hardwareMode == HardwareMode.esp32 && !_esp32SpeechService.isCollectingData;
     if (!active) return;
-    if (_isListening || _isProcessing || _ttsService.isSpeaking) return;
+    if (_isListening || _isProcessing || _isTaskBusy || _ttsService.isSpeaking) return;
 
     final now = DateTime.now();
     final last = _lastVisionAlert[label];
@@ -453,8 +521,8 @@ class _AssistantScreenState extends State<AssistantScreen>
   void _onRecordingStarted() async {
     setState(() {
       _isListening = true;
-      _statusText = _isNativeMicActive 
-          ? 'Escuchando celular...' 
+      _statusText = _isNativeMicActive
+          ? 'Escuchando celular...'
           : 'Escuchando placa...';
     });
     _pulseController.repeat(reverse: true);
@@ -481,7 +549,7 @@ class _AssistantScreenState extends State<AssistantScreen>
 
   void _startContinuousMode() {
     _continuousTimer?.cancel();
-    
+
     if (_consecutiveCount == 0) {
       _captureAndDescribeContinuous();
       _consecutiveCount++;
@@ -492,7 +560,7 @@ class _AssistantScreenState extends State<AssistantScreen>
         _pauseContinuousMode();
         return;
       }
-      if (_isListening || _isProcessing) return;
+      if (_isListening || _isProcessing || _isTaskBusy) return;
 
       await _captureAndDescribeContinuous();
       _consecutiveCount++;
@@ -522,7 +590,8 @@ class _AssistantScreenState extends State<AssistantScreen>
     );
     if (desc != null && mounted) {
       setState(() {
-        _lastDescription = desc.replaceAll(RegExp(r'^\[(en|es)\]\s*', caseSensitive: false), '');
+        _answerTitle = 'Descripcion';
+        _lastDescription = TtsService.displayText(desc);
       });
       await _ttsService.speak(desc, esp32Service: _activeEsp32);
     }
@@ -532,7 +601,7 @@ class _AssistantScreenState extends State<AssistantScreen>
   // ─── Procesamiento de Audio STT ───
   Future<void> _processAudio() async {
     if (!_isListening) return;
-    
+
     _pulseController.stop();
     _pulseController.reset();
 
@@ -552,7 +621,7 @@ class _AssistantScreenState extends State<AssistantScreen>
     SystemSound.play(SystemSoundType.click);
 
     String prompt = '';
-    
+
     if (_isNativeMicActive) {
        prompt = await _nativeSpeechService.stopListening();
        _isNativeMicActive = false;
@@ -569,9 +638,10 @@ class _AssistantScreenState extends State<AssistantScreen>
     } else {
        prompt = await _nativeSpeechService.stopListening();
     }
-    
+
     prompt = _stripWakeWord(prompt);
     if (prompt.isEmpty) {
+      _stopThinking();
       _resetState('No entendi o hubo ruido, por favor intenta de nuevo');
       await _ttsService.speak('No escuche claramente, puedes repetir?', esp32Service: _activeEsp32);
       return;
@@ -581,22 +651,34 @@ class _AssistantScreenState extends State<AssistantScreen>
     final lowerPrompt = prompt.toLowerCase();
     final activateKeywords = ['activa el modo continuo', 'descripcion continua', 'describe todo el tiempo'];
     final deactivateKeywords = ['deja de describir', 'desactiva continuo'];
-    
+
     if (activateKeywords.any((k) => lowerPrompt.contains(k))) {
+       _stopThinking();
        _resetState('Activando modo continuo...');
+       _goToMode(IrisMode.assistant);
        _toggleContinuousMode(true);
        return;
     } else if (deactivateKeywords.any((k) => lowerPrompt.contains(k))) {
+       _stopThinking();
        _resetState('Desactivando modo continuo...');
        _toggleContinuousMode(false);
        return;
+    }
+
+    // Leer texto, luz y personas se resuelven en el celular, sin preguntarle al modelo.
+    final intent = VoiceIntents.parse(prompt);
+    if (intent.type != IrisIntentType.none) {
+      _stopThinking();
+      _resetState(null);
+      await _runIntent(intent);
+      return;
     }
 
     setState(() {
       _statusText = 'Analizando con Occipital...';
     });
     await _playQuerySentCue();
-    
+
     // Si la ESP32 va a analizar la imagen, que vuelva a sonar "Pensando..." durante el GPT
     if (_hardwareMode == HardwareMode.esp32) _startThinking();
 
@@ -614,12 +696,13 @@ class _AssistantScreenState extends State<AssistantScreen>
             ? () => _ttsService.speakStatus('Dejame mirar', esp32Service: _activeEsp32)
             : null,
       );
-      
+
       if (_hardwareMode == HardwareMode.esp32) _stopThinking();
-      
+
       _resetState(null);
       setState(() {
-        _lastDescription = (description ?? 'No se obtuvo respuesta.').replaceAll(RegExp(r'^\[(en|es)\]\s*', caseSensitive: false), '');
+        _answerTitle = 'Respuesta';
+        _lastDescription = TtsService.displayText(description ?? 'No se obtuvo respuesta.');
       });
 
       if (description != null) {
@@ -642,9 +725,367 @@ class _AssistantScreenState extends State<AssistantScreen>
       setState(() {
          _isListening = false;
          _isProcessing = false;
-         _statusText = errorMessage ?? 'Presiona el boton para hablar';
+         _statusText = errorMessage ?? _idleStatus;
       });
     }
+  }
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // Comandos de voz y modos
+  // ══════════════════════════════════════════════════════════════════════════
+
+  bool get _isTaskBusy => _readingText || _peopleBusy;
+
+  Future<void> _runIntent(IrisIntent intent) async {
+    switch (intent.type) {
+      case IrisIntentType.readText:
+        _goToMode(IrisMode.readText);
+        await _readText();
+      case IrisIntentType.lightOn:
+        _goToMode(IrisMode.light);
+        await _setLight(true);
+      case IrisIntentType.lightOff:
+        _goToMode(IrisMode.light);
+        await _setLight(false);
+      case IrisIntentType.whoIsHere:
+        _goToMode(IrisMode.people);
+        await _whoIsHere();
+      case IrisIntentType.rememberPerson:
+        _goToMode(IrisMode.people);
+        await _enrollPerson(intent.name ?? '');
+      case IrisIntentType.forgetPerson:
+        _goToMode(IrisMode.people);
+        await _forgetPerson(intent.name ?? '');
+      case IrisIntentType.none:
+        break;
+    }
+  }
+
+  /// Respuesta de un modo (texto leido, personas...): va al cuadro de respuesta y se dice.
+  Future<void> _showResult(String sentence, {required String status, String title = 'Respuesta'}) async {
+    if (!mounted) return;
+    setState(() {
+      _statusText = status;
+      _answerTitle = title;
+      _lastDescription = TtsService.displayText(sentence);
+    });
+    await _ttsService.speak(sentence, esp32Service: _activeEsp32);
+  }
+
+  /// Mueve el carrusel por codigo (comando de voz o pestaña). Las paginas intermedias no se
+  /// anuncian; con [announce] se anuncia la de destino.
+  void _goToMode(IrisMode target, {bool announce = false}) {
+    if (!mounted) return;
+    final previous = _mode;
+    if (previous != target) {
+      setState(() => _mode = target);
+      _afterModeSwitch(previous, target);
+      if (announce) _announceMode(target);
+    }
+    if (!_pageController.hasClients || _pageController.page?.round() == target.index) return;
+    _programmaticPageChange = true;
+    void done() {
+      _programmaticPageChange = false;
+      // Si el usuario deslizo durante la animacion, manda la pagina donde quedo.
+      final page = _pageController.hasClients ? _pageController.page?.round() : null;
+      if (mounted && page != null && page != _mode.index) _onPageSwiped(page);
+    }
+
+    if (_reduceMotion) {
+      _pageController.jumpToPage(target.index);
+      WidgetsBinding.instance.addPostFrameCallback((_) => done());
+    } else {
+      _pageController
+          .animateToPage(target.index, duration: const Duration(milliseconds: 320), curve: Curves.easeOut)
+          .whenComplete(done);
+    }
+  }
+
+  /// La persona deslizo el carrusel (con el dedo o con dos dedos en TalkBack).
+  void _onPageSwiped(int page) {
+    if (_programmaticPageChange || !mounted) return;
+    final target = IrisMode.values[page];
+    if (target == _mode) return;
+    final previous = _mode;
+    setState(() => _mode = target);
+    _afterModeSwitch(previous, target);
+    _announceMode(target);
+  }
+
+  void _afterModeSwitch(IrisMode previous, IrisMode next) {
+    // El detector de luz solo vive en su pagina: asi no queda pitando olvidado.
+    if (previous == IrisMode.light && next != IrisMode.light && _lightIsOn) {
+      unawaited(_setLight(false, speak: false));
+    }
+  }
+
+  /// Vibracion corta y, sin TalkBack, el nombre del modo en voz (con TalkBack lo anuncia la
+  /// region viva del carrusel; decirlo dos veces se superpone).
+  void _announceMode(IrisMode mode) {
+    _hapticService.vibrateTick();
+    final talkBack = MediaQuery.maybeAccessibleNavigationOf(context) ?? false;
+    if (talkBack || _isListening || _isProcessing || _isTaskBusy || _ttsService.isSpeaking) return;
+    _ttsService.speakStatus(mode.spokenName, esp32Service: _activeEsp32);
+  }
+
+  // ─── Leer texto: placa si esta conectada; si no (o si no responde), celular sin internet ───
+  Timer? _readTextTimeout;
+  /// La placa no respondio a CMD_READ_TEXT (firmware sin lector): no hacer esperar de nuevo.
+  bool _boardHasNoReader = false;
+
+  Future<void> _readText() async {
+    if (_readingText) return;
+    if (_lightIsOn) await _setLight(false, speak: false);
+    setState(() {
+      _readingText = true;
+      _statusText = 'Leyendo texto...';
+    });
+    await _hapticService.vibrateTick();
+    if (_moduleConnected && !_boardHasNoReader) {
+      _readTextTimeout?.cancel();
+      // La placa lee en 1-3 s; 8 s cubre el Bluetooth lento sin dejar esperando a la persona.
+      _readTextTimeout = Timer(const Duration(seconds: 8), () {
+        _readTextTimeout = null;
+        if (!mounted) return;
+        _boardHasNoReader = true;
+        // La placa puede no tener el lector instalado: se lee con la camara del celular.
+        setState(() => _statusText = 'La placa no respondio. Leo con el celular...');
+        unawaited(_readWithPhone());
+      });
+      await _esp32SpeechService.requestReadText();
+      return;
+    }
+    await _readWithPhone();
+  }
+
+  Future<void> _readWithPhone() async {
+    try {
+      final jpeg = await _capturePhonePhoto();
+      if (!mounted) return;
+      if (jpeg == null) {
+        await _showResult('No pude usar la camara del celular.', status: 'Sin camara', title: 'Texto leido');
+        return;
+      }
+      final text = await _textReader.read(jpeg);
+      if (!mounted) return;
+      await _deliverReadText(text);
+    } finally {
+      if (mounted) setState(() => _readingText = false);
+    }
+  }
+
+  Future<void> _onTextRead(String text) async {
+    final waiting = _readTextTimeout != null;
+    _readTextTimeout?.cancel();
+    _readTextTimeout = null;
+    if (!mounted) return;
+    // Llego tarde y el celular ya esta leyendo: manda el celular.
+    if (!waiting && _readingText) return;
+    setState(() => _readingText = false);
+    await _deliverReadText(text);
+  }
+
+  Future<void> _deliverReadText(String text) => _showResult(
+        text.isEmpty ? 'No encontre texto. Acerca un poco el letrero.' : 'Dice: $text',
+        status: text.isEmpty ? 'No encontre texto' : 'Texto leido',
+        title: 'Texto leido',
+      );
+
+  // ─── Buscar luz: la placa pita si esta conectada; si no, el celular mide y pita ───
+  bool get _lightIsOn => _esp32SpeechService.lightMeterOn.value || _phoneLight.isOn;
+
+  Future<void> _setLight(bool on, {bool speak = true}) async {
+    if (on) {
+      if (_lightIsOn) {
+        if (speak) await _ttsService.speakStatus('El detector de luz ya esta encendido', esp32Service: _activeEsp32);
+        return;
+      }
+      setState(() => _statusText = 'Detector de luz encendido');
+      if (_moduleConnected) {
+        await _esp32SpeechService.setLightMeter(true);
+        if (speak) await _ttsService.speakStatus('Detector de luz. Mas agudo, mas luz.', esp32Service: _activeEsp32);
+      } else {
+        // Primero la voz y despues los tonos, para que no se tapen.
+        if (speak) await _ttsService.speakAndWait('Detector de luz. Mas agudo, mas luz.');
+        if (!mounted || _mode != IrisMode.light) return;
+        _phoneLight.start(canCapture: () => mounted && !_cloudCaptureBusy && !_isListening);
+      }
+    } else {
+      final wasOn = _lightIsOn;
+      if (_esp32SpeechService.lightMeterOn.value && _esp32SpeechService.isConnected) {
+        await _esp32SpeechService.setLightMeter(false);
+      }
+      _phoneLight.stop();
+      if (!mounted) return;
+      if (wasOn) setState(() => _statusText = 'Detector de luz apagado');
+      if (speak) {
+        await _ttsService.speakStatus(wasOn ? 'Detector de luz apagado' : 'El detector de luz ya estaba apagado',
+            esp32Service: _activeEsp32);
+      }
+    }
+    if (mounted) setState(() {});
+  }
+
+  // ─── Personas conocidas (todo en el celular) ───
+
+  /// Carga la lista y el modelo; si el modelo no esta instalado, lo dice.
+  Future<bool> _facesReady() async {
+    await _faces.load();
+    if (!mounted) return false;
+    setState(() {}); // cantidad de personas guardadas
+    if (_faces.isAvailable) return true;
+    await _showResult('El reconocimiento de personas todavia no esta instalado.',
+        status: 'Personas: no instalado', title: 'Personas');
+    return false;
+  }
+
+  Future<void> _whoIsHere() async {
+    if (_peopleBusy) return;
+    if (!await _facesReady()) return;
+    setState(() {
+      _peopleBusy = true;
+      _statusText = 'Buscando caras...';
+    });
+    try {
+      await _hapticService.vibrateTick();
+      final jpeg = await _capturePhonePhoto();
+      if (!mounted) return;
+      if (jpeg == null) {
+        await _showResult('No pude usar la camara del celular.', status: 'Sin camara', title: 'Personas');
+        return;
+      }
+      final matches = await _faces.recognize(jpeg);
+      var sentence = KnownFacesService.describe(matches);
+      if (_faces.names.isEmpty && matches.isNotEmpty) {
+        sentence += ' Todavia no conozco a nadie: di "Oye Iris, recuerda a" y su nombre.';
+      }
+      await _showResult(sentence, status: matches.isEmpty ? 'No veo a nadie' : 'Personas', title: 'Personas');
+    } finally {
+      if (mounted) setState(() => _peopleBusy = false);
+    }
+  }
+
+  static const List<String> _enrollPrompts = [
+    'Foto 1. Que mire de frente al celular.',
+    'Foto 2. Que gire un poco la cara hacia un lado.',
+    'Foto 3. Ahora un poco hacia el otro lado.',
+    'Foto 4. Que levante un poco la barbilla.',
+    'Foto 5. De frente otra vez.',
+  ];
+
+  /// "Recuerda a Raul": ~5 fotos guiadas por voz, 1,5 s entre una y otra.
+  Future<void> _enrollPerson(String rawName) async {
+    final name = rawName.trim();
+    if (name.isEmpty || _peopleBusy) return;
+    if (!await _facesReady()) return;
+    final generation = ++_enrollGeneration;
+    bool cancelled() => !mounted || generation != _enrollGeneration;
+    if (_lightIsOn) await _setLight(false, speak: false);
+    setState(() {
+      _peopleBusy = true;
+      _enrollStatus = 'Agregando a $name';
+      _statusText = 'Agregando a $name';
+    });
+    var saved = 0;
+    try {
+      await _ttsService.speakAndWait('Voy a guardar la cara de $name con 5 fotos. Apunta el celular a su cara.',
+          esp32Service: _activeEsp32);
+      var step = 0, attempts = 0;
+      while (step < _enrollPrompts.length && attempts < _enrollPrompts.length + 4) {
+        if (cancelled()) return;
+        attempts++;
+        setState(() => _enrollStatus = '$name: foto ${step + 1} de ${_enrollPrompts.length}');
+        await _ttsService.speakAndWait(_enrollPrompts[step], esp32Service: _activeEsp32);
+        await Future<void>.delayed(const Duration(milliseconds: 1500));
+        if (cancelled()) return;
+        final jpeg = await _capturePhonePhoto();
+        if (cancelled()) return;
+        if (jpeg == null) {
+          await _ttsService.speakAndWait('No pude usar la camara del celular.', esp32Service: _activeEsp32);
+          break;
+        }
+        final count = await _faces.enroll(name, jpeg);
+        if (cancelled()) return;
+        if (count == 0) {
+          await _ttsService.speakAndWait('No veo su cara. Acerca un poco el celular.', esp32Service: _activeEsp32);
+          continue;
+        }
+        if (count < 0) {
+          await _ttsService.speakAndWait('Veo varias caras. Que quede solo $name al frente.',
+              esp32Service: _activeEsp32);
+          continue;
+        }
+        saved++;
+        step++;
+        SystemSound.play(SystemSoundType.click);
+        unawaited(_hapticService.vibrateTick());
+      }
+      if (cancelled()) return;
+      await _showResult(
+        saved == 0
+            ? 'No pude ver la cara de $name. Prueba con mas luz y un poco mas cerca.'
+            : 'Listo, ya conozco a $name. Guarde $saved fotos.',
+        status: saved == 0 ? 'No se guardo a $name' : '$name guardado',
+        title: 'Personas',
+      );
+    } finally {
+      if (mounted && generation == _enrollGeneration) {
+        setState(() {
+          _peopleBusy = false;
+          _enrollStatus = null;
+        });
+      }
+    }
+  }
+
+  void _cancelEnroll() {
+    _enrollGeneration++;
+    setState(() {
+      _peopleBusy = false;
+      _enrollStatus = null;
+      _statusText = 'Cancelado';
+    });
+    _ttsService.speakStatus('Cancelado', esp32Service: _activeEsp32);
+  }
+
+  Future<void> _forgetPerson(String rawName) async {
+    final name = rawName.trim();
+    if (name.isEmpty) return;
+    await _faces.load();
+    final removed = await _faces.forget(name);
+    if (!mounted) return;
+    await _showResult(
+      removed ? 'Listo, olvide a $name.' : 'No tengo guardado a $name.',
+      status: removed ? '$name olvidado' : 'No conozco a $name',
+      title: 'Personas',
+    );
+  }
+
+  Future<void> _addPersonFromScreen() async {
+    if (!await _facesReady() || !mounted) return;
+    final name = await askPersonName(context);
+    if (name != null && mounted) await _enrollPerson(name);
+  }
+
+  Future<void> _showPeopleList() async {
+    await _faces.load();
+    if (!mounted) return;
+    await showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: const Color(0xFF0B1116),
+      isScrollControlled: true,
+      showDragHandle: true,
+      builder: (context) => PeopleListSheet(
+        names: _faces.names,
+        samplesOf: _faces.samplesOf,
+        onForget: (name) async {
+          await _faces.forget(name);
+          if (mounted) setState(() {});
+          await _ttsService.speakStatus('Olvide a $name', esp32Service: _activeEsp32);
+        },
+      ),
+    );
+    if (mounted) setState(() {});
   }
 
   @override
@@ -653,9 +1094,14 @@ class _AssistantScreenState extends State<AssistantScreen>
     _proximityTimer?.cancel();
     _localThinkingTimer?.cancel();
     _phoneVision.dispose();
+    _phoneLight.dispose();
+    _textReaderInstance?.dispose();
+    _facesInstance?.dispose();
     _readTextTimeout?.cancel();
     _pulseController.dispose();
     _fadeController.dispose();
+    _pageController.dispose();
+    _revision.dispose();
     _nativeCameraService.dispose();
     _ttsService.dispose();
     _esp32SpeechService.dispose();
@@ -671,11 +1117,7 @@ class _AssistantScreenState extends State<AssistantScreen>
   /// true si el sistema pidio quitar animaciones (accesibilidad).
   bool get _reduceMotion => MediaQuery.maybeDisableAnimationsOf(context) ?? false;
 
-  Duration get _uiAnim => _reduceMotion ? Duration.zero : const Duration(milliseconds: 250);
-
-  /// Fondo de pantalla. Solo imagen: nada de texto aca, porque queda detras de las
-  /// tarjetas (antes "Buscando el modulo..." se superponia con la descripcion).
-  /// El estado de conexion del modulo se muestra dentro de la tarjeta de estado.
+  /// Fondo de pantalla. Solo imagen: nada de texto aca, porque queda detras de las tarjetas.
   Widget _buildCameraPreview() {
     const emptyBackground = DecoratedBox(
       decoration: BoxDecoration(
@@ -720,199 +1162,22 @@ class _AssistantScreenState extends State<AssistantScreen>
     );
   }
 
-  /// Velos oscuros arriba y abajo: el selector y el boton se leen aunque la camara
-  /// muestre algo claro.
-  Widget _buildScrims() {
-    return const IgnorePointer(
-      child: Stack(
-        fit: StackFit.expand,
-        children: [
-          Align(
-            alignment: Alignment.topCenter,
-            child: FractionallySizedBox(
-              heightFactor: 0.22,
-              widthFactor: 1,
-              child: DecoratedBox(
-                decoration: BoxDecoration(
-                  gradient: LinearGradient(
-                    begin: Alignment.topCenter,
-                    end: Alignment.bottomCenter,
-                    colors: [Color(0xB3000000), Color(0x00000000)],
-                  ),
-                ),
-              ),
-            ),
-          ),
-          Align(
-            alignment: Alignment.bottomCenter,
-            child: FractionallySizedBox(
-              heightFactor: 0.35,
-              widthFactor: 1,
-              child: DecoratedBox(
-                decoration: BoxDecoration(
-                  gradient: LinearGradient(
-                    begin: Alignment.topCenter,
-                    end: Alignment.bottomCenter,
-                    colors: [Color(0x00000000), Color(0xCC000000)],
-                  ),
-                ),
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildHardwareToggle() {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 8, 4, 8),
-      child: Container(
-        padding: const EdgeInsets.all(4),
-        decoration: BoxDecoration(
-          color: AppTheme.cardDark,
-          borderRadius: BorderRadius.circular(32),
-        ),
-        child: Row(
-          children: [
-            Expanded(
-              child: _buildToggleOption(
-                icon: Icons.smartphone,
-                label: 'Celular',
-                semanticLabel: 'Modo Celular',
-                semanticHint: 'Usa la cámara y el micrófono del teléfono',
-                mode: HardwareMode.standalone,
-              ),
-            ),
-            const SizedBox(width: 4),
-            Expanded(
-              child: _buildToggleOption(
-                icon: Icons.memory,
-                label: 'Modulo',
-                semanticLabel: 'Modo Módulo',
-                semanticHint: 'Usa la cámara y el micrófono de la placa',
-                mode: HardwareMode.esp32,
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  // ─── Lector de texto en la placa (sin internet) ───
-  Timer? _readTextTimeout;
-
-  Future<void> _readText() async {
-    if (!_esp32SpeechService.isConnected) {
-      await _ttsService.speakStatus('Primero conecta el modulo');
-      return;
-    }
-    if (_readTextTimeout != null) return; // ya hay una lectura en curso
-    setState(() => _statusText = 'Leyendo texto...');
-    await _hapticService.vibrateTick();
-    _readTextTimeout = Timer(const Duration(seconds: 20), () {
-      _readTextTimeout = null;
-      if (!mounted) return;
-      setState(() => _statusText = 'La placa no respondio');
-      _ttsService.speakStatus('La placa no respondio. Puede que no tenga el lector de texto instalado.',
-          esp32Service: _activeEsp32);
-    });
-    await _esp32SpeechService.requestReadText();
-  }
-
-  Future<void> _onTextRead(String text) async {
-    _readTextTimeout?.cancel();
-    _readTextTimeout = null;
-    if (!mounted) return;
-    setState(() => _statusText = text.isEmpty ? 'No encontre texto' : 'Texto: $text');
-    await _ttsService.speak(text.isEmpty ? 'No encontre texto. Acerca un poco el letrero.' : 'Dice: $text',
-        esp32Service: _activeEsp32);
-  }
-
-  Widget _buildReadTextButton() {
-    return Padding(
-      padding: const EdgeInsets.only(right: 8),
-      child: IconButton(
-        tooltip: 'Leer texto',
-        iconSize: 26,
-        constraints: const BoxConstraints(minWidth: 48, minHeight: 48),
-        style: IconButton.styleFrom(backgroundColor: AppTheme.cardDark),
-        icon: const Icon(Icons.chrome_reader_mode_outlined, color: AppTheme.textOnDarkMuted),
-        onPressed: _readText,
-      ),
-    );
-  }
-
-  /// Detector de luz de la placa: la placa pita mas agudo con mas luz (como Seeing AI).
-  Widget _buildLightMeterButton() {
-    return ValueListenableBuilder<bool>(
-      valueListenable: _esp32SpeechService.lightMeterOn,
-      builder: (context, on, _) => Padding(
-        padding: const EdgeInsets.only(right: 8),
-        child: Semantics(
-          toggled: on,
-          child: IconButton(
-            tooltip: on ? 'Apagar detector de luz' : 'Detector de luz',
-            iconSize: 26,
-            constraints: const BoxConstraints(minWidth: 48, minHeight: 48),
-            style: IconButton.styleFrom(backgroundColor: on ? AppTheme.alertAmber : AppTheme.cardDark),
-            icon: Icon(on ? Icons.light_mode : Icons.light_mode_outlined,
-                color: on ? AppTheme.textDark : AppTheme.textOnDarkMuted),
-            onPressed: () async {
-              if (!_esp32SpeechService.isConnected) {
-                await _ttsService.speakStatus('Primero conecta el modulo');
-                return;
-              }
-              await _esp32SpeechService.setLightMeter(!on);
-            },
-          ),
-        ),
-      ),
-    );
-  }
-
-  /// Mi cuenta: memoria, acompañantes y privacidad (solo con backend configurado).
-  Widget _buildAccountButton() {
-    return Padding(
-      padding: const EdgeInsets.only(right: 8),
-      child: IconButton(
-        tooltip: 'Mi cuenta',
-        iconSize: 26,
-        constraints: const BoxConstraints(minWidth: 48, minHeight: 48),
-        style: IconButton.styleFrom(backgroundColor: AppTheme.cardDark),
-        icon: const Icon(Icons.account_circle_outlined, color: AppTheme.textOnDarkMuted),
-        onPressed: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const AccountScreen())),
-      ),
-    );
-  }
-
-  /// Pantalla de recoleccion de datos (para el equipo, no para el usuario final).
-  Widget _buildMissionsButton() {
-    return Padding(
-      padding: const EdgeInsets.only(right: 8),
-      child: IconButton(
-        tooltip: 'Misiones de recolección de datos',
-        iconSize: 26,
-        constraints: const BoxConstraints(minWidth: 48, minHeight: 48),
-        style: IconButton.styleFrom(backgroundColor: AppTheme.cardDark),
-        icon: const Icon(Icons.assignment_outlined, color: AppTheme.textOnDarkMuted),
-        onPressed: () => Navigator.of(context).push(MaterialPageRoute(
-          builder: (_) => MissionsScreen(esp32: _esp32SpeechService, phoneCamera: _nativeCameraService),
-        )),
-      ),
-    );
-  }
-
-  /// Cambio de modo (misma logica de siempre, solo se saco del onTap).
+  /// Cambio de modo (misma logica de siempre).
   void _selectHardwareMode(HardwareMode mode) {
     if (_isListening || _isProcessing) return; // Bloquear cambio si esta ocupado
+    if (mode == _hardwareMode) return;
+    // El detector de luz y la lectura en curso eran del otro hardware.
+    if (_lightIsOn) unawaited(_setLight(false, speak: false));
+    final boardReadPending = _readTextTimeout != null;
+    _readTextTimeout?.cancel();
+    _readTextTimeout = null;
     setState(() {
+      if (boardReadPending) _readingText = false;
       _hardwareMode = mode;
       // La respuesta era de la otra camara: no dejarla como si fuera de esta.
       _lastDescription = '';
       _statusText = mode == HardwareMode.standalone
-          ? 'Presiona el boton para hablar'
+          ? _idleStatus
           : (_esp32SpeechService.isConnected
               ? 'Modulo conectado (Bluetooth)'
               : 'Buscando el modulo por Bluetooth...');
@@ -933,66 +1198,53 @@ class _AssistantScreenState extends State<AssistantScreen>
     );
   }
 
-  Widget _buildToggleOption({
-    required IconData icon,
-    required String label,
-    required String semanticLabel,
-    required String semanticHint,
-    required HardwareMode mode,
-  }) {
-    final isSelected = _hardwareMode == mode;
-    final enabled = !_isBusy;
-    final fg = isSelected ? AppTheme.textOnDark : AppTheme.textOnDarkMuted.withValues(alpha: 0.8);
-
-    return Semantics(
-      container: true,
-      inMutuallyExclusiveGroup: true,
-      checked: isSelected,
-      enabled: enabled,
-      label: semanticLabel,
-      hint: isSelected ? null : semanticHint,
-      onTap: enabled ? () => _selectHardwareMode(mode) : null,
-      child: ExcludeSemantics(
-        child: Material(
-          type: MaterialType.transparency,
-          child: InkWell(
-            borderRadius: BorderRadius.circular(28),
-            onTap: enabled ? () => _selectHardwareMode(mode) : null,
-            child: AnimatedContainer(
-              duration: _uiAnim,
-              constraints: const BoxConstraints(minHeight: 52),
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-              decoration: BoxDecoration(
-                color: isSelected ? AppTheme.accentCyan.withValues(alpha: 0.28) : Colors.transparent,
-                borderRadius: BorderRadius.circular(28),
-              ),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Icon(icon, color: isSelected ? AppTheme.brightCyan : fg, size: 22),
-                  const SizedBox(width: 8),
-                  // Con fuente muy grande la etiqueta se achica en vez de desbordar.
-                  Flexible(
-                    child: FittedBox(
-                      fit: BoxFit.scaleDown,
-                      child: Text(
-                        label,
-                        maxLines: 1,
-                        style: TextStyle(
-                          color: fg,
-                          fontSize: 17,
-                          fontWeight: isSelected ? FontWeight.w800 : FontWeight.w500,
-                        ),
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
+  Future<void> _openSettings() async {
+    if (_settingsOpen) return;
+    _settingsOpen = true;
+    await showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: const Color(0xFF0B1116),
+      isScrollControlled: true,
+      showDragHandle: true,
+      constraints: BoxConstraints(maxHeight: MediaQuery.sizeOf(context).height * 0.88),
+      builder: (sheetContext) => ValueListenableBuilder<int>(
+        valueListenable: _revision,
+        builder: (_, _, _) => SettingsSheet(
+          hardwareMode: _hardwareMode,
+          onHardwareModeChanged: _selectHardwareMode,
+          busy: _isBusy,
+          boardConnected: _esp32SpeechService.isConnected,
+          boardLabel: _esp32SpeechService.connectedBoardLabel ?? 'la placa',
+          problem: _esp32SpeechService.problem,
+          needsPermissions: _esp32SpeechService.needsPermissions,
+          onRequestPermissions: () async {
+            await _esp32SpeechService.ensurePermissions();
+            if (mounted) setState(() {});
+          },
+          onOpenAppSettings: openAppSettings,
+          onPickBoard: _showBoardPicker,
+          answersOnPhone: _answersOnPhone,
+          onAnswersOnPhoneChanged: _setAnswersOnPhone,
+          boardVolume: _esp32SpeechService.boardVolume,
+          onBoardVolumeChanged: _esp32SpeechService.setBoardVolume,
+          onOpenAccount: BackendService.instance.enabled
+              ? () {
+                  Navigator.pop(sheetContext);
+                  Navigator.of(context).push(MaterialPageRoute(builder: (_) => const AccountScreen()));
+                }
+              : null,
+          onOpenMissions: kShowDataMissions
+              ? () {
+                  Navigator.pop(sheetContext);
+                  Navigator.of(context).push(MaterialPageRoute(
+                    builder: (_) => MissionsScreen(esp32: _esp32SpeechService, phoneCamera: _nativeCameraService),
+                  ));
+                }
+              : null,
         ),
       ),
     );
+    _settingsOpen = false;
   }
 
   @override
@@ -1000,410 +1252,115 @@ class _AssistantScreenState extends State<AssistantScreen>
     // Avisos de vision local: misma fuente de datos (_statusText), pero en su propia tarjeta.
     final visionAlert = VisionAlert.tryParse(_statusText);
 
-    return Scaffold(
-      backgroundColor: Colors.black,
-      body: Stack(
-        fit: StackFit.expand,
-        children: [
-          // ─── VISOR DE CÁMARA ───
-          _buildCameraPreview(),
-          _buildScrims(),
-
-          SafeArea(
-            child: FadeTransition(
-              opacity: _fadeAnimation,
-              child: Column(
-                children: [
-                  Row(
-                    children: [
-                      Expanded(child: _buildHardwareToggle()),
-                      if (kShowDataMissions) _buildMissionsButton(),
-                      if (_hardwareMode == HardwareMode.esp32) _buildReadTextButton(),
-                      if (_hardwareMode == HardwareMode.esp32) _buildLightMeterButton(),
-                      if (BackendService.instance.enabled) _buildAccountButton(),
-                    ],
-                  ),
-                  Expanded(
-                    child: SingleChildScrollView(
-                      padding: const EdgeInsets.fromLTRB(16, 4, 16, 12),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.stretch,
-                        children: [
-                          _buildTopStatus(visionAlert),
-                          if (visionAlert != null) ...[
-                            const SizedBox(height: 12),
-                            VisionAlertBanner(alert: visionAlert),
-                          ],
-                          if (_lastDescription.isNotEmpty) ...[
-                            const SizedBox(height: 12),
-                            _buildDescriptionOverlay(),
-                          ],
-                        ],
-                      ),
-                    ),
-                  ),
-                  _buildFloatingIndicator(),
-                ],
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildTopStatus(VisionAlert? visionAlert) {
-    final Color accent;
-    final String phase;
-    final String phaseSpoken;
-    final IconData phaseIcon;
+    final AssistantPhase phase;
     if (!_isInitialized) {
-      accent = AppTheme.textOnDarkMuted;
-      phase = 'INICIANDO';
-      phaseSpoken = 'Iniciando';
-      phaseIcon = Icons.hourglass_top;
+      phase = AssistantPhase.starting;
     } else if (_isListening) {
-      accent = AppTheme.listeningRed;
-      phase = 'ESCUCHANDO';
-      phaseSpoken = 'Escuchando';
-      phaseIcon = Icons.mic;
-    } else if (_isProcessing) {
-      accent = AppTheme.brightCyan;
-      phase = 'PENSANDO';
-      phaseSpoken = 'Pensando';
-      phaseIcon = Icons.auto_awesome;
+      phase = AssistantPhase.listening;
+    } else if (_isProcessing || _isTaskBusy) {
+      phase = AssistantPhase.thinking;
     } else {
-      accent = AppTheme.accentCyan;
-      phase = 'IRIS LISTA';
-      phaseSpoken = 'Iris lista';
-      phaseIcon = Icons.check_circle_outline;
+      phase = AssistantPhase.ready;
     }
 
-    // Si hay aviso de vision, ese texto va en su tarjeta (con su propio liveRegion) y aca
-    // queda la indicacion de reposo, sin anunciarla.
-    final statusLine = visionAlert != null ? 'Presiona el boton para hablar' : _statusText;
-    // Borde solo mientras escucha o piensa; en reposo la tarjeta va limpia.
-    final borderColor = _isBusy ? accent.withValues(alpha: 0.7) : Colors.transparent;
-    final showModuleLink = _hardwareMode == HardwareMode.esp32;
-
-    return AnimatedContainer(
-      duration: _uiAnim,
-      padding: const EdgeInsets.fromLTRB(16, 12, 12, 16),
-      decoration: BoxDecoration(
-        color: AppTheme.cardDark,
-        borderRadius: BorderRadius.circular(AppTheme.cardRadius),
-        border: Border.all(color: borderColor, width: 1.5),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          // Con fuente grande el switch baja a otra linea en vez de achicar el texto.
-          Wrap(
-            alignment: WrapAlignment.spaceBetween,
-            crossAxisAlignment: WrapCrossAlignment.center,
-            spacing: 8,
-            runSpacing: 4,
-            children: [
-              Semantics(
-                header: true,
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    if (_isListening)
-                      Icon(phaseIcon, color: accent, size: 24)
-                    else
-                      // Logo de Iris: quieto en reposo, girando mientras piensa o arranca.
-                      IrisLogo(
-                        size: 26,
-                        color: accent,
-                        spinning: _isProcessing || !_isInitialized,
-                        turnDuration: Duration(milliseconds: _isProcessing ? 1600 : 4000),
-                      ),
-                    const SizedBox(width: 8),
-                    Flexible(
-                      child: Text(
-                        phase,
-                        semanticsLabel: phaseSpoken,
-                        style: TextStyle(
-                          color: _isBusy ? accent : AppTheme.textOnDark,
-                          fontSize: 17,
-                          fontWeight: FontWeight.w900,
-                          letterSpacing: 1.5,
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              _buildContinuousSwitch(),
-            ],
-          ),
-          if (statusLine.isNotEmpty) ...[
-            const SizedBox(height: 6),
-            // Solo se anuncia cuando cambia el texto; el brillo no afecta la semantica.
-            Semantics(
-              liveRegion: visionAlert == null,
-              child: ShimmerText(
-                statusLine,
-                active: _isBusy,
-                style: const TextStyle(fontSize: 19, fontWeight: FontWeight.w500, height: 1.35),
-              ),
-            ),
-          ],
-          if (showModuleLink) ...[
-            const SizedBox(height: 12),
-            _buildModuleLink(),
-          ],
-        ],
-      ),
-    );
-  }
-
-  Widget _buildContinuousSwitch() {
-    return MergeSemantics(
-      child: Semantics(
-        label: 'Modo continuo',
-        hint: 'Describe lo que ve la cámara de forma automática',
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Flexible(
-              child: GestureDetector(
-                excludeFromSemantics: true,
-                behavior: HitTestBehavior.opaque,
-                onTap: () => _toggleContinuousMode(!_continuousMode),
-                child: const ExcludeSemantics(
-                  child: Padding(
-                    padding: EdgeInsets.symmetric(vertical: 12),
-                    child: Text(
-                      'Continuo',
-                      style: TextStyle(color: AppTheme.textOnDarkMuted, fontSize: 15),
-                    ),
-                  ),
-                ),
-              ),
-            ),
-            Switch(
-              value: _continuousMode,
-              onChanged: _toggleContinuousMode,
-              activeThumbColor: Colors.black,
-              activeTrackColor: AppTheme.accentCyan,
-              inactiveThumbColor: AppTheme.textOnDarkMuted,
-              inactiveTrackColor: Colors.white24,
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  /// Estado de la conexion con el modulo (antes era un texto centrado en el fondo que
-  /// quedaba tapado por la tarjeta de descripcion).
-  Widget _buildModuleLink() {
+    final isModule = _hardwareMode == HardwareMode.esp32;
     final connected = _esp32SpeechService.isConnected;
-    final label = _esp32SpeechService.connectedBoardLabel;
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Semantics(
-          label: connected ? 'Conectado a $label' : 'Buscando el módulo por Bluetooth',
-          child: ExcludeSemantics(
-            child: Row(
-              children: [
-                Icon(
-                  connected ? Icons.bluetooth_connected : Icons.bluetooth_searching,
-                  color: connected ? AppTheme.accentCyan : AppTheme.alertAmber,
-                  size: 22,
+
+    return Scaffold(
+      backgroundColor: Colors.black,
+      body: FadeTransition(
+        opacity: _fadeAnimation,
+        child: AssistantLayout(
+          background: _buildCameraPreview(),
+          topBar: AssistantTopBar(
+            phase: phase,
+            hardwareLabel: !isModule ? 'Celular' : (connected ? 'Modulo conectado' : 'Buscando modulo'),
+            hardwareIcon: !isModule
+                ? Icons.smartphone
+                : (connected ? Icons.bluetooth_connected : Icons.bluetooth_searching),
+            hardwareWarning: isModule && !connected,
+            onOpenSettings: _openSettings,
+          ),
+          // Si hay aviso de vision, ese texto va en su tarjeta (con su propio liveRegion).
+          status: StatusLine(
+            text: visionAlert != null ? '' : _statusText,
+            active: _isBusy || _isTaskBusy,
+          ),
+          alert: visionAlert == null ? null : VisionAlertBanner(alert: visionAlert),
+          answer: _lastDescription.isEmpty
+              ? null
+              : StreamingAnswer(
+                  text: _lastDescription,
+                  progress: _ttsService.progress,
+                  title: _answerTitle,
                 ),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: Text(
-                    connected ? 'Conectado a $label' : 'Buscando el modulo...',
-                    style: const TextStyle(color: AppTheme.textOnDarkMuted, fontSize: 15),
-                  ),
-                ),
-              ],
-            ),
+          carousel: ModeCarousel(
+            controller: _pageController,
+            mode: _mode,
+            onModeChanged: (mode) => _onPageSwiped(mode.index),
+            onTabSelected: (mode) => _goToMode(mode, announce: true),
+            pageBuilder: _buildModePage,
           ),
         ),
-        ValueListenableBuilder<String?>(
-          valueListenable: _esp32SpeechService.problem,
-          builder: (context, problem, _) {
-            if (problem == null || connected) return const SizedBox.shrink();
-            return Padding(
-              padding: const EdgeInsets.only(top: 8),
-              child: Semantics(
-                liveRegion: true,
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(problem, style: const TextStyle(color: AppTheme.alertAmber, fontSize: 15, height: 1.3)),
-                    if (_esp32SpeechService.needsPermissions)
-                      Wrap(
-                        spacing: 8,
-                        children: [
-                          TextButton(
-                            onPressed: () async {
-                              await _esp32SpeechService.ensurePermissions();
-                              if (mounted) setState(() {});
-                            },
-                            child: const Text('Dar permiso', style: TextStyle(color: AppTheme.accentCyan)),
-                          ),
-                          TextButton(
-                            onPressed: openAppSettings,
-                            child: const Text('Abrir ajustes', style: TextStyle(color: AppTheme.accentCyan)),
-                          ),
-                        ],
-                      ),
-                  ],
-                ),
-              ),
-            );
-          },
-        ),
-        Wrap(
-          crossAxisAlignment: WrapCrossAlignment.center,
-          spacing: 8,
-          children: [
-            TextButton.icon(
-              onPressed: _showBoardPicker,
-              icon: const Icon(Icons.swap_horiz, color: AppTheme.accentCyan),
-              label: const Text('Cambiar placa', style: TextStyle(color: AppTheme.accentCyan, fontSize: 15)),
-            ),
-            MergeSemantics(
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  const Flexible(
-                    child: Text('Respuestas en el celular',
-                        style: TextStyle(color: AppTheme.textOnDarkMuted, fontSize: 15)),
-                  ),
-                  Switch(
-                    value: _answersOnPhone,
-                    onChanged: _setAnswersOnPhone,
-                    activeThumbColor: Colors.black,
-                    activeTrackColor: AppTheme.accentCyan,
-                    inactiveThumbColor: AppTheme.textOnDarkMuted,
-                    inactiveTrackColor: Colors.white24,
-                  ),
-                ],
-              ),
-            ),
-          ],
-        ),
-        _buildBoardVolume(connected),
-      ],
+      ),
     );
   }
 
-  /// Volumen del altavoz de la placa: slider de 5 a 100 (pasos de 5, se manda al soltar) y
-  /// botones grandes de -10 / +10.
-  Widget _buildBoardVolume(bool connected) {
-    return ValueListenableBuilder<int>(
-      valueListenable: _esp32SpeechService.boardVolume,
-      builder: (context, volume, _) {
-        final shown = _volumeDrag ?? volume;
-        Widget stepButton(int delta) => Semantics(
-              button: true,
-              label: delta < 0 ? 'Bajar volumen de la placa' : 'Subir volumen de la placa',
-              value: '$volume por ciento',
-              child: ExcludeSemantics(
-                child: IconButton(
-                  iconSize: 32,
-                  constraints: const BoxConstraints(minWidth: 56, minHeight: 56),
-                  style: IconButton.styleFrom(backgroundColor: Colors.white12),
-                  onPressed: connected ? () => _esp32SpeechService.setBoardVolume(volume + delta) : null,
-                  icon: Icon(delta < 0 ? Icons.remove : Icons.add, color: AppTheme.textOnDark),
-                ),
-              ),
-            );
-        return Padding(
-          padding: const EdgeInsets.only(top: 8),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              ExcludeSemantics(
-                child: Text('Volumen de la placa: $shown',
-                    style: const TextStyle(color: AppTheme.textOnDarkMuted, fontSize: 15)),
-              ),
-              Row(
-                children: [
-                  stepButton(-10),
-                  Expanded(
-                    child: Semantics(
-                      label: 'Volumen de la placa',
-                      child: Slider(
-                        value: shown.toDouble().clamp(5, 100),
-                        min: 5,
-                        max: 100,
-                        divisions: 19,
-                        label: '$shown',
-                        activeColor: AppTheme.accentCyan,
-                        inactiveColor: Colors.white24,
-                        onChanged: connected ? (v) => setState(() => _volumeDrag = v.round()) : null,
-                        onChangeEnd: connected
-                            ? (v) {
-                                setState(() => _volumeDrag = null);
-                                _esp32SpeechService.setBoardVolume(v.round());
-                              }
-                            : null,
-                      ),
-                    ),
-                  ),
-                  stepButton(10),
-                ],
-              ),
-            ],
+  Widget _buildModePage(BuildContext context, IrisMode mode) {
+    switch (mode) {
+      case IrisMode.assistant:
+        final isModule = _hardwareMode == HardwareMode.esp32;
+        // En modo Modulo se habla con "Oye Iris" (o el doble toque de volumen): el boton no graba.
+        final canTalkHere = !isModule || (kAppPttEnabled && _esp32SpeechService.isConnected);
+        return AnimatedBuilder(
+          animation: _pulseAnimation,
+          builder: (context, _) => AssistantModePage(
+            isListening: _isListening,
+            isProcessing: _isProcessing,
+            canTalkHere: canTalkHere,
+            isModule: isModule,
+            moduleConnected: _esp32SpeechService.isConnected,
+            continuousMode: _continuousMode,
+            onContinuousChanged: _toggleContinuousMode,
+            onPressDown: _talkButtonDown,
+            onPressUp: _talkButtonUp,
+            pulseScale: _pulseAnimation.value,
           ),
         );
-      },
-    );
-  }
-
-  int? _volumeDrag; // valor mientras se arrastra el slider (se manda al soltar)
-
-  Widget _buildDescriptionOverlay() {
-    return Container(
-      padding: const EdgeInsets.fromLTRB(18, 14, 18, 18),
-      decoration: BoxDecoration(
-        color: AppTheme.cardDark,
-        borderRadius: BorderRadius.circular(AppTheme.cardRadius),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Semantics(
-            header: true,
-            child: const Row(
-              children: [
-                Icon(Icons.spatial_audio_off, color: AppTheme.accentCyan, size: 20),
-                SizedBox(width: 8),
-                Flexible(
-                  child: Text(
-                    'ULTIMA DESCRIPCION',
-                    semanticsLabel: 'Última descripción',
-                    style: TextStyle(
-                      color: AppTheme.accentCyan,
-                      fontSize: 13,
-                      fontWeight: FontWeight.w800,
-                      letterSpacing: 1.2,
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          ),
-          const SizedBox(height: 10),
-          // Alineado a la izquierda: el texto justificado deja huecos que cuestan con baja vision.
-          Text(
-            _lastDescription,
-            style: const TextStyle(color: AppTheme.textOnDark, fontSize: 18, height: 1.45),
-          ),
-        ],
-      ),
-    );
+      case IrisMode.readText:
+        return ReadTextModePage(
+          isReading: _readingText,
+          usesBoard: _moduleConnected,
+          onRead: _readText,
+        );
+      case IrisMode.light:
+        return ListenableBuilder(
+          listenable: Listenable.merge([
+            _esp32SpeechService.lightMeterOn,
+            _esp32SpeechService.lightLevel,
+            _phoneLight.level,
+          ]),
+          builder: (context, _) {
+            final boardOn = _esp32SpeechService.lightMeterOn.value;
+            return LightModePage(
+              isOn: _lightIsOn,
+              level: boardOn ? _esp32SpeechService.lightLevel.value : _phoneLight.level.value,
+              onToggle: () => _setLight(!_lightIsOn),
+            );
+          },
+        );
+      case IrisMode.people:
+        return PeopleModePage(
+          isAvailable: _facesInstance?.isAvailable ?? false,
+          isBusy: _peopleBusy,
+          savedCount: _facesInstance?.names.length ?? 0,
+          onWhoIsHere: _whoIsHere,
+          onAddPerson: _addPersonFromScreen,
+          onShowPeople: _showPeopleList,
+          enrollStatus: _enrollStatus,
+          onCancelEnroll: _cancelEnroll,
+        );
+    }
   }
 
   /// Celular: microfono del celular. Modulo: pide a la placa que grabe con su microfono
@@ -1427,232 +1384,4 @@ class _AssistantScreenState extends State<AssistantScreen>
   }
 
   bool _appPttActive = false;
-
-  Widget _buildFloatingIndicator() {
-    final isModule = _hardwareMode == HardwareMode.esp32;
-    // En modo Modulo se habla con el boton de la placa: el de la pantalla no graba.
-    final canTalkHere = !isModule || (kAppPttEnabled && _esp32SpeechService.isConnected);
-    final Color fill = _isListening
-        ? AppTheme.listeningRed
-        : (canTalkHere ? AppTheme.primaryCyan : AppTheme.cardDark);
-    final IconData icon = _isListening ? Icons.graphic_eq : (canTalkHere ? Icons.mic : Icons.memory);
-    final Color iconColor = (_isListening || canTalkHere) ? const Color(0xFF00161A) : AppTheme.brightCyan;
-
-    final String caption;
-    if (_isListening) {
-      caption = canTalkHere ? 'Suelta para enviar' : 'Escuchando...';
-    } else {
-      caption = !isModule
-          ? 'Manten presionado para hablar'
-          : (canTalkHere
-              ? 'Manten presionado: habla al modulo'
-              : (_esp32SpeechService.isConnected ? 'Di "Oye Iris" para hablar' : 'Conecta el modulo para hablar'));
-    }
-
-    final String semanticLabel;
-    final String? semanticHint;
-    if (!canTalkHere) {
-      semanticLabel = _isListening ? 'Escuchando' : 'Hablar con Iris';
-      semanticHint = 'En modo Módulo, habla con el botón de la placa, '
-          'o presiona dos veces el botón de subir volumen';
-    } else if (_isListening) {
-      semanticLabel = 'Escuchando';
-      semanticHint = 'Toca dos veces para enviar tu pregunta';
-    } else {
-      semanticLabel = _isProcessing ? 'Iris está pensando. Hablar con Iris' : 'Hablar con Iris';
-      semanticHint = 'Toca dos veces para empezar a escuchar y otra vez para enviar. '
-          'Sin lector de pantalla: mantén presionado mientras hablas';
-    }
-
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 8, 16, 20),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          // Con TalkBack un toque doble llega como "tap" (bajar y soltar al instante): por eso
-          // el lector usa un toque para empezar y otro para enviar. Con el dedo sigue siendo
-          // mantener presionado, igual que antes.
-          Semantics(
-            container: true,
-            button: true,
-            enabled: canTalkHere,
-            label: semanticLabel,
-            hint: semanticHint,
-            onTap: canTalkHere || (_isListening && _isNativeMicActive)
-                ? () {
-                    if (_isListening) {
-                      _talkButtonUp();
-                    } else {
-                      _talkButtonDown();
-                    }
-                  }
-                : null,
-            child: ExcludeSemantics(
-              // Listener y no GestureDetector: no compite en la arena de gestos, asi que soltar el
-              // dedo siempre llega (antes podia perderse el "soltar" y no se mandaba CMD_APP_PTT_STOP).
-              child: Listener(
-                behavior: HitTestBehavior.opaque,
-                onPointerDown: (_) => _talkButtonDown(),
-                onPointerUp: (_) => _talkButtonUp(),
-                onPointerCancel: (_) => _talkButtonUp(),
-                child: AnimatedBuilder(
-                  animation: _pulseAnimation,
-                  builder: (context, child) {
-                    return Transform.scale(
-                      scale: _isListening && !_reduceMotion ? _pulseAnimation.value : 1.0,
-                      child: child,
-                    );
-                  },
-                  child: AnimatedContainer(
-                    duration: _uiAnim,
-                    width: 104,
-                    height: 104,
-                    decoration: BoxDecoration(
-                      shape: BoxShape.circle,
-                      color: fill,
-                      border: Border.all(
-                        color: canTalkHere || _isListening
-                            ? Colors.white.withValues(alpha: 0.6)
-                            : Colors.white24,
-                        width: 2,
-                      ),
-                      boxShadow: [
-                        BoxShadow(
-                          color: (_isListening ? AppTheme.listeningRed : AppTheme.primaryCyan)
-                              .withValues(alpha: canTalkHere || _isListening ? 0.45 : 0.2),
-                          blurRadius: 30,
-                          spreadRadius: 6,
-                        ),
-                      ],
-                    ),
-                    child: Center(
-                      // El boton es solo del microfono: el logo que gira va en la tarjeta de estado.
-                      child: Icon(icon, color: iconColor, size: 52),
-                    ),
-                  ),
-                ),
-              ),
-            ),
-          ),
-          const SizedBox(height: 12),
-          ExcludeSemantics(
-            child: Text(
-              caption,
-              textAlign: TextAlign.center,
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis,
-              style: const TextStyle(
-                color: AppTheme.textOnDark,
-                fontSize: 16,
-                fontWeight: FontWeight.w600,
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-/// Lista de placas Iris cercanas: elegir a cual conectarse y ponerles apodo ("Iris 1", "Iris 2").
-class _BoardPicker extends StatelessWidget {
-  const _BoardPicker({required this.service});
-
-  final Esp32SpeechService service;
-
-  Future<void> _rename(BuildContext context, IrisBoard board) async {
-    final controller = TextEditingController(text: board.nickname ?? '');
-    final name = await showDialog<String>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Apodo de la placa'),
-        content: TextField(
-          controller: controller,
-          autofocus: true,
-          decoration: InputDecoration(hintText: 'Ej. Iris 1', helperText: board.id),
-        ),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancelar')),
-          TextButton(onPressed: () => Navigator.pop(context, controller.text), child: const Text('Guardar')),
-        ],
-      ),
-    );
-    if (name != null) await service.setNickname(board.id, name);
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return SafeArea(
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
-        child: ValueListenableBuilder<List<IrisBoard>>(
-          valueListenable: service.boardsFound,
-          builder: (context, boards, _) {
-            return Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                Row(
-                  children: [
-                    const Expanded(
-                      child: Text('Elige tu placa Iris',
-                          style: TextStyle(color: Colors.white, fontSize: 20, fontWeight: FontWeight.bold)),
-                    ),
-                    IconButton(
-                      tooltip: 'Buscar de nuevo',
-                      onPressed: service.refreshBoards,
-                      icon: const Icon(Icons.refresh, color: AppTheme.accentCyan),
-                    ),
-                  ],
-                ),
-                if (boards.isEmpty)
-                  ValueListenableBuilder<String?>(
-                    valueListenable: service.problem,
-                    builder: (context, problem, _) => Padding(
-                      padding: const EdgeInsets.symmetric(vertical: 24),
-                      child: Semantics(
-                        liveRegion: true,
-                        child: Text(
-                          service.isScanning || problem == null
-                              ? 'Buscando placas... Enciende la placa y acercala al celular.'
-                              : problem,
-                          style: const TextStyle(color: AppTheme.textOnDarkMuted, fontSize: 16),
-                        ),
-                      ),
-                    ),
-                  ),
-                if (service.needsPermissions)
-                  const TextButton(
-                    onPressed: openAppSettings,
-                    child: Text('Abrir ajustes de la app', style: TextStyle(color: AppTheme.accentCyan)),
-                  ),
-                for (final board in boards)
-                  ListTile(
-                    contentPadding: EdgeInsets.zero,
-                    leading: Icon(
-                      board.id == service.connectedBoardId ? Icons.bluetooth_connected : Icons.memory,
-                      color: board.id == service.preferredBoardId ? AppTheme.accentCyan : AppTheme.textOnDarkMuted,
-                    ),
-                    title: Text(board.label, style: const TextStyle(color: Colors.white, fontSize: 18)),
-                    subtitle: Text(
-                      '${board.id}  ·  ${board.id == service.connectedBoardId ? 'conectada' : 'senal ${board.rssi} dBm'}',
-                      style: const TextStyle(color: AppTheme.textOnDarkMuted),
-                    ),
-                    trailing: IconButton(
-                      tooltip: 'Poner apodo',
-                      onPressed: () => _rename(context, board),
-                      icon: const Icon(Icons.edit, color: AppTheme.textOnDarkMuted),
-                    ),
-                    onTap: () {
-                      service.selectBoard(board.id);
-                      Navigator.pop(context);
-                    },
-                  ),
-              ],
-            );
-          },
-        ),
-      ),
-    );
-  }
 }

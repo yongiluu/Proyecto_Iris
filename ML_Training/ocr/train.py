@@ -3,6 +3,10 @@
     python ocr/train.py                 # ~2 h en CPU
     python ocr/train.py --epochs 30     # en GPU / Lambda
 
+Se puede cortar cuando quieras (cerrar, apagar el PC): al volver a correrlo sigue desde la ultima
+epoca terminada (models/ocr_reader_respaldo/). --desde-epoca N parte de models/ocr_reader.keras como
+si ya se hubieran hecho N epocas (para retomar un entrenamiento hecho sin respaldo).
+
 Guarda models/ocr_reader.keras y models/ocr_report.txt (errores por caracter y lineas perfectas).
 """
 import argparse
@@ -18,6 +22,7 @@ from model import build_model, character_error_rate, ctc_loss, greedy_decode
 
 KERAS_MODEL = config.MODELS_DIR / "ocr_reader.keras"
 REPORT = config.MODELS_DIR / "ocr_report.txt"
+BACKUP_DIR = config.MODELS_DIR / "ocr_reader_respaldo"
 
 
 class Lines(tf.keras.utils.PyDataset):
@@ -67,6 +72,8 @@ def main() -> None:
     parser.add_argument("--batch-size", type=int, default=64)
     parser.add_argument("--lr", type=float, default=2e-3)
     parser.add_argument("--width", type=float, default=1.0)
+    parser.add_argument("--desde-epoca", type=int, default=0, dest="start_epoch",
+                        help="seguir desde models/ocr_reader.keras como si ya se hubieran hecho N epocas")
     args = parser.parse_args()
 
     tf.keras.utils.set_random_seed(config.SEED)
@@ -80,8 +87,17 @@ def main() -> None:
     model.compile(optimizer=tf.keras.optimizers.Adam(tf.keras.optimizers.schedules.CosineDecay(args.lr, steps, alpha=0.02)),
                   loss=ctc_loss)
     config.MODELS_DIR.mkdir(parents=True, exist_ok=True)
-    model.fit(train, validation_data=val, epochs=args.epochs, verbose=2,
-              callbacks=[tf.keras.callbacks.ModelCheckpoint(KERAS_MODEL, monitor="val_loss", save_best_only=True)])
+    callbacks = [tf.keras.callbacks.BackupAndRestore(str(BACKUP_DIR), delete_checkpoint=False),
+                 tf.keras.callbacks.ModelCheckpoint(KERAS_MODEL, monitor="val_loss", save_best_only=True)]
+    initial_epoch = 0
+    if args.start_epoch and not BACKUP_DIR.exists():
+        model.set_weights(tf.keras.models.load_model(KERAS_MODEL, compile=False).get_weights())
+        model.optimizer.build(model.trainable_variables)
+        model.optimizer.iterations.assign(args.start_epoch * len(train))  # la tasa de aprendizaje sigue donde iba
+        initial_epoch = args.start_epoch
+        print(f"Siguiendo desde {KERAS_MODEL.name} como epoca {initial_epoch}")
+    model.fit(train, validation_data=val, epochs=args.epochs, initial_epoch=initial_epoch, verbose=2,
+              callbacks=callbacks)
 
     model = tf.keras.models.load_model(KERAS_MODEL, compile=False)
     report = evaluate(lambda x: model.predict(np.asarray(x)[..., np.newaxis].astype(np.float32), batch_size=256, verbose=0),
