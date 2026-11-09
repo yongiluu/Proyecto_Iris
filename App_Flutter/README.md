@@ -1,17 +1,41 @@
-# iris_app
+# App de Iris
 
-A new Flutter project.
+App para personas ciegas o con baja visión. Todo se puede hacer **por voz**: "Oye Iris" en la placa
+o doble toque en el botón de subir volumen del celular, y después la pregunta o el comando.
 
-## Getting Started
+## Modos (carrusel: deslizar de lado)
 
-This project is a starting point for a Flutter application.
+| Modo | Botón grande | Por voz |
+|---|---|---|
+| Iris | Mantener para hablar | Cualquier pregunta: "¿qué hay adelante?", "¿qué tiempo hace?" |
+| Leer | Tocar para leer | "¿Qué dice aquí?", "léeme esto" |
+| Luz | Prender / apagar | "Busca la luz", "apaga el detector de luz" |
+| Personas | ¿Quién está? | "¿Quién está aquí?", "recuerda a Raúl", "olvida a Raúl" |
 
-A few resources to get you started if this is your first Flutter project:
+Los ajustes poco usados (Celular o Módulo, cambiar placa, volumen de la placa, Mi cuenta) están en
+el engranaje de arriba.
 
-- [Learn Flutter](https://docs.flutter.dev/get-started/learn-flutter)
-- [Write your first Flutter app](https://docs.flutter.dev/get-started/codelab)
-- [Flutter learning resources](https://docs.flutter.dev/reference/learning-resources)
+## Comandos que funcionan sin internet
 
-For help getting started with Flutter development, view the
-[online documentation](https://docs.flutter.dev/), which offers tutorials,
-samples, guidance on mobile development, and a full API reference.
+Se resuelven en el celular, al instante, sin pasar por el modelo de lenguaje
+(`lib/services/ai/voice_intents.dart`):
+
+- **Leer texto**: con la placa conectada lee la placa (si su firmware tiene el lector); si no, la
+  cámara del celular (ML Kit).
+- **Buscar luz**: tono más agudo con más luz (placa o celular).
+- **Personas conocidas**: reconoce caras guardadas con "recuerda a …" (5 fotos guiadas por voz). Solo
+  se guarda una huella numérica de la cara, nunca fotos, y nada sale del celular. Pedirle permiso a la
+  persona antes de guardarla.
+- **Repite**, **¿qué puedes hacer?**, **¿qué hora es?**, **habla más lento / más rápido**,
+  **cállate**.
+
+## Desarrollo
+
+```bash
+flutter pub get
+flutter analyze
+flutter test
+```
+
+Las llaves van en `.env` (ver `.env.template`); nunca se suben al repositorio.
+Avisos de licencias de terceros: `THIRD_PARTY_NOTICES.md`.

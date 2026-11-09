@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:math' as math;
 
+import 'package:camera/camera.dart' show ExposureMode;
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 
@@ -31,11 +32,16 @@ class PhoneLightMeter {
     if (_running) return;
     _running = true;
     _startedAt = DateTime.now();
+    // Exposicion fija: con la automatica la camara aclara lo oscuro y oscurece lo claro, y el tono
+    // casi no cambiaria (la placa hace lo mismo con setCameraFixedExposure). Queda fija en lo que
+    // ve al encender, asi que mide "mas o menos luz que al empezar": justo lo que sirve para buscarla.
+    unawaited(_setExposure(ExposureMode.locked));
     final generation = ++_generation;
     unawaited(_loop(generation, canCapture));
   }
 
   void stop() {
+    if (_running) unawaited(_setExposure(ExposureMode.auto));
     _running = false;
     _generation++;
     level.value = null;
@@ -59,6 +65,14 @@ class PhoneLightMeter {
         }
       }
       await Future<void>.delayed(const Duration(milliseconds: 150));
+    }
+  }
+
+  Future<void> _setExposure(ExposureMode mode) async {
+    try {
+      await _camera.controller?.setExposureMode(mode);
+    } catch (e) {
+      debugPrint('[Luz celular] No se pudo cambiar la exposicion: $e');
     }
   }
 
