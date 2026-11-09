@@ -294,6 +294,7 @@ class _AssistantScreenState extends State<AssistantScreen>
       // Leer texto, personas y el detector de luz usan la misma camara.
       !_readingText &&
       !_peopleBusy &&
+      !_peopleScanning &&
       !_phoneLight.isOn &&
       // Las misiones de datos usan la misma camara.
       (ModalRoute.of(context)?.isCurrent ?? true);
@@ -854,6 +855,59 @@ class _AssistantScreenState extends State<AssistantScreen>
     if (previous == IrisMode.light && next != IrisMode.light && _lightIsOn) {
       unawaited(_setLight(false, speak: false));
     }
+    // En la pagina Personas el celular mira solo y avisa a quien reconoce.
+    if (next == IrisMode.people) {
+      _startPeopleScan();
+    } else {
+      _stopPeopleScan();
+    }
+  }
+
+  // ─── Personas: aviso automatico ("Aqui esta Raul") mientras se esta en la pagina ───
+  static const Duration _peopleScanPeriod = Duration(milliseconds: 2500);
+  static const Duration _personCooldown = Duration(seconds: 30);
+  Timer? _peopleScanTimer;
+  bool _peopleScanning = false;
+  final Map<String, DateTime> _lastPersonAnnounced = {};
+
+  Future<void> _startPeopleScan() async {
+    _stopPeopleScan();
+    await _faces.load();
+    // Sin modelo o sin nadie guardado no hay a quien reconocer.
+    if (!mounted || _mode != IrisMode.people || !_faces.isAvailable || _faces.names.isEmpty) return;
+    _peopleScanTimer = Timer.periodic(_peopleScanPeriod, (_) => _scanPeopleOnce());
+  }
+
+  void _stopPeopleScan() {
+    _peopleScanTimer?.cancel();
+    _peopleScanTimer = null;
+  }
+
+  Future<void> _scanPeopleOnce() async {
+    if (_peopleScanning || !mounted || _mode != IrisMode.people) return;
+    // No interrumpir: ni mientras habla, escucha o hace otra cosa con la camara.
+    if (_isBusy || _isTaskBusy || _readingText || _ttsService.isSpeaking || _cloudCaptureBusy) return;
+    if (ModalRoute.of(context)?.isCurrent == false) return; // hoja de ajustes o lista abierta
+    _peopleScanning = true;
+    try {
+      final jpeg = await _capturePhonePhoto();
+      if (jpeg == null || !mounted || _mode != IrisMode.people) return;
+      final matches = await _faces.recognize(jpeg);
+      final now = DateTime.now();
+      final fresh = matches.where((m) {
+        if (m.name == null) return false; // a los desconocidos no se los anuncia solos
+        final last = _lastPersonAnnounced[m.name!];
+        return last == null || now.difference(last) > _personCooldown;
+      }).toList();
+      if (fresh.isEmpty || !mounted || _mode != IrisMode.people || _isBusy || _isTaskBusy) return;
+      for (final m in fresh) {
+        _lastPersonAnnounced[m.name!] = now;
+      }
+      await _hapticService.vibrateTick();
+      await _showResult(KnownFacesService.describe(fresh), status: 'Personas', title: 'Personas');
+    } finally {
+      _peopleScanning = false;
+    }
   }
 
   /// Vibracion corta y, sin TalkBack, el nombre del modo en voz (con TalkBack lo anuncia la
@@ -1067,6 +1121,11 @@ class _AssistantScreenState extends State<AssistantScreen>
         status: saved == 0 ? 'No se guardo a $name' : '$name guardado',
         title: 'Personas',
       );
+      if (saved > 0) {
+        // Esta al frente: no anunciarla de inmediato. Y si era la primera persona, empezar a mirar.
+        _lastPersonAnnounced[KnownFacesService.nameKey(name)] = DateTime.now();
+        if (_mode == IrisMode.people && _peopleScanTimer == null) unawaited(_startPeopleScan());
+      }
     } finally {
       if (mounted && generation == _enrollGeneration) {
         setState(() {
@@ -1139,6 +1198,7 @@ class _AssistantScreenState extends State<AssistantScreen>
     _readTextTimeout?.cancel();
     _pulseController.dispose();
     _fadeController.dispose();
+    _peopleScanTimer?.cancel();
     _pageController.dispose();
     _revision.dispose();
     _nativeCameraService.dispose();

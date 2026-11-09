@@ -291,7 +291,6 @@ class KnownFacesService {
 
   /// "raúl  pérez" y "Raul Perez" son la misma persona: sin tildes (la voz llega sin ellas) y con
   /// mayuscula inicial.
-  @visibleForTesting
   static String nameKey(String name) => VoiceIntents.normalize(name)
       .split(' ')
       .where((w) => w.isNotEmpty)

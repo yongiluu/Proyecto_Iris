@@ -72,11 +72,13 @@ class PeopleModePage extends StatelessWidget {
       extra: extra,
       caption: !isAvailable
           ? 'Reconocimiento de personas aun no instalado'
-          : (isBusy ? 'Mirando...' : 'Toca: ¿quien esta aqui?'),
+          : (isBusy
+              ? 'Mirando...'
+              : (savedCount > 0 ? 'Te aviso solo a quien conozco' : 'Toca: ¿quien esta aqui?')),
       action: ModeActionButton(
         icon: Icons.face_retouching_natural,
         semanticLabel: '¿Quién está aquí?',
-        semanticHint: 'Apunta la cámara a las personas. Te digo a quién conozco',
+        semanticHint: 'Apunta la cámara a las personas. En esta página te aviso solo cuando veo a alguien que conozco',
         enabled: !isBusy,
         active: isBusy,
         onTap: onWhoIsHere,
