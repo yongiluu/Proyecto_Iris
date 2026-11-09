@@ -43,7 +43,8 @@ if errorlevel 1 goto fallo
 
 echo [%date% %time%] LISTO >> %LOG%
 echo.
-echo LISTO. Avisale a Claude: hay que compilar y subir el firmware del lector.
+echo LISTO. Para pasarlo a la placa: python Hardware_ESP32\tools\subir_modelos.py
+echo (o avisale a Claude).
 pause
 exit /b 0
 

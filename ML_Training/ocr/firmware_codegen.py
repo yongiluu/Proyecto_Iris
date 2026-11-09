@@ -2,7 +2,7 @@
 
     python ocr/firmware_codegen.py
 
-export_model.py escribe ademas los modelos (ocr_model_data.*). tests/test_ocr_pipeline.py regenera esto.
+export_model.py escribe los .tflite, que van a la particion "modelos" (tools/pack_models.py). tests/test_ocr_pipeline.py regenera esto.
 """
 import config
 import pipeline
@@ -33,6 +33,11 @@ constexpr int kOcrLineWidth = {config.LINE_WIDTH};
 constexpr int kOcrTimeSteps = {config.TIME_STEPS};      // salida del lector: columnas
 constexpr int kOcrNumClasses = {config.NUM_CLASSES};    // 0 = blanco de CTC
 constexpr int kOcrMaxPieces = {pipeline.MAX_PIECES};                        // trozos por linea larga
+constexpr int kOcrDetectThreshold = {config.DETECT_THRESHOLD};  // celda con texto si probabilidad*255 >= esto
+
+// Nombres de los modelos en la particion "modelos" (model_store.h, ML_Training/tools/pack_models.py)
+constexpr const char* kOcrReaderModelName = "ocr_lector";
+constexpr const char* kOcrDetectorModelName = "ocr_detector";
 
 // Caracter (UTF-8) de cada clase; kOcrCharset[0] es el blanco.
 extern const char* const kOcrCharset[kOcrNumClasses];

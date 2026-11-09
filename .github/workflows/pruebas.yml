@@ -56,6 +56,9 @@ jobs:
       - name: Lector de texto (recortes y decodificacion) C++ vs Python
         working-directory: ML_Training
         run: python tests/test_ocr_pipeline.py
+      - name: Paquete de modelos (particion de la placa) C++ vs Python
+        working-directory: ML_Training
+        run: python tests/test_model_store.py
       - name: Las tablas generadas para el firmware estan al dia
         run: git diff --exit-code -- Hardware_ESP32/include/scene_vocab.h Hardware_ESP32/src/scene_vocab.cpp Hardware_ESP32/include/ocr_config.h Hardware_ESP32/src/ocr_config.cpp
 

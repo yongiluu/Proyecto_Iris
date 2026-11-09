@@ -1,5 +1,5 @@
-// Solo en las placas con el lector de texto (IRIS_OCR en platformio.ini): necesita los modelos
-// generados por ML_Training/ocr/export_model.py y la particion grande (partitions_iris_8MB.csv).
+// Solo en las placas con el lector de texto (IRIS_OCR en platformio.ini). Los modelos estan en la
+// particion "modelos" (model_store.h): sin ellos el lector no arranca y la app lee con el celular.
 #ifdef IRIS_OCR
 
 #include "ocr_task.h"
@@ -17,7 +17,8 @@
 #include "tensorflow/lite/schema/schema_generated.h"
 
 #include "camera_driver.h"
-#include "ocr_model_data.h"
+#include "model_store.h"
+#include "ocr_config.h"
 #include "ocr_pipeline.h"
 #include "tflm_arena.h"
 
@@ -34,9 +35,14 @@ uint8_t* vgaFrame = nullptr;      // 640x480 en PSRAM (copia: la camara se liber
 uint8_t* detInput = nullptr;      // 320x240
 uint8_t* pieces = nullptr;        // hasta kOcrMaxPieces lineas de 32x256
 
-bool setupInterpreter(const unsigned char* modelData, int declaredArena, tflite::MicroInterpreter** out,
-                      const char* name) {
-  const tflite::Model* model = tflite::GetModel(modelData);
+bool setupInterpreter(const char* storeName, tflite::MicroInterpreter** out, const char* name) {
+  const ModelEntry* entry = modelStoreGet(storeName);
+  if (entry == nullptr) {
+    Serial.printf("[Lector] %s: falta el modelo \"%s\" en la particion de modelos\n", name, storeName);
+    return false;
+  }
+  const int declaredArena = (int)entry->arenaBytes;
+  const tflite::Model* model = tflite::GetModel(entry->data);
   if (model->version() != TFLITE_SCHEMA_VERSION) {
     Serial.printf("[Lector] %s: version de schema incorrecta\n", name);
     return false;
@@ -165,8 +171,8 @@ bool startOcrTask(OcrResultCallback callback) {
     Serial.println("[Lector] Sin PSRAM para los buffers");
     return false;
   }
-  if (!setupInterpreter(g_ocr_detector_model, kOcrDetectorArena, &detector, "detector") ||
-      !setupInterpreter(g_ocr_reader_model, kOcrReaderArena, &reader, "lector")) {
+  if (!setupInterpreter(kOcrDetectorModelName, &detector, "detector") ||
+      !setupInterpreter(kOcrReaderModelName, &reader, "lector")) {
     return false;
   }
   // Nucleo 0, prioridad baja: tarda ~1-3 s y no debe cortar el audio ni el Bluetooth.

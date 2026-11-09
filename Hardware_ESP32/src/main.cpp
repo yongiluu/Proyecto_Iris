@@ -15,6 +15,7 @@
 #include "tflite_vision.h"
 #include "vision_task.h"
 #include "light_meter.h"
+#include "model_store.h"
 #include "ocr_task.h"
 #include "ota_update.h"
 
@@ -27,6 +28,7 @@ volatile bool beepRequested = false;
 volatile int proximityLevel = 0;
 uint32_t lastProximityBeepMs = 0;
 bool isTransmitting = false;
+bool ocrReady = false;          // el lector de texto arranco (sus modelos estan en la particion)
 // Modo recoleccion de datos (pantalla "Misiones" de la app): manda el microfono crudo sin apretar el boton.
 volatile bool collectingAudio = false;
 // Pedido de actualizacion por WiFi (CMD_OTA_WIFI llega en el hilo BLE; el loop lo atiende).
@@ -357,8 +359,10 @@ void setup() {
 
   if (!startPhotoTask()) Serial.println("Error al crear la tarea de fotos");
   if (!startVisionTask()) Serial.println("Error al crear la tarea de vision");
+  modelStoreBegin();  // modelos fuera del programa (lector de texto...); solo informa lo que hay
 #ifdef IRIS_OCR
-  if (!startOcrTask(onTextRead)) Serial.println("Error al iniciar el lector de texto");
+  ocrReady = startOcrTask(onTextRead);
+  if (!ocrReady) Serial.println("Lector de texto apagado (faltan sus modelos): la app lee con el celular");
 #endif
 
   Serial.printf("[Memoria] RAM interna libre %u bytes (bloque mayor %u), PSRAM libre %u bytes\n",
@@ -416,11 +420,8 @@ void loop() {
                                            "watchdog_int", "watchdog_tarea", "watchdog", "sueno",
                                            "bajo_voltaje", "sdio"};
     const int reason = (int)esp_reset_reason();
-#ifdef IRIS_OCR
-    static const char kFeatures[] = "luz,ocr";
-#else
-    static const char kFeatures[] = "luz";
-#endif
+    // "ocr" solo si el lector arranco de verdad (con sus modelos en la particion).
+    const char* kFeatures = ocrReady ? "luz,ocr" : "luz";
     char hello[96];
     snprintf(hello, sizeof(hello), "CMD_HELLO:%lu:%s:%u:%d:%s", (unsigned long)(millis() / 1000),
              reason >= 0 && reason <= 10 ? kReasons[reason] : "?",

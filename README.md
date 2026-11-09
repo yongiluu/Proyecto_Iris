@@ -48,6 +48,19 @@ Escrito en C++ con PlatformIO. Actúa como periférico BLE usando la librería N
 3. Conecta el ESP32 por USB y presiona "Upload".
 4. *(Solo el entorno XIAO incluye `-DARDUINO_USB_MODE=1` y `-DARDUINO_USB_CDC_ON_BOOT=1`, que envían el Monitor Serial por el USB nativo. El devkit usa su puerto UART.)*
 
+### Modelos fuera del programa (XIAO)
+
+La flash de 8 MB de la XIAO se reparte en `Hardware_ESP32/partitions_iris_8MB.csv`: dos ranuras de programa (para actualizar por WiFi) y una partición **`modelos`** de 2 MB. Ahí van los modelos que no caben dentro del programa (el lector de texto; después, la descripción de escenas y las caras). Se leen directo de la flash, sin gastar RAM, y se actualizan sin recompilar. La visión y la cercanía siguen dentro del programa: son de seguridad y funcionan aunque la partición esté vacía.
+
+**Una sola vez, por USB** (la tabla de particiones nueva no se puede grabar por WiFi):
+
+```bash
+pio run -e seeed_xiao_esp32s3 -t upload
+python tools/subir_modelos.py --usb
+```
+
+**Después**, con la caja cerrada: `python tools/subir_por_wifi.py` (programa) y `python tools/subir_modelos.py` (modelos), con la placa en modo actualización. Sin sus modelos, el lector de texto queda apagado y la app lee con la cámara de la placa y el celular; la placa avisa qué sabe hacer en `CMD_HELLO`.
+
 ## 🔌 Conexiones de Hardware
 
 Asegúrate de conectar los pines a sus respectivos VCC (3.3V o 5V) y GND. La fuente de verdad de los pines es `Hardware_ESP32/include/config.h`.
@@ -82,7 +95,7 @@ Configuración estándar D0-D7, XCLK, PCLK, VSYNC, HREF, SIOD, SIOC, PWDN, RESET
 Como el de Seeing AI, pero sin celular de por medio: la placa pita cada ~0,16 s, más agudo cuanta más luz ve (de 150 a 2400 Hz). Sirve para saber si hay una luz prendida o dónde está la ventana.
 
 - **Cómo funciona:** apaga la exposición automática de la cámara para que el brillo mida la luz real, y vuelve a encenderla al terminar.
-- **Cómo se usa:** se enciende con el botón ☀ de la app (en modo placa) y se apaga con el mismo botón o solo, a los 3 minutos.
+- **Cómo se usa:** "Oye Iris, busca la luz" (o la página Luz del carrusel de la app); "apaga el detector de luz", o solo a los 3 minutos.
 - **Calibración:** `LIGHT_METER_*` en `config.h`. Con `LIGHT_METER_DEBUG 1`, la placa imprime el brillo medido.
 
 ## Pruebas automáticas
@@ -90,10 +103,10 @@ Como el de Seeing AI, pero sin celular de por medio: la placa pita cada ~0,16 s,
 Cada push corre `.github/workflows/pruebas.yml` en GitHub y comprueba:
 
 - que el firmware compila para la XIAO y el devkit,
-- que la placa calcula **exactamente** lo mismo que el entrenamiento (audio, imagen y frases de escenas),
+- que la placa calcula **exactamente** lo mismo que el entrenamiento (audio, imagen, frases de escenas, lector de texto y el paquete de modelos),
 - las reglas de seguridad de la base de datos,
 - el agente con memoria diaria,
-- el análisis de la app.
+- el análisis y las pruebas de la app (comandos de voz, pantalla, caras).
 
 ## Protocolo BLE
 
@@ -101,7 +114,7 @@ Cada push corre `.github/workflows/pruebas.yml` en GitHub y comprueba:
 |---|---|---|---|
 | RX | `6E400002-...` | app -> placa | Solo audio TTS (PCM 16-bit mono 16 kHz) |
 | TX | `6E400003-...` | placa -> app | Audio del micrófono (PCM 16-bit mono 16 kHz) |
-| CMD | `6E400004-...` | ambos | `CMD_PTT_START/STOP`, `CMD_TAKE_PHOTO`, `CMD_BEEP_THINKING`, `CMD_PHOTO_START:<n>`, `CMD_PHOTO_END`, `CMD_PHOTO_ERROR`, `CMD_AUDIO_EVENT:<clase>:<%>`, `CMD_LIGHT_ON/OFF` (app → placa), `CMD_LIGHT:ON/OFF/<0-100>` (placa → app) |
+| CMD | `6E400004-...` | ambos | `CMD_PTT_START/STOP`, `CMD_TAKE_PHOTO`, `CMD_BEEP_THINKING`, `CMD_PHOTO_START:<n>`, `CMD_PHOTO_END`, `CMD_PHOTO_ERROR`, `CMD_AUDIO_EVENT:<clase>:<%>`, `CMD_LIGHT_ON/OFF` (app → placa), `CMD_LIGHT:ON/OFF/<0-100>` (placa → app), `CMD_READ_TEXT` (app → placa), `CMD_TEXT:<texto>` (placa → app), `CMD_HELLO:<s>:<reinicio>:<RAM>:<volumen>:<funciones>` (placa → app, `funciones` = `luz` o `luz,ocr`) |
 | PHOTO | `6E400005-...` | placa -> app | Fragmentos de la foto JPEG |
 
 ## Problemas Frecuentes

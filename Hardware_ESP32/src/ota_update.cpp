@@ -6,6 +6,7 @@
 #include <WiFi.h>
 
 #include "config.h"
+#include "model_store.h"
 
 #ifndef IRIS_OTA_PASSWORD
 #define IRIS_OTA_PASSWORD "IrisOTA2026"  // se cambia en platformio.ini / secrets.ini ([ota] password)
@@ -18,6 +19,39 @@ WebServer* server = nullptr;
 HTTPUpdateServer updater;
 bool active = false;
 uint32_t startedMs = 0;
+bool modelsOk = false;
+
+// POST /modelos (campo "modelos"): paquete de ML_Training/tools/pack_models.py a la particion
+// "modelos". Mismo usuario y clave que /update. Al terminar bien, la placa se reinicia.
+void handleModelsUpload() {
+    HTTPUpload& upload = server->upload();
+    if (upload.status == UPLOAD_FILE_START) {
+        modelsOk = false;
+        if (!server->authenticate("iris", IRIS_OTA_PASSWORD)) return;
+        modelStoreSetWriting(true);  // nadie lee modelos mientras se borra y escribe la particion
+        Serial.printf("[OTA] Modelos: recibiendo %s\n", upload.filename.c_str());
+        if (!Update.begin(UPDATE_SIZE_UNKNOWN, U_SPIFFS, -1, LOW, "modelos")) Update.printError(Serial);
+    } else if (upload.status == UPLOAD_FILE_WRITE && Update.isRunning()) {
+        if (Update.write(upload.buf, upload.currentSize) != upload.currentSize) Update.printError(Serial);
+    } else if (upload.status == UPLOAD_FILE_END && Update.isRunning()) {
+        modelsOk = Update.end(true);
+        if (!modelsOk) Update.printError(Serial);
+        Serial.printf("[OTA] Modelos: %u bytes %s\n", (unsigned)upload.totalSize, modelsOk ? "OK" : "con error");
+    } else if (upload.status == UPLOAD_FILE_ABORTED) {
+        Update.abort();
+    }
+}
+
+void handleModelsDone() {
+    if (!server->authenticate("iris", IRIS_OTA_PASSWORD)) {
+        server->requestAuthentication();
+        return;
+    }
+    server->sendHeader("Connection", "close");
+    server->send(modelsOk ? 200 : 500, "text/plain", modelsOk ? "Modelos OK, reiniciando" : "Error al grabar los modelos");
+    delay(200);
+    ESP.restart();  // tambien si fallo: la placa vuelve a revisar la particion al arrancar
+}
 }  // namespace
 
 bool startOtaUpdate() {
@@ -31,6 +65,7 @@ bool startOtaUpdate() {
     server = new WebServer(80);
     // Usuario "iris" y la misma clave de la red. Al terminar bien, la placa se reinicia sola.
     updater.setup(server, "/update", "iris", IRIS_OTA_PASSWORD);
+    server->on("/modelos", HTTP_POST, handleModelsDone, handleModelsUpload);
     server->begin();
 
     active = true;

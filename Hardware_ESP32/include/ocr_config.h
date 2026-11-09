@@ -17,6 +17,11 @@ constexpr int kOcrLineWidth = 256;
 constexpr int kOcrTimeSteps = 64;      // salida del lector: columnas
 constexpr int kOcrNumClasses = 100;    // 0 = blanco de CTC
 constexpr int kOcrMaxPieces = 4;                        // trozos por linea larga
+constexpr int kOcrDetectThreshold = 128;  // celda con texto si probabilidad*255 >= esto
+
+// Nombres de los modelos en la particion "modelos" (model_store.h, ML_Training/tools/pack_models.py)
+constexpr const char* kOcrReaderModelName = "ocr_lector";
+constexpr const char* kOcrDetectorModelName = "ocr_detector";
 
 // Caracter (UTF-8) de cada clase; kOcrCharset[0] es el blanco.
 extern const char* const kOcrCharset[kOcrNumClasses];

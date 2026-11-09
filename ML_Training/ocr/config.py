@@ -43,4 +43,5 @@ VAL_LINES = 6_000
 # ─── Detector de donde hay texto (ocr/detector.py) ───
 DET_WIDTH = 320          # la placa reduce su frame VGA en grises a esto
 DET_HEIGHT = 240
+DETECT_THRESHOLD = 128   # celda con texto si probabilidad*255 >= esto (0,5)
 DET_STRIDE = 8           # una celda del mapa de salida = 8x8 px -> mapa de 40x30

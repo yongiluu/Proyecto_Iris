@@ -14,3 +14,7 @@ models/scene_student.keras
 
 # Respaldos para retomar entrenamientos cortados
 models/*_respaldo/
+# Lector de texto: checkpoints de entrenamiento (se versionan los .tflite y reportes) y el paquete armado
+models/ocr_reader.keras
+models/ocr_detector.keras
+models/modelos_placa.bin

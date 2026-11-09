@@ -3,11 +3,13 @@
     python ocr/export_model.py               # con los modelos entrenados
     python ocr/export_model.py --untrained   # modelos sin entrenar del mismo tamaño (para medir la flash)
 
-Escribe models/ocr_reader_int8.tflite, models/ocr_detector_int8.tflite, models/ocr_report_int8.txt y
-Hardware_ESP32/include/ocr_model_data.h + src/ocr_model_data.cpp (mas ocr_config.*, por firmware_codegen).
+Escribe models/ocr_reader_int8.tflite, models/ocr_detector_int8.tflite, models/ocr_report_int8.txt,
+anota ambos en models/firmware_models.json (van a la particion "modelos" de la placa con
+Hardware_ESP32/tools/subir_modelos.py) y regenera ocr_config.* (firmware_codegen).
 """
 import argparse
 import os
+import sys
 
 os.environ.setdefault("TF_CPP_MIN_LOG_LEVEL", "2")
 
@@ -23,10 +25,8 @@ from train import KERAS_MODEL, evaluate
 READER_TFLITE = config.MODELS_DIR / "ocr_reader_int8.tflite"
 DETECTOR_TFLITE = config.MODELS_DIR / "ocr_detector_int8.tflite"
 REPORT = config.MODELS_DIR / "ocr_report_int8.txt"
-DETECT_THRESHOLD = 128   # probabilidad 0,5 en la escala 0-255 del mapa
 SUPPORTED_OPS = {"CONV_2D", "DEPTHWISE_CONV_2D", "MAX_POOL_2D", "ADD", "RESHAPE", "SOFTMAX", "MUL",
                  "LOGISTIC", "QUANTIZE", "DEQUANTIZE"}
-NOTE = "// GENERADO por ML_Training/ocr/export_model.py. No editar a mano.\n"
 
 
 def to_int8(model: tf.keras.Model, samples) -> bytes:
@@ -60,44 +60,15 @@ def check(interpreter, name: str) -> tuple[set, int]:
     return ops, int(worst * 1.3) + 16 * 1024
 
 
-def byte_array(data: bytes) -> str:
-    lines = [", ".join(f"0x{b:02x}" for b in data[i:i + 16]) for i in range(0, len(data), 16)]
-    return "    " + ",\n    ".join(lines)
-
-
-def write_firmware(reader: bytes, reader_arena: int, det: bytes, det_arena: int, summary: str) -> None:
+def register_models(reader: bytes, reader_arena: int, det: bytes, det_arena: int) -> None:
+    """Guarda los .tflite y los anota en models/firmware_models.json para la particion de la placa."""
+    sys.path.insert(0, str(config.ML_DIR / "tools"))
+    import pack_models
+    READER_TFLITE.write_bytes(reader)
+    DETECTOR_TFLITE.write_bytes(det)
+    pack_models.register("ocr_lector", READER_TFLITE, reader_arena)
+    pack_models.register("ocr_detector", DETECTOR_TFLITE, det_arena)
     firmware_codegen.main()
-    comment = "".join(f"// {line}\n" for line in summary.splitlines())
-    header = f"""{NOTE}{comment}#ifndef OCR_MODEL_DATA_H
-#define OCR_MODEL_DATA_H
-
-#include "ocr_config.h"
-
-constexpr int kOcrReaderArena = {reader_arena};
-constexpr int kOcrDetectorArena = {det_arena};
-constexpr int kOcrDetectThreshold = {DETECT_THRESHOLD};  // celda con texto si probabilidad*255 >= esto
-
-extern const unsigned char g_ocr_reader_model[];
-extern const unsigned int g_ocr_reader_model_len;
-extern const unsigned char g_ocr_detector_model[];
-extern const unsigned int g_ocr_detector_model_len;
-
-#endif
-"""
-    source = f"""{NOTE}#include "ocr_model_data.h"
-
-alignas(16) const unsigned char g_ocr_reader_model[] = {{
-{byte_array(reader)}
-}};
-const unsigned int g_ocr_reader_model_len = {len(reader)};
-
-alignas(16) const unsigned char g_ocr_detector_model[] = {{
-{byte_array(det)}
-}};
-const unsigned int g_ocr_detector_model_len = {len(det)};
-"""
-    (config.FIRMWARE_INCLUDE / "ocr_model_data.h").write_text(header, encoding="utf-8")
-    (config.FIRMWARE_SRC / "ocr_model_data.cpp").write_text(source, encoding="utf-8")
 
 
 def main() -> None:
@@ -130,29 +101,30 @@ def main() -> None:
     print(summary)
     print(f"Ops lector: {sorted(reader_ops)} | detector: {sorted(det_ops)}")
 
-    if not args.untrained:
-        READER_TFLITE.write_bytes(reader_tflite)
-        DETECTOR_TFLITE.write_bytes(det_tflite)
-        interpreter = interpreter_for(reader_tflite)
-        inp, out = interpreter.get_input_details()[0], interpreter.get_output_details()[0]
+    if args.untrained:
+        print("Sin entrenar: no se anotan para la placa (solo se mide el tamaño).")
+        return
+    register_models(reader_tflite, reader_arena, det_tflite, det_arena)
+    interpreter = interpreter_for(reader_tflite)
+    inp, out = interpreter.get_input_details()[0], interpreter.get_output_details()[0]
 
-        def predict(batch):
-            in_scale, in_zero = inp["quantization"]
-            results = []
-            for image in np.asarray(batch):
-                q = np.clip(np.round(image[np.newaxis, ..., np.newaxis] / in_scale + in_zero), -128, 127).astype(np.int8)
-                interpreter.set_tensor(inp["index"], q)
-                interpreter.invoke()
-                results.append(interpreter.get_tensor(out["index"])[0].astype(np.float32))  # argmax: basta int8
-            return np.stack(results)
+    def predict(batch):
+        in_scale, in_zero = inp["quantization"]
+        results = []
+        for image in np.asarray(batch):
+            q = np.clip(np.round(image[np.newaxis, ..., np.newaxis] / in_scale + in_zero), -128, 127).astype(np.int8)
+            interpreter.set_tensor(inp["index"], q)
+            interpreter.invoke()
+            results.append(interpreter.get_tensor(out["index"])[0].astype(np.float32))  # argmax: basta int8
+        return np.stack(results)
 
-        val_images = np.load(config.DATA_DIR / "lines_val_images.npy", mmap_mode="r")
-        val_texts = np.load(config.DATA_DIR / "lines_val_meta.npz")["texts"]
-        report = summary + "\n\n" + evaluate(predict, val_images[:3000], val_texts[:3000], "Lector int8 (validacion)")
-        print(report)
-        REPORT.write_text(report, encoding="utf-8")
-    write_firmware(reader_tflite, reader_arena, det_tflite, det_arena, summary)
-    print("✔ Archivos del firmware escritos (ocr_model_data.*)")
+    val_images = np.load(config.DATA_DIR / "lines_val_images.npy", mmap_mode="r")
+    val_texts = np.load(config.DATA_DIR / "lines_val_meta.npz")["texts"]
+    report = summary + "\n\n" + evaluate(predict, val_images[:3000], val_texts[:3000], "Lector int8 (validacion)")
+    print(report)
+    REPORT.write_text(report, encoding="utf-8")
+    print("Listo: modelos anotados en models/firmware_models.json. Subirlos a la placa con "
+          "Hardware_ESP32/tools/subir_modelos.py")
 
 
 if __name__ == "__main__":

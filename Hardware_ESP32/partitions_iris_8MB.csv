@@ -1,11 +1,14 @@
 # Particiones de Iris para la XIAO ESP32S3 (8 MB de flash).
-# Como default_8MB.csv pero sin SPIFFS (el firmware no usa archivos) y con las dos ranuras de programa
-# mas grandes (3,875 MB cada una en vez de 3,25): caben los modelos del lector de texto.
-# Se siguen usando dos ranuras para poder actualizar por WiFi (ota_update.cpp).
+# - Dos ranuras de programa de 2,875 MB (actualizar por WiFi, ota_update.cpp). El programa con la
+#   vision y la cercania ocupa ~2,8 MB.
+# - "modelos": 2 MB para los modelos que NO van dentro del programa (lector de texto, descripcion de
+#   escenas, caras...). Se graban aparte: tools/subir_modelos.py (por WiFi o USB). Ver model_store.h.
+#   Es de tipo spiffs solo para que el actualizador de Arduino la sepa escribir; no tiene archivos.
 # OJO: cambiar la tabla de particiones exige grabar UNA VEZ por USB (por WiFi no se puede).
 # Name,   Type, SubType, Offset,   Size,     Flags
 nvs,      data, nvs,     0x9000,   0x5000,
 otadata,  data, ota,     0xe000,   0x2000,
-app0,     app,  ota_0,   0x10000,  0x3E0000,
-app1,     app,  ota_1,   0x3F0000, 0x3E0000,
+app0,     app,  ota_0,   0x10000,  0x2E0000,
+app1,     app,  ota_1,   0x2F0000, 0x2E0000,
+modelos,  data, spiffs,  0x5D0000, 0x200000,
 coredump, data, coredump,0x7D0000, 0x10000,
