@@ -17,6 +17,7 @@
 #include "light_meter.h"
 #include "model_store.h"
 #include "ocr_task.h"
+#include "scene_task.h"
 #include "ota_update.h"
 
 namespace {
@@ -28,6 +29,7 @@ volatile bool beepRequested = false;
 volatile int proximityLevel = 0;
 uint32_t lastProximityBeepMs = 0;
 bool isTransmitting = false;
+bool sceneReady = false;        // la descripcion de escenas arranco (modelo "escena" en la particion)
 bool ocrReady = false;          // el lector de texto arranco (sus modelos estan en la particion)
 // Modo recoleccion de datos (pantalla "Misiones" de la app): manda el microfono crudo sin apretar el boton.
 volatile bool collectingAudio = false;
@@ -121,6 +123,12 @@ void onCommandReceived(const char* command) {
     requestLightMeter(true);
   } else if (strcmp(command, "CMD_LIGHT_OFF") == 0) {
     requestLightMeter(false);
+  } else if (strcmp(command, "CMD_DESCRIBE") == 0) {
+    if (sceneReady) {
+      requestDescribeScene();
+    } else {
+      bleManager.sendCommand("CMD_SCENE:");  // sin modelo: la app no espera y usa la nube
+    }
 #ifdef IRIS_OCR
   } else if (strcmp(command, "CMD_READ_TEXT") == 0) {
     requestReadText();
@@ -139,6 +147,13 @@ void onAudioEvent(const char* label, int confidencePercent) {
 }
 
 // Se ejecuta en la tarea de vision. Formato: CMD_VISION_EVENT:<clase>:<porcentaje>
+// Se ejecuta en la tarea de escenas. Formato: CMD_SCENE:<frase> (vacia si no pudo).
+void onSceneDescribed(const char* sentence) {
+  static char command[440];
+  snprintf(command, sizeof(command), "CMD_SCENE:%s", sentence);
+  bleManager.sendCommand(command);
+}
+
 #ifdef IRIS_OCR
 // Se ejecuta en la tarea del lector de texto. Formato: CMD_TEXT:<texto> (vacio si no encontro texto).
 void onTextRead(const char* text) {
@@ -360,6 +375,8 @@ void setup() {
   if (!startPhotoTask()) Serial.println("Error al crear la tarea de fotos");
   if (!startVisionTask()) Serial.println("Error al crear la tarea de vision");
   modelStoreBegin();  // modelos fuera del programa (lector de texto...); solo informa lo que hay
+  sceneReady = startSceneTask(onSceneDescribed);
+  if (!sceneReady) Serial.println("Descripcion de escenas apagada (falta su modelo): la app describe con la nube");
 #ifdef IRIS_OCR
   ocrReady = startOcrTask(onTextRead);
   if (!ocrReady) Serial.println("Lector de texto apagado (faltan sus modelos): la app lee con el celular");
@@ -421,7 +438,8 @@ void loop() {
                                            "bajo_voltaje", "sdio"};
     const int reason = (int)esp_reset_reason();
     // "ocr" solo si el lector arranco de verdad (con sus modelos en la particion).
-    const char* kFeatures = ocrReady ? "luz,ocr" : "luz";
+    char kFeatures[32];
+    snprintf(kFeatures, sizeof(kFeatures), "luz%s%s", ocrReady ? ",ocr" : "", sceneReady ? ",escena" : "");
     char hello[96];
     snprintf(hello, sizeof(hello), "CMD_HELLO:%lu:%s:%u:%d:%s", (unsigned long)(millis() / 1000),
              reason >= 0 && reason <= 10 ? kReasons[reason] : "?",

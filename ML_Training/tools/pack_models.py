@@ -32,27 +32,29 @@ def _load_manifest() -> dict:
     return json.loads(MANIFEST.read_text(encoding="utf-8")) if MANIFEST.exists() else {}
 
 
-def register(name: str, tflite: Path, arena_bytes: int) -> None:
+def register(name: str, tflite: Path, arena_bytes: int, flags: int = 0) -> None:
     """Anota (o reemplaza) un modelo. La ruta queda relativa a ML_Training para que sirva en otro PC."""
     if len(name.encode()) >= NAME_BYTES:
         raise ValueError(f"nombre muy largo: {name}")
     manifest = _load_manifest()
-    manifest[name] = {"tflite": Path(tflite).resolve().relative_to(ML_DIR).as_posix(), "arena": int(arena_bytes)}
+    manifest[name] = {"tflite": Path(tflite).resolve().relative_to(ML_DIR).as_posix(), "arena": int(arena_bytes),
+                      "flags": int(flags)}
     MANIFEST.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     print(f"Anotado para la placa: {name} ({Path(tflite).name}, arena {arena_bytes} bytes)")
 
 
-def pack(models: list[tuple[str, bytes, int]]) -> bytes:
-    """[(nombre, bytes del .tflite, arena)] -> paquete."""
+def pack(models: list[tuple]) -> bytes:
+    """[(nombre, bytes del .tflite, arena[, banderas])] -> paquete."""
     table_end = HEADER_BYTES + ENTRY_BYTES * len(models)
     offset = -(-table_end // ALIGN) * ALIGN
     entries, blobs = b"", b""
     cursor = offset
-    for name, data, arena in models:
+    for name, data, arena, *rest in models:
+        flags = rest[0] if rest else 0
         encoded = name.encode()
         if not data or len(encoded) >= NAME_BYTES:
             raise ValueError(f"modelo invalido: {name}")
-        entries += struct.pack("<24sIIII8x", encoded, cursor, len(data), arena, zlib.crc32(data))
+        entries += struct.pack("<24sIIIII4x", encoded, cursor, len(data), arena, zlib.crc32(data), flags)
         padded = data + b"\0" * (-len(data) % ALIGN)
         blobs += padded
         cursor += len(padded)
@@ -88,12 +90,12 @@ def build(out: Path = DEFAULT_OUT) -> Path:
         path = ML_DIR / manifest[name]["tflite"]
         if not path.exists():
             raise SystemExit(f"Falta {path} (modelo {name})")
-        models.append((name, path.read_bytes(), manifest[name]["arena"]))
+        models.append((name, path.read_bytes(), manifest[name]["arena"], manifest[name].get("flags", 0)))
     blob = pack(models)
     if len(blob) > PARTITION_BYTES:
         raise SystemExit(f"El paquete ({len(blob) / 1e6:.2f} MB) no cabe en la particion ({PARTITION_BYTES / 1e6:.2f} MB)")
     out.write_bytes(blob)
-    for name, data, arena in models:
+    for name, data, arena, _ in models:
         print(f"  {name:24s} {len(data) / 1024:7.0f} KB  arena {arena / 1024:.0f} KB")
     print(f"Paquete: {out} ({len(blob) / 1024:.0f} KB de {PARTITION_BYTES // 1024} KB)")
     return out

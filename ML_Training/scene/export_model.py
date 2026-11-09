@@ -7,6 +7,7 @@ del TFLite Micro de la placa y estima tamaño y memoria. (La integracion en el f
 ver "Proximos pasos" en scene/README.md.)
 """
 import os
+import sys
 
 os.environ.setdefault("TF_CPP_MIN_LOG_LEVEL", "2")
 
@@ -98,7 +99,16 @@ def main() -> None:
                                          hazards_trained=load_meta().get("hazards_trained", True))
     print("\n" + report)
     REPORT.write_text(report, encoding="utf-8")
+    register_for_board(int(worst * 1.3 + 16384), load_meta().get("hazards_trained", True))
     print(f"\n✔ {TFLITE_MODEL}")
+
+
+def register_for_board(arena_bytes: int, hazards_trained: bool) -> None:
+    """Anota el modelo para la particion "modelos" de la placa (nombre "escena", ver scene_task.cpp).
+    Bandera 1 = aprendio peligros; sin ella la placa no dice nada de peligros."""
+    sys.path.insert(0, str(config.ML_DIR / "tools"))
+    import pack_models
+    pack_models.register("escena", TFLITE_MODEL, arena_bytes, flags=1 if hazards_trained else 0)
 
 
 if __name__ == "__main__":

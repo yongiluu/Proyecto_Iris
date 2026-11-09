@@ -156,7 +156,11 @@ void ocrLoop(void*) {
   static char text[kMaxTextBytes];
   for (;;) {
     ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
-    readText(text);
+    if (modelStoreWriting()) {
+      text[0] = '\0';  // se estan subiendo modelos nuevos: no tocar la particion
+    } else {
+      readText(text);
+    }
     if (onResult) onResult(text);
   }
 }

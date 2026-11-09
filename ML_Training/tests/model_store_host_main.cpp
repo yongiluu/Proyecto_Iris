@@ -1,7 +1,7 @@
 // Lee un paquete de modelos con el MISMO codigo de la placa (model_store_format.cpp) y escribe lo que
 // encuentra, para compararlo con tools/pack_models.py (tests/test_model_store.py).
 //   model_store_host PAQUETE NOMBRE...
-// Salida, una linea por nombre: "<nombre> <estado> <tamano> <arena> <crc32 de los bytes leidos>"
+// Salida, una linea por nombre: "<nombre> <estado> <tamano> <arena> <crc32 de los bytes leidos> <banderas>"
 // y antes "count <estado> <n>".
 #include <stdio.h>
 #include <stdlib.h>
@@ -27,10 +27,10 @@ int main(int argc, char** argv) {
         ModelEntry entry{};
         const ModelStoreStatus status = modelStoreFind(data.data(), data.size(), argv[i], true, &entry);
         if (status == kModelStoreOk) {
-            printf("%s %d %u %u %u\n", argv[i], (int)status, (unsigned)entry.size, (unsigned)entry.arenaBytes,
-                   (unsigned)modelStoreCrc32(entry.data, entry.size));
+            printf("%s %d %u %u %u %u\n", argv[i], (int)status, (unsigned)entry.size, (unsigned)entry.arenaBytes,
+                   (unsigned)modelStoreCrc32(entry.data, entry.size), (unsigned)entry.flags);
         } else {
-            printf("%s %d 0 0 0\n", argv[i], (int)status);
+            printf("%s %d 0 0 0 0\n", argv[i], (int)status);
         }
     }
     return 0;

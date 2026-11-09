@@ -102,6 +102,20 @@ class Esp32SpeechService {
   /// Pide a la placa que lea el texto que tiene adelante (lector de texto en la placa, sin internet).
   Future<void> requestReadText() => _sendCommand('CMD_READ_TEXT');
 
+  /// Descripcion de la escena hecha EN LA PLACA (sin internet): la placa responde CMD_SCENE:<frase>.
+  /// null si no responde a tiempo o no tiene el modelo; '' si no pudo describir.
+  Future<String?> describeSceneOnBoard({Duration timeout = const Duration(seconds: 8)}) async {
+    if (!isConnected || boardHas('escena') != true) return null;
+    final pending = _sceneCompleter;
+    if (pending != null && !pending.isCompleted) return pending.future.timeout(timeout, onTimeout: () => null);
+    final completer = Completer<String?>();
+    _sceneCompleter = completer;
+    await _sendCommand('CMD_DESCRIBE');
+    return completer.future.timeout(timeout, onTimeout: () => null);
+  }
+
+  Completer<String?>? _sceneCompleter;
+
   /// Enciende o apaga el detector de luz de la placa (tono mas agudo con mas luz).
   Future<void> setLightMeter(bool on) => _sendCommand(on ? 'CMD_LIGHT_ON' : 'CMD_LIGHT_OFF');
 
@@ -560,6 +574,11 @@ class Esp32SpeechService {
       if (parts.length >= 3) onVisionEvent?.call(parts[1], int.tryParse(parts[2]) ?? 0);
     } else if (command.startsWith('CMD_WAKE_WORD:')) {
       onWakeWord?.call(int.tryParse(command.split(':')[1]) ?? 0);
+    } else if (command.startsWith('CMD_SCENE:')) {
+      final completer = _sceneCompleter;
+      if (completer != null && !completer.isCompleted) {
+        completer.complete(command.substring('CMD_SCENE:'.length).trim());
+      }
     } else if (command.startsWith('CMD_TEXT:')) {
       onTextRead?.call(command.substring('CMD_TEXT:'.length).trim());
     } else if (command.startsWith('CMD_LIGHT:')) {

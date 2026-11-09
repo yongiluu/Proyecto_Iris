@@ -1,0 +1,7 @@
+{
+  "escena": {
+    "arena": 390784,
+    "flags": 0,
+    "tflite": "models/scene_student_int8.tflite"
+  }
+}

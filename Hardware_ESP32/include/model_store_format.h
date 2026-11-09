@@ -18,7 +18,8 @@
 //    28  u32     bytes del modelo (.tflite)
 //    32  u32     arena declarada para TFLM (bytes)
 //    36  u32     CRC32 del modelo
-//    40  8 bytes reservado
+//    40  u32     banderas (significado segun el modelo; ej. kSceneFlagHazardsTrained)
+//    44  4 bytes reservado
 //   Modelos alineados a 16 bytes (TFLM lee los flatbuffers sin copiarlos).
 
 #include <stddef.h>
@@ -35,6 +36,7 @@ struct ModelEntry {
     uint32_t size;
     uint32_t arenaBytes;
     uint32_t crc;
+    uint32_t flags;
 };
 
 enum ModelStoreStatus {

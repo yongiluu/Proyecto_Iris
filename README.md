@@ -50,7 +50,7 @@ Escrito en C++ con PlatformIO. Actúa como periférico BLE usando la librería N
 
 ### Modelos fuera del programa (XIAO)
 
-La flash de 8 MB de la XIAO se reparte en `Hardware_ESP32/partitions_iris_8MB.csv`: dos ranuras de programa (para actualizar por WiFi) y una partición **`modelos`** de 2 MB. Ahí van los modelos que no caben dentro del programa (el lector de texto; después, la descripción de escenas y las caras). Se leen directo de la flash, sin gastar RAM, y se actualizan sin recompilar. La visión y la cercanía siguen dentro del programa: son de seguridad y funcionan aunque la partición esté vacía.
+La flash de 8 MB de la XIAO se reparte en `Hardware_ESP32/partitions_iris_8MB.csv`: dos ranuras de programa (para actualizar por WiFi) y una partición **`modelos`** de 2 MB. Ahí van los modelos que no caben dentro del programa: el lector de texto y la descripción de escenas (cuando la nube no responde, "¿qué hay adelante?" lo contesta la placa sin internet); después, las caras. Se leen directo de la flash, sin gastar RAM, y se actualizan sin recompilar. La visión y la cercanía siguen dentro del programa: son de seguridad y funcionan aunque la partición esté vacía.
 
 **Una sola vez, por USB** (la tabla de particiones nueva no se puede grabar por WiFi):
 
@@ -114,7 +114,7 @@ Cada push corre `.github/workflows/pruebas.yml` en GitHub y comprueba:
 |---|---|---|---|
 | RX | `6E400002-...` | app -> placa | Solo audio TTS (PCM 16-bit mono 16 kHz) |
 | TX | `6E400003-...` | placa -> app | Audio del micrófono (PCM 16-bit mono 16 kHz) |
-| CMD | `6E400004-...` | ambos | `CMD_PTT_START/STOP`, `CMD_TAKE_PHOTO`, `CMD_BEEP_THINKING`, `CMD_PHOTO_START:<n>`, `CMD_PHOTO_END`, `CMD_PHOTO_ERROR`, `CMD_AUDIO_EVENT:<clase>:<%>`, `CMD_LIGHT_ON/OFF` (app → placa), `CMD_LIGHT:ON/OFF/<0-100>` (placa → app), `CMD_READ_TEXT` (app → placa), `CMD_TEXT:<texto>` (placa → app), `CMD_HELLO:<s>:<reinicio>:<RAM>:<volumen>:<funciones>` (placa → app, `funciones` = `luz` o `luz,ocr`) |
+| CMD | `6E400004-...` | ambos | `CMD_PTT_START/STOP`, `CMD_TAKE_PHOTO`, `CMD_BEEP_THINKING`, `CMD_PHOTO_START:<n>`, `CMD_PHOTO_END`, `CMD_PHOTO_ERROR`, `CMD_AUDIO_EVENT:<clase>:<%>`, `CMD_LIGHT_ON/OFF` (app → placa), `CMD_LIGHT:ON/OFF/<0-100>` (placa → app), `CMD_READ_TEXT` (app → placa), `CMD_TEXT:<texto>` (placa → app), `CMD_DESCRIBE` (app → placa), `CMD_SCENE:<frase>` (placa → app, descripción sin internet), `CMD_HELLO:<s>:<reinicio>:<RAM>:<volumen>:<funciones>` (placa → app, `funciones` ⊂ `luz,ocr,escena`) |
 | PHOTO | `6E400005-...` | placa -> app | Fragmentos de la foto JPEG |
 
 ## Problemas Frecuentes

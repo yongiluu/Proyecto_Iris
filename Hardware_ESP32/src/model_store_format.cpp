@@ -84,6 +84,7 @@ ModelStoreStatus modelStoreFind(const uint8_t* base, size_t length, const char* 
             out->size = size;
             out->arenaBytes = readU32(entry + 32);
             out->crc = crc;
+            out->flags = readU32(entry + 40);
         }
         return kModelStoreOk;
     }

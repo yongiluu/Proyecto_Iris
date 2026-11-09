@@ -66,6 +66,21 @@ class OccipitalAgentService {
 
   static const String _noClearAnswer = 'No pude obtener una respuesta clara. Intentalo de nuevo.';
 
+  /// Respuestas que significan "no hubo respuesta de la nube" (sin internet, servidor caido, error).
+  /// Con ellas la pantalla puede usar lo que vio la placa sin internet.
+  static const Set<String> failureReplies = {
+    'La conexion tardo demasiado. Intentalo de nuevo.',
+    'Hubo un problema de conexion. Intentalo de nuevo.',
+    'Hubo un problema de conexion con el servidor de Iris. Intentalo de nuevo.',
+    'Error al contactar al cerebro de Iris.',
+    'Error al analizar la imagen.',
+    'Error al analizar los resultados de las herramientas.',
+    'Las claves de API para Azure OpenAI no estan configuradas.',
+    _noClearAnswer,
+  };
+
+  static bool isFailureReply(String? reply) => reply == null || failureReplies.contains(reply.trim());
+
   /// Respuesta final para hablar: sin texto de herramientas; si no queda nada, un mensaje corto.
   static String? _speakable(String? content) {
     if (content == null) return null;

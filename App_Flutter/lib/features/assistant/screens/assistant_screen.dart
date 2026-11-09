@@ -592,7 +592,7 @@ class _AssistantScreenState extends State<AssistantScreen>
 
   Future<void> _captureAndDescribeContinuous() async {
     await _playQuerySentCue();
-    final String? desc = await _agentService.processWithAgenticReasoning(
+    final String? desc = await _withBoardScene('Describe la vista actual.', await _agentService.processWithAgenticReasoning(
       userPrompt: "Describe la vista actual.",
       onStatusUpdate: (status) {
         if (mounted) setState(() => _statusText = status);
@@ -600,7 +600,7 @@ class _AssistantScreenState extends State<AssistantScreen>
       captureImageCallback: _captureImage,
       sensorContext: _sensorContext.describe(),
       visionFallback: _sensorContext.lastSeen,
-    );
+    ));
     if (desc != null && mounted) {
       setState(() {
         _answerTitle = 'Descripcion';
@@ -696,7 +696,7 @@ class _AssistantScreenState extends State<AssistantScreen>
     if (_hardwareMode == HardwareMode.esp32) _startThinking();
 
     try {
-      final String? description = await _agentService.processWithAgenticReasoning(
+      final String? description = await _withBoardScene(prompt, await _agentService.processWithAgenticReasoning(
         userPrompt: prompt,
         onStatusUpdate: (status) {
           if (mounted) setState(() => _statusText = status);
@@ -708,7 +708,7 @@ class _AssistantScreenState extends State<AssistantScreen>
         onVisionStart: _hardwareMode == HardwareMode.esp32
             ? () => _ttsService.speakStatus('Dejame mirar', esp32Service: _activeEsp32)
             : null,
-      );
+      ));
 
       if (_hardwareMode == HardwareMode.esp32) _stopThinking();
 
@@ -731,6 +731,19 @@ class _AssistantScreenState extends State<AssistantScreen>
     if (_continuousMode && _consecutiveCount < 2) {
       _startContinuousMode();
     }
+  }
+
+  /// Si la nube no respondio a una pregunta de vision (sin internet, servidor caido), la placa describe
+  /// la escena con su propio modelo, sin internet. Si no puede, queda la respuesta de error original.
+  Future<String?> _withBoardScene(String prompt, String? cloudReply) async {
+    if (!OccipitalAgentService.isFailureReply(cloudReply) || !OccipitalAgentService.wantsVision(prompt)) {
+      return cloudReply;
+    }
+    if (!_moduleConnected || _esp32SpeechService.boardHas('escena') != true) return cloudReply;
+    if (mounted) setState(() => _statusText = 'Sin conexion: describe la placa...');
+    final local = await _esp32SpeechService.describeSceneOnBoard();
+    if (local == null || local.isEmpty) return cloudReply;
+    return 'Sin internet. Lo que ve la placa: $local';
   }
 
   void _resetState(String? errorMessage) {
