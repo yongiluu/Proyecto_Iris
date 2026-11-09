@@ -756,9 +756,46 @@ class _AssistantScreenState extends State<AssistantScreen>
       case IrisIntentType.forgetPerson:
         _goToMode(IrisMode.people);
         await _forgetPerson(intent.name ?? '');
+      case IrisIntentType.repeat:
+        await _ttsService.speak(
+            _lastDescription.isEmpty ? 'Todavia no te he dicho nada.' : _lastDescription,
+            esp32Service: _activeEsp32);
+      case IrisIntentType.help:
+        await _showResult(LocalAnswers.help, status: 'Lo que puedo hacer', title: 'Ayuda');
+      case IrisIntentType.time:
+        await _showResult(LocalAnswers.time(DateTime.now()), status: 'Hora', title: 'Hora');
+      case IrisIntentType.slower:
+      case IrisIntentType.faster:
+        final slower = intent.type == IrisIntentType.slower;
+        final changed = await _ttsService.changeRate(slower ? -1 : 1);
+        await _ttsService.speakStatus(
+            changed
+                ? (slower ? 'Listo, hablo mas lento.' : 'Listo, hablo mas rapido.')
+                : (slower ? 'Ya estoy hablando lo mas lento que puedo.' : 'Ya estoy hablando lo mas rapido que puedo.'),
+            esp32Service: _activeEsp32);
+      case IrisIntentType.stop:
+        await _stopEverything();
       case IrisIntentType.none:
         break;
     }
+  }
+
+  /// "Callate": corta la voz y lo que este en curso (descripcion continua, luz, guardar una cara).
+  Future<void> _stopEverything() async {
+    await _ttsService.stop();
+    if (_continuousMode) {
+      _continuousTimer?.cancel();
+      setState(() => _continuousMode = false);
+    }
+    if (_peopleBusy && _enrollStatus != null) _enrollGeneration++;
+    if (_lightIsOn) await _setLight(false, speak: false);
+    if (!mounted) return;
+    setState(() {
+      _peopleBusy = false;
+      _enrollStatus = null;
+      _statusText = 'En silencio';
+    });
+    await _hapticService.vibrateTick();
   }
 
   /// Respuesta de un modo (texto leido, personas...): va al cuadro de respuesta y se dice.
@@ -841,7 +878,9 @@ class _AssistantScreenState extends State<AssistantScreen>
       _statusText = 'Leyendo texto...';
     });
     await _hapticService.vibrateTick();
-    if (_moduleConnected && !_boardHasNoReader) {
+    // La placa dice en su saludo si tiene el lector; si no lo dice (firmware antiguo), se prueba.
+    final boardReader = _esp32SpeechService.boardHas('ocr');
+    if (_moduleConnected && boardReader != false && !_boardHasNoReader) {
       _readTextTimeout?.cancel();
       // La placa lee en 1-3 s; 8 s cubre el Bluetooth lento sin dejar esperando a la persona.
       _readTextTimeout = Timer(const Duration(seconds: 8), () {

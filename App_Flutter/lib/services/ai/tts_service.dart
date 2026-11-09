@@ -3,6 +3,7 @@ import 'dart:math' as math;
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter_tts/flutter_tts.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:http/http.dart' as http;
 
 import '../../core/constants/app_constants.dart';
@@ -65,6 +66,26 @@ class TtsService {
 
   bool get isSpeaking => _isSpeaking;
 
+  // ─── Velocidad de la voz ("habla mas lento" / "mas rapido"), guardada entre usos ───
+  static const String _prefRate = 'iris_tts_rate';
+  static const double minRate = 0.3, maxRate = 1.0, rateStep = 0.1;
+  double _rate = AppConstants.ttsSpeechRate;
+  double get rate => _rate;
+
+  /// Sube o baja la velocidad [steps] pasos. Devuelve false si ya estaba en el limite.
+  /// (La voz de la placa sale del servidor con su propia velocidad; esto cambia la del celular.)
+  Future<bool> changeRate(int steps) async {
+    final next = double.parse((_rate + steps * rateStep).clamp(minRate, maxRate).toStringAsFixed(2));
+    if (next == _rate) return false;
+    _rate = next;
+    await _initCompleter.future;
+    await _tts.setSpeechRate(_rate);
+    try {
+      (await SharedPreferences.getInstance()).setDouble(_prefRate, _rate);
+    } catch (_) {}
+    return true;
+  }
+
   /// Lo que se muestra en pantalla de una respuesta: sin la etiqueta de idioma y sin espacios
   /// sobrantes. Es exactamente el texto que reporta [progress].
   static String displayText(String text) => text.trim().replaceFirst(_langTag, '').trim();
@@ -72,7 +93,10 @@ class TtsService {
   Future<void> initialize() async {
     try {
       await _tts.setLanguage(AppConstants.ttsLanguage);
-      await _tts.setSpeechRate(AppConstants.ttsSpeechRate);
+      try {
+        _rate = ((await SharedPreferences.getInstance()).getDouble(_prefRate) ?? _rate).clamp(minRate, maxRate);
+      } catch (_) {}
+      await _tts.setSpeechRate(_rate);
       await _tts.setPitch(AppConstants.ttsPitch);
       await _tts.setVolume(AppConstants.ttsVolume);
       await _tts.setEngine('com.google.android.tts');
@@ -173,7 +197,7 @@ class TtsService {
     }
   }
 
-  double get _nativeCharsPerSecond => _charsPerSecondAtNormalRate * (AppConstants.ttsSpeechRate / 0.5);
+  double get _nativeCharsPerSecond => _charsPerSecondAtNormalRate * (_rate / 0.5);
 
   void _finishNative() {
     final current = progress.value;

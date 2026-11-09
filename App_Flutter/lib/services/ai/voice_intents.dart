@@ -24,6 +24,24 @@ enum IrisIntentType {
   /// "Olvida a Raul", "borra la cara de Raul"
   forgetPerson,
 
+  /// "Repite", "¿que dijiste?", "no te entendi"
+  repeat,
+
+  /// "¿Que puedes hacer?", "ayuda"
+  help,
+
+  /// "¿Que hora es?", "¿que dia es hoy?"
+  time,
+
+  /// "Habla mas lento" / "mas despacio"
+  slower,
+
+  /// "Habla mas rapido"
+  faster,
+
+  /// "Callate", "silencio", "para" (corta la voz y lo que este haciendo)
+  stop,
+
   /// Cualquier otra cosa: va al agente.
   none,
 }
@@ -75,6 +93,35 @@ class VoiceIntents {
     r'^(olvida|borra|elimina)( la cara de| a| la cara)? (?<name>[a-z ]{2,30})$',
   );
 
+  // Frases cortas y completas: "describe otra vez" NO es repetir (es pedir otra descripcion).
+  static final RegExp _repeat = RegExp(
+    r'^((me )?(lo )?(puedes |podrias )?(repite|repetir|repitelo|repiteme|repitemelo|repetirlo)( lo que dijiste| eso| lo ultimo| la respuesta)?|'
+    r'que dijiste|que me dijiste|no te (escuche|entendi|oi)|otra vez|de nuevo)( por favor| porfa| iris)*$',
+  );
+
+  static final RegExp _help = RegExp(
+    r'^((que|en que) (puedes|sabes|me puedes) (hacer|ayudar(me)?)|ayuda|ayudame|como (te uso|funcionas)|'
+    r'que comandos (hay|tienes|existen)|cuales son (los|tus) comandos)( por favor| iris)*$',
+  );
+
+  static final RegExp _time = RegExp(
+    r'^(que hora es|que horas son|me (dices|das) la hora|la hora|que dia es( hoy)?|que fecha es( hoy)?|'
+    r'en que (dia|fecha) estamos|a cuanto estamos)( hoy)?( por favor| iris)*$',
+  );
+
+  static final RegExp _slower = RegExp(
+    r'^((habla|hablame|lee|leeme|dilo|ve) )?(un poco )?mas (lento|despacio)( por favor| porfa| iris)*$|'
+    r'^(habla|hablame|lee|leeme) (lento|despacio|lentamente|mas pausado)( por favor| porfa| iris)*$',
+  );
+  static final RegExp _faster = RegExp(
+    r'^((habla|hablame|lee|leeme|dilo|ve) )?(un poco )?mas (rapido|ligero)( por favor| porfa| iris)*$|'
+    r'^(habla|hablame|lee|leeme) (rapido|ligero|rapidamente)( por favor| porfa| iris)*$',
+  );
+
+  static final RegExp _stop = RegExp(
+    r'^(callate|silencio|para|detente|deten|basta|stop|ya basta|cancela|cancelar|para de hablar|deja de hablar)( ya| por favor| iris)*$',
+  );
+
   /// Palabras que no pueden ser un nombre ("esta es la puerta", "recuerda que manana...").
   static const Set<String> _notNames = {
     'que', 'la', 'el', 'una', 'un', 'mi', 'tu', 'esto', 'eso', 'esta', 'este', 'puerta', 'calle',
@@ -85,6 +132,13 @@ class VoiceIntents {
   static IrisIntent parse(String transcript) {
     final text = normalize(transcript);
     if (text.isEmpty) return IrisIntent.none;
+
+    if (_stop.hasMatch(text)) return const IrisIntent(IrisIntentType.stop);
+    if (_repeat.hasMatch(text)) return const IrisIntent(IrisIntentType.repeat);
+    if (_help.hasMatch(text)) return const IrisIntent(IrisIntentType.help);
+    if (_time.hasMatch(text)) return const IrisIntent(IrisIntentType.time);
+    if (_slower.hasMatch(text)) return const IrisIntent(IrisIntentType.slower);
+    if (_faster.hasMatch(text)) return const IrisIntent(IrisIntentType.faster);
 
     final remember = _remember.firstMatch(text);
     if (remember != null) {
@@ -126,5 +180,43 @@ class VoiceIntents {
         .replaceAll(RegExp(r'[¿?¡!.,;:"]'), ' ')
         .replaceAll(RegExp(r'\s+'), ' ')
         .trim();
+  }
+}
+
+/// Respuestas que Iris da sin internet.
+class LocalAnswers {
+  LocalAnswers._();
+
+  static const String help = 'Puedes decirme: que hay adelante, que dice aqui para leer un letrero, '
+      'busca la luz, quien esta aqui, o recuerda a y un nombre para guardar a una persona. '
+      'Tambien: repite, que hora es, habla mas lento o mas rapido, y callate. '
+      'Y puedes preguntarme lo que quieras, como el clima o donde estas.';
+
+  static const List<String> _days = ['lunes', 'martes', 'miercoles', 'jueves', 'viernes', 'sabado', 'domingo'];
+  static const List<String> _months = [
+    'enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio',
+    'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre',
+  ];
+
+  /// "Son las 3 y 25 de la tarde. Hoy es domingo 8 de noviembre."
+  static String time(DateTime now) {
+    final h24 = now.hour, m = now.minute;
+    final h12 = h24 % 12 == 0 ? 12 : h24 % 12;
+    final part = h24 < 6
+        ? 'de la madrugada'
+        : h24 < 12
+            ? 'de la manana'
+            : h24 < 20
+                ? 'de la tarde'
+                : 'de la noche';
+    final clock = m == 0
+        ? '$h12 en punto'
+        : m == 15
+            ? '$h12 y cuarto'
+            : m == 30
+                ? '$h12 y media'
+                : '$h12 y $m';
+    final verb = h12 == 1 ? 'Es la' : 'Son las';
+    return '$verb $clock $part. Hoy es ${_days[now.weekday - 1]} ${now.day} de ${_months[now.month - 1]}.';
   }
 }

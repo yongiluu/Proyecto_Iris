@@ -45,6 +45,22 @@ void main() {
       expectIntent('olvida a Raúl', IrisIntentType.forgetPerson, 'Raul');
     });
 
+    test('comandos rapidos', () {
+      expectIntent('Repite', IrisIntentType.repeat);
+      expectIntent('¿Qué dijiste?', IrisIntentType.repeat);
+      expectIntent('no te entendí', IrisIntentType.repeat);
+      expectIntent('¿me lo puedes repetir por favor?', IrisIntentType.repeat);
+      expectIntent('¿Qué puedes hacer?', IrisIntentType.help);
+      expectIntent('ayuda', IrisIntentType.help);
+      expectIntent('¿Qué hora es?', IrisIntentType.time);
+      expectIntent('¿qué día es hoy?', IrisIntentType.time);
+      expectIntent('habla más lento', IrisIntentType.slower);
+      expectIntent('más despacio por favor', IrisIntentType.slower);
+      expectIntent('habla más rápido', IrisIntentType.faster);
+      expectIntent('Cállate', IrisIntentType.stop);
+      expectIntent('silencio por favor', IrisIntentType.stop);
+    });
+
     test('lo demas va al agente', () {
       for (final said in [
         '¿Qué hay adelante?',
@@ -53,6 +69,10 @@ void main() {
         'esta es la puerta de mi casa',
         'recuerda que mañana tengo médico',
         'buenos días Iris',
+        'describe otra vez',
+        'estoy caminando lento',
+        'para donde queda el metro',
+        '¿qué hora abre la farmacia?',
         '',
       ]) {
         expectIntent(said, IrisIntentType.none);
@@ -92,5 +112,11 @@ void main() {
     expect(KnownFacesService.nameKey('Raúl'), 'Raul');
     expect(KnownFacesService.nameKey('  maría   josé '), 'Maria Jose');
     expect(KnownFacesService.nameKey(VoiceIntents.parse('olvida a Raúl').name!), 'Raul');
+  });
+
+  test('Hora en palabras', () {
+    expect(LocalAnswers.time(DateTime(2026, 11, 8, 15, 25)), 'Son las 3 y 25 de la tarde. Hoy es domingo 8 de noviembre.');
+    expect(LocalAnswers.time(DateTime(2026, 11, 9, 13, 0)), 'Es la 1 en punto de la tarde. Hoy es lunes 9 de noviembre.');
+    expect(LocalAnswers.time(DateTime(2026, 11, 9, 0, 30)), 'Son las 12 y media de la madrugada. Hoy es lunes 9 de noviembre.');
   });
 }

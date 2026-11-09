@@ -149,6 +149,13 @@ class Esp32SpeechService {
   /// Nivel de luz 0-100 (~1 vez por segundo mientras esta encendido).
   final ValueNotifier<int?> lightLevel = ValueNotifier(null);
 
+  /// Lo que sabe hacer el firmware de la placa conectada ("luz", "ocr"), segun CMD_HELLO.
+  /// null = no se sabe (firmware antiguo o todavia no llega el saludo).
+  final ValueNotifier<Set<String>?> boardFeatures = ValueNotifier(null);
+
+  /// true/false si se sabe; null si el firmware no lo dice.
+  bool? boardHas(String feature) => boardFeatures.value?.contains(feature);
+
   /// Audio crudo del microfono (PCM 16-bit, 16 kHz) para la recoleccion de datos.
   void Function(List<int> pcm)? onRawMicAudio;
 
@@ -335,6 +342,7 @@ class Esp32SpeechService {
     await _prefs?.setString(_prefBoardId, id);
     if (isConnected && connectedBoardId != id) {
       await _dropConnection();
+      boardFeatures.value = null;
       onConnectionChanged?.call(false);
     }
     unawaited(_scanAndConnect());
@@ -455,6 +463,7 @@ class Esp32SpeechService {
     _resetConnectionState();
     if (wasConnected) {
       debugPrint('Iris desconectado.');
+      boardFeatures.value = null;
       onConnectionChanged?.call(false);
     }
     // Si se cayo la conexion con el boton apretado, procesar lo grabado hasta ahora.
@@ -531,11 +540,13 @@ class Esp32SpeechService {
     } else if (command == 'CMD_PHOTO_END') {
       _finishPhoto();
     } else if (command.startsWith('CMD_HELLO:')) {
-      // CMD_HELLO:<segundos encendida>:<motivo del ultimo reinicio>:<RAM interna libre>:<volumen>
-      debugPrint('Placa: ${command.substring(10)} (encendida s : ultimo reinicio : RAM libre : volumen)');
+      // CMD_HELLO:<segundos encendida>:<motivo del ultimo reinicio>:<RAM interna libre>:<volumen>:<funciones>
+      debugPrint('Placa: ${command.substring(10)} (encendida s : ultimo reinicio : RAM libre : volumen : funciones)');
       final parts = command.split(':');
       final volume = parts.length >= 5 ? int.tryParse(parts[4]) : null;
       if (volume != null) boardVolume.value = volume.clamp(5, 100);
+      // Firmware anterior a las funciones: no se sabe (null) y la app prueba con un tiempo limite.
+      boardFeatures.value = parts.length >= 6 ? parts[5].split(',').map((f) => f.trim()).toSet() : null;
     } else if (command.startsWith('CMD_AUDIO_RX:')) {
       // CMD_AUDIO_RX:<recibidos>:<anunciados> - si faltan bytes, se perdieron paquetes BLE.
       debugPrint('La placa recibio audio: ${command.substring(13)}');

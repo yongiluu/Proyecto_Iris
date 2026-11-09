@@ -399,7 +399,9 @@ void loop() {
 
   // Al conectarse la app: cuanto lleva encendida la placa y por que se reinicio la ultima vez (con la
   // caja cerrada no hay monitor serial; asi se distingue un reinicio de una desconexion BLE).
-  // CMD_HELLO:<segundos encendida>:<motivo del ultimo reinicio>:<RAM interna libre>
+  // CMD_HELLO:<segundos encendida>:<motivo del ultimo reinicio>:<RAM interna libre>:<volumen>:<funciones>
+  // <funciones>: lo que sabe hacer este firmware ("luz,ocr"), para que la app no espere una
+  // respuesta que nunca va a llegar (ej. "¿que dice aqui?" a una placa sin el lector).
   static bool wasConnected = false;
   static uint32_t connectedSinceMs = 0;
   static bool helloSent = false;
@@ -414,10 +416,15 @@ void loop() {
                                            "watchdog_int", "watchdog_tarea", "watchdog", "sueno",
                                            "bajo_voltaje", "sdio"};
     const int reason = (int)esp_reset_reason();
-    char hello[64];
-    snprintf(hello, sizeof(hello), "CMD_HELLO:%lu:%s:%u:%d", (unsigned long)(millis() / 1000),
+#ifdef IRIS_OCR
+    static const char kFeatures[] = "luz,ocr";
+#else
+    static const char kFeatures[] = "luz";
+#endif
+    char hello[96];
+    snprintf(hello, sizeof(hello), "CMD_HELLO:%lu:%s:%u:%d:%s", (unsigned long)(millis() / 1000),
              reason >= 0 && reason <= 10 ? kReasons[reason] : "?",
-             (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL), getVolumePercent());
+             (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL), getVolumePercent(), kFeatures);
     bleManager.sendCommand(hello);
   }
   wasConnected = connectedNow;
