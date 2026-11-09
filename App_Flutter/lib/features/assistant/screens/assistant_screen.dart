@@ -260,7 +260,19 @@ class _AssistantScreenState extends State<AssistantScreen>
     return _capturePhonePhoto();
   }
 
-  /// Foto con la camara del celular (tambien en modo Modulo: leer texto y personas la usan).
+  /// Foto para los analisis locales (leer texto en el celular, personas): en modo Modulo, de la
+  /// camara de la PLACA (la que la persona lleva puesta; el celular suele ir en el bolsillo). Si la
+  /// placa no responde, la del celular.
+  Future<Uint8List?> _captureForLocalAnalysis() async {
+    if (_moduleConnected) {
+      final jpeg = await _esp32SpeechService.captureSingleFrame();
+      if (jpeg != null) return jpeg;
+      debugPrint('La placa no mando la foto: se usa la camara del celular');
+    }
+    return _capturePhonePhoto();
+  }
+
+  /// Foto con la camara del celular.
   /// La camara saca una foto a la vez: espera a la de la vision local si hay una en curso.
   Future<Uint8List?> _capturePhonePhoto() async {
     if (!_nativeCameraService.isInitialized) return null;
@@ -875,7 +887,9 @@ class _AssistantScreenState extends State<AssistantScreen>
     await _faces.load();
     // Sin modelo o sin nadie guardado no hay a quien reconocer.
     if (!mounted || _mode != IrisMode.people || !_faces.isAvailable || _faces.names.isEmpty) return;
-    _peopleScanTimer = Timer.periodic(_peopleScanPeriod, (_) => _scanPeopleOnce());
+    // Con la placa cada foto viaja por Bluetooth (~2 s): mirar mas espaciado para no saturarla.
+    final period = _moduleConnected ? const Duration(seconds: 5) : _peopleScanPeriod;
+    _peopleScanTimer = Timer.periodic(period, (_) => _scanPeopleOnce());
   }
 
   void _stopPeopleScan() {
@@ -890,7 +904,7 @@ class _AssistantScreenState extends State<AssistantScreen>
     if (ModalRoute.of(context)?.isCurrent == false) return; // hoja de ajustes o lista abierta
     _peopleScanning = true;
     try {
-      final jpeg = await _capturePhonePhoto();
+      final jpeg = await _captureForLocalAnalysis();
       if (jpeg == null || !mounted || _mode != IrisMode.people) return;
       final matches = await _faces.recognize(jpeg);
       final now = DateTime.now();
@@ -953,10 +967,10 @@ class _AssistantScreenState extends State<AssistantScreen>
 
   Future<void> _readWithPhone() async {
     try {
-      final jpeg = await _capturePhonePhoto();
+      final jpeg = await _captureForLocalAnalysis();
       if (!mounted) return;
       if (jpeg == null) {
-        await _showResult('No pude usar la camara del celular.', status: 'Sin camara', title: 'Texto leido');
+        await _showResult('No pude sacar la foto. Intenta de nuevo.', status: 'Sin camara', title: 'Texto leido');
         return;
       }
       final text = await _textReader.read(jpeg);
@@ -1041,10 +1055,10 @@ class _AssistantScreenState extends State<AssistantScreen>
     });
     try {
       await _hapticService.vibrateTick();
-      final jpeg = await _capturePhonePhoto();
+      final jpeg = await _captureForLocalAnalysis();
       if (!mounted) return;
       if (jpeg == null) {
-        await _showResult('No pude usar la camara del celular.', status: 'Sin camara', title: 'Personas');
+        await _showResult('No pude sacar la foto. Intenta de nuevo.', status: 'Sin camara', title: 'Personas');
         return;
       }
       final matches = await _faces.recognize(jpeg);
@@ -1081,7 +1095,9 @@ class _AssistantScreenState extends State<AssistantScreen>
     });
     var saved = 0;
     try {
-      await _ttsService.speakAndWait('Voy a guardar la cara de $name con 5 fotos. Apunta el celular a su cara.',
+      await _ttsService.speakAndWait(_moduleConnected
+              ? 'Voy a guardar la cara de $name con 5 fotos. Mira hacia su cara.'
+              : 'Voy a guardar la cara de $name con 5 fotos. Apunta el celular a su cara.',
           esp32Service: _activeEsp32);
       var step = 0, attempts = 0;
       while (step < _enrollPrompts.length && attempts < _enrollPrompts.length + 4) {
@@ -1091,16 +1107,16 @@ class _AssistantScreenState extends State<AssistantScreen>
         await _ttsService.speakAndWait(_enrollPrompts[step], esp32Service: _activeEsp32);
         await Future<void>.delayed(const Duration(milliseconds: 1500));
         if (cancelled()) return;
-        final jpeg = await _capturePhonePhoto();
+        final jpeg = await _captureForLocalAnalysis();
         if (cancelled()) return;
         if (jpeg == null) {
-          await _ttsService.speakAndWait('No pude usar la camara del celular.', esp32Service: _activeEsp32);
+          await _ttsService.speakAndWait('No pude sacar la foto. Intenta de nuevo.', esp32Service: _activeEsp32);
           break;
         }
         final count = await _faces.enroll(name, jpeg);
         if (cancelled()) return;
         if (count == 0) {
-          await _ttsService.speakAndWait('No veo su cara. Acerca un poco el celular.', esp32Service: _activeEsp32);
+          await _ttsService.speakAndWait(_moduleConnected ? 'No veo su cara. Acercate un poco.' : 'No veo su cara. Acerca un poco el celular.', esp32Service: _activeEsp32);
           continue;
         }
         if (count < 0) {
