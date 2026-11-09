@@ -24,6 +24,7 @@ limitations under the License.
 #include "tensorflow/lite/kernels/kernel_util.h"
 #include "tensorflow/lite/kernels/op_macros.h"
 #include "tensorflow/lite/micro/kernels/kernel_util.h"
+#include "tensorflow/lite/micro/kernels/esp_nn/esp_nn_lock.h"
 
 #include "freertos/FreeRTOS.h"
 #include <esp_timer.h>
@@ -78,6 +79,7 @@ void SoftmaxQuantized(TfLiteContext* context, const TfLiteEvalTensor* input,
       if (data->buffer_idx > -1) {
         scratch_buf = context->GetScratchBuffer(context, data->buffer_idx);
       }
+      EspNnScratchLock scratchLock;  // IRIS: ver esp_nn_lock.h
       esp_nn_set_softmax_scratch_buf(scratch_buf);
       esp_nn_softmax_s8(in_ptr, outer_size, depth, input_beta_multiplier,
                         input_beta_left_shift, diff_min, out_ptr);

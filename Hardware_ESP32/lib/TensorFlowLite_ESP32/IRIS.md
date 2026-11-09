@@ -12,6 +12,8 @@ Copia local de `tanakamasayuki/TensorFlowLite_ESP32` 1.0.0, la librería que usa
 
 - `kernels/esp_nn/softmax.cpp`: `buffer_idx` quedaba sin inicializar cuando ESP-NN no pide buffer temporal, y se leía `dims->data[2]` en tensores `[1, N]`. Con la versión C de ESP-NN hacía que el softmax leyera memoria basura (se detectó con el test del PC).
 
+- `kernels/esp_nn/esp_nn_lock.h` (usado en `conv.cpp`, `depthwise_conv.cpp` y `softmax.cpp`): ESP-NN guarda su buffer de trabajo en una variable global, así que dos modelos corriendo en tareas distintas (visión y audio, o visión y escenas) se lo pisaban a mitad de una capa. Un candado deja pasar una operación ESP-NN a la vez.
+
 ## Cómo se activa
 
 En `platformio.ini`, `${iris.espnn_flags}` (`-DESP_NN=1 -DCONFIG_NN_OPTIMIZED=1`) en los entornos de las placas:

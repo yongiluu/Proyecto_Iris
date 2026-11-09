@@ -26,6 +26,7 @@ limitations under the License.
 #include "tensorflow/lite/kernels/kernel_util.h"
 #include "tensorflow/lite/kernels/padding.h"
 #include "tensorflow/lite/micro/kernels/kernel_util.h"
+#include "tensorflow/lite/micro/kernels/esp_nn/esp_nn_lock.h"
 
 #include "freertos/FreeRTOS.h"
 #include <esp_timer.h>
@@ -113,6 +114,7 @@ inline void EvalQuantizedPerChannel(TfLiteContext* context, TfLiteNode* node,
       scratch_buf = context->GetScratchBuffer(context, data.buffer_idx);
     }
 
+    EspNnScratchLock scratchLock;  // IRIS: ver esp_nn_lock.h
     esp_nn_set_depthwise_conv_scratch_buf(scratch_buf);
 
     data_dims_t input_dims =  {
