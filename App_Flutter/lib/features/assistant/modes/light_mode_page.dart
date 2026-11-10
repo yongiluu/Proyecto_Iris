@@ -53,10 +53,11 @@ class LightLevelMeter extends StatelessWidget {
       value: value == null ? 'midiendo' : '$value por ciento',
       child: ExcludeSemantics(
         child: Container(
-          padding: const EdgeInsets.fromLTRB(14, 10, 14, 12),
+          padding: const EdgeInsets.fromLTRB(16, 10, 16, 14),
           decoration: BoxDecoration(
             color: AppTheme.cardDark,
             borderRadius: BorderRadius.circular(AppTheme.cardRadius),
+            border: Border.all(color: AppTheme.alertAmber.withValues(alpha: 0.35)),
             boxShadow: [
               BoxShadow(
                 color: AppTheme.alertAmber.withValues(alpha: 0.15 + 0.55 * fraction),
@@ -72,14 +73,14 @@ class LightLevelMeter extends StatelessWidget {
               Text(
                 value == null ? 'Midiendo...' : '$value %',
                 textAlign: TextAlign.center,
-                style: const TextStyle(color: AppTheme.alertAmber, fontSize: 34, fontWeight: FontWeight.w800),
+                style: const TextStyle(color: AppTheme.alertAmber, fontSize: 38, fontWeight: FontWeight.w300, letterSpacing: -1),
               ),
               const SizedBox(height: 6),
               ClipRRect(
                 borderRadius: BorderRadius.circular(8),
                 child: LinearProgressIndicator(
                   value: value == null ? null : fraction,
-                  minHeight: 14,
+                  minHeight: 8,
                   backgroundColor: Colors.white12,
                   valueColor: const AlwaysStoppedAnimation(AppTheme.alertAmber),
                 ),

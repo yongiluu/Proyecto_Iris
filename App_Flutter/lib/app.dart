@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 
 import 'features/account/auth_gate.dart';
 import 'core/theme/app_theme.dart';
+import 'core/widgets/iris_splash.dart';
 
 /// Root widget of the Iris application.
 class IrisApp extends StatelessWidget {
@@ -16,8 +17,10 @@ class IrisApp extends StatelessWidget {
     return MaterialApp(
       title: 'Iris - Visual Assistant',
       debugShowCheckedModeBanner: false,
-      theme: AppTheme.lightTheme,
-      home: const AuthGate(),  // pide iniciar sesion si hay backend configurado
+      theme: AppTheme.darkTheme,
+      themeMode: ThemeMode.dark,
+      // Arranque animado (el iris se abre) y despues: iniciar sesion si hay backend configurado.
+      home: const IrisSplash(child: AuthGate()),
     );
   }
 }

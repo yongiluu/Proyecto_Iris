@@ -1,13 +1,17 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/semantics.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:iris_app/core/widgets/aurora_background.dart';
+import 'package:iris_app/core/widgets/iris_splash.dart';
 import 'package:iris_app/features/assistant/assistant_modes.dart';
 import 'package:iris_app/features/assistant/modes/assistant_mode_page.dart';
 import 'package:iris_app/features/assistant/modes/light_mode_page.dart';
+import 'package:iris_app/features/assistant/modes/live_mode_page.dart';
 import 'package:iris_app/features/assistant/modes/people_mode_page.dart';
 import 'package:iris_app/features/assistant/modes/read_text_mode_page.dart';
 import 'package:iris_app/features/assistant/widgets/assistant_header.dart';
 import 'package:iris_app/features/assistant/widgets/assistant_layout.dart';
+import 'package:iris_app/features/assistant/widgets/iris_logo.dart';
 import 'package:iris_app/features/assistant/widgets/mode_carousel.dart';
 import 'package:iris_app/features/assistant/widgets/settings_sheet.dart';
 import 'package:iris_app/features/assistant/widgets/streaming_answer.dart';
@@ -45,11 +49,11 @@ Widget _realPage(BuildContext context, IrisMode mode) {
         canTalkHere: true,
         isModule: false,
         moduleConnected: false,
-        continuousMode: false,
-        onContinuousChanged: (_) {},
         onPressDown: () {},
         onPressUp: () {},
       );
+    case IrisMode.live:
+      return LiveModePage(isOn: true, onBoard: false, onToggle: () {});
     case IrisMode.readText:
       return ReadTextModePage(isReading: false, usesBoard: false, onRead: () {});
     case IrisMode.light:
@@ -111,47 +115,173 @@ String _answerText(WidgetTester tester) {
 
 void main() {
   group('Carrusel de modos', () {
-    testWidgets('muestra los 4 modos y deslizar cambia el modo anunciado', (tester) async {
+    // Sin animaciones: el iris respira siempre y pumpAndSettle no terminaria nunca.
+    testWidgets('muestra los 5 modos y deslizar cambia el modo anunciado', (tester) async {
       _phoneSize(tester);
       final semantics = tester.ensureSemantics();
       final changes = <IrisMode>[];
-      await tester.pumpWidget(_app(_CarouselHost(onChanged: changes.add)));
+      await tester.pumpWidget(_app(_CarouselHost(onChanged: changes.add), reduceMotion: true));
 
+      expect(IrisMode.values.map((m) => m.shortName), ['Iris', 'En vivo', 'Leer', 'Luz', 'Personas']);
       for (final m in IrisMode.values) {
         expect(find.text(m.shortName), findsOneWidget, reason: m.name);
-        expect(find.bySemanticsLabel('${m.spokenName}, pestaña ${m.index + 1} de 4'), findsOneWidget);
       }
+      // El dial muestra el modo actual y sus vecinos.
+      expect(find.bySemanticsLabel('Iris, asistente, pestaña 1 de 5'), findsOneWidget);
+      expect(find.bySemanticsLabel('En vivo, pestaña 2 de 5'), findsOneWidget);
       SemanticsNode announcer() => tester.getSemantics(find.byKey(const ValueKey('anuncio-modo')));
-      expect(announcer().label, 'Modo Iris, asistente, 1 de 4');
+      expect(announcer().label, 'Modo Iris, asistente, 1 de 5');
       expect(announcer().flagsCollection.isLiveRegion, isTrue);
 
-      // Deslizar a la izquierda: siguiente modo.
-      await tester.fling(find.byType(PageView), const Offset(-300, 0), 1000);
+      // Deslizar a la izquierda (fuera del iris, que no cambia de pagina): siguiente modo.
+      Offset beside() => tester.getTopRight(find.byType(PageView)) + const Offset(-30, 30);
+      await tester.flingFrom(beside(), const Offset(-300, 0), 1000);
       await tester.pumpAndSettle();
-      expect(changes, [IrisMode.readText]);
-      expect(announcer().label, 'Modo Leer texto, 2 de 4');
+      expect(changes, [IrisMode.live]);
+      expect(announcer().label, 'Modo En vivo, 2 de 5');
+      expect(find.bySemanticsLabel('Descripción en vivo'), findsOneWidget);
+
+      await tester.flingFrom(beside(), const Offset(-300, 0), 1000);
+      await tester.pumpAndSettle();
+      expect(changes.last, IrisMode.readText);
+      expect(announcer().label, 'Modo Leer texto, 3 de 5');
       expect(find.bySemanticsLabel('Leer texto'), findsOneWidget);
 
-      await tester.fling(find.byType(PageView), const Offset(-300, 0), 1000);
+      // Tocar un nombre del dial tambien lleva al modo.
+      await tester.tap(find.text('Luz'));
       await tester.pumpAndSettle();
       expect(changes.last, IrisMode.light);
-      expect(announcer().label, 'Modo Buscar luz, 3 de 4');
-
-      // Una pestaña tambien lleva al modo.
+      expect(announcer().label, 'Modo Buscar luz, 4 de 5');
+      // Y deslizar sobre el dial: hacia la derecha vuelve al anterior.
+      await tester.fling(find.byType(ModeDial), const Offset(200, 0), 1000);
+      await tester.pumpAndSettle();
+      expect(changes.last, IrisMode.readText);
+      await tester.fling(find.byType(ModeDial), const Offset(-200, 0), 1000);
+      await tester.pumpAndSettle();
+      expect(changes.last, IrisMode.light);
       await tester.tap(find.text('Personas'));
       await tester.pumpAndSettle();
       expect(changes.last, IrisMode.people);
-      expect(announcer().label, 'Modo Personas, 4 de 4');
+      expect(announcer().label, 'Modo Personas, 5 de 5');
       semantics.dispose();
     });
 
     testWidgets('mantener el boton grande y arrastrar no cambia de modo', (tester) async {
       _phoneSize(tester);
       final changes = <IrisMode>[];
-      await tester.pumpWidget(_app(_CarouselHost(onChanged: changes.add)));
+      await tester.pumpWidget(_app(_CarouselHost(onChanged: changes.add), reduceMotion: true));
       await tester.drag(find.bySemanticsLabel('Hablar con Iris'), const Offset(-300, 0));
       await tester.pumpAndSettle();
       expect(changes, isEmpty);
+    });
+
+    testWidgets('la respuesta va entre el iris y el dial', (tester) async {
+      _phoneSize(tester);
+      final controller = PageController();
+      addTearDown(controller.dispose);
+      await tester.pumpWidget(_app(
+        ModeCarousel(
+          controller: controller,
+          mode: IrisMode.assistant,
+          onModeChanged: (_) {},
+          pageBuilder: _realPage,
+          answer: StreamingAnswer(
+            text: 'Hay una silla adelante.',
+            progress: ValueNotifier(const SpeechProgress('Hay una silla adelante.', 23, done: true)),
+          ),
+        ),
+        reduceMotion: true,
+      ));
+      final iris = tester.getRect(find.bySemanticsLabel('Hablar con Iris'));
+      final answer = tester.getRect(find.byType(StreamingAnswer));
+      final dial = tester.getRect(find.byType(ModeDial));
+      expect(iris.bottom, lessThanOrEqualTo(answer.top));
+      expect(answer.bottom, lessThanOrEqualTo(dial.top));
+    });
+  });
+
+  group('Iris vivo, fondo y arranque', () {
+    testWidgets('el iris cambia de estado sin errores y queda quieto sin animaciones', (tester) async {
+      for (final state in IrisState.values) {
+        await tester.pumpWidget(_app(Center(child: IrisLogo(size: 140, state: state, glow: true))));
+        await tester.pump(const Duration(milliseconds: 300));
+        await tester.pump(const Duration(milliseconds: 700));
+        expect(tester.takeException(), isNull, reason: state.name);
+      }
+      await tester.pumpWidget(
+        _app(const Center(child: IrisLogo(size: 140, state: IrisState.thinking)), reduceMotion: true),
+      );
+      await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('la aurora queda quieta en calma y se mueve al pensar', (tester) async {
+      await tester.pumpWidget(_app(const AuroraBackground()));
+      await tester.pumpAndSettle();
+      expect(tester.binding.hasScheduledFrame, isFalse, reason: 'en calma no anima');
+
+      await tester.pumpWidget(_app(const AuroraBackground(mood: AuroraMood.thinking)));
+      await tester.pump(const Duration(milliseconds: 100));
+      expect(tester.binding.hasScheduledFrame, isTrue, reason: 'pensando, los colores fluyen');
+
+      await tester.pumpWidget(_app(const AuroraBackground()));
+      await tester.pumpAndSettle();
+      expect(tester.binding.hasScheduledFrame, isFalse);
+    });
+
+    testWidgets('con imagen de fondo (camara o foto de la placa) se ve la imagen', (tester) async {
+      const image = ColoredBox(key: ValueKey('imagen'), color: Colors.green);
+      await tester.pumpWidget(_app(const IrisBackdrop(mood: AuroraMood.calm, image: image)));
+      expect(find.byKey(const ValueKey('imagen')), findsOneWidget);
+      expect(tester.widget<AnimatedOpacity>(find.byType(AnimatedOpacity)).opacity, 0);
+
+      // Pensando: la aurora tiñe la imagen.
+      await tester.pumpWidget(_app(const IrisBackdrop(mood: AuroraMood.thinking, image: image)));
+      expect(tester.widget<AnimatedOpacity>(find.byType(AnimatedOpacity)).opacity, greaterThan(0));
+
+      // Sin imagen (placa conectada que aun no manda foto): solo la aurora.
+      await tester.pumpWidget(_app(const IrisBackdrop(mood: AuroraMood.calm)));
+      expect(find.byType(AuroraBackground), findsOneWidget);
+      await tester.pumpAndSettle();
+    });
+
+    testWidgets('el arranque animado termina y deja la app usable', (tester) async {
+      var taps = 0;
+      await tester.pumpWidget(MaterialApp(
+        home: IrisSplash(
+          child: Scaffold(body: Center(child: TextButton(onPressed: () => taps++, child: const Text('Entrar')))),
+        ),
+      ));
+      // Durante la animacion la app ya esta construida, pero no recibe toques.
+      await tester.pump(const Duration(milliseconds: 600));
+      expect(find.text('Entrar'), findsOneWidget);
+      await tester.tap(find.text('Entrar'), warnIfMissed: false);
+      expect(taps, 0);
+
+      await tester.pumpAndSettle();
+      expect(find.byType(CustomPaint, skipOffstage: false).evaluate().where((e) {
+        return (e.widget as CustomPaint).painter.runtimeType.toString() == '_SplashPainter';
+      }), isEmpty);
+      await tester.tap(find.text('Entrar'));
+      expect(taps, 1);
+    });
+
+    testWidgets('el indicador de conexion dice con que trabaja Iris y no es un boton', (tester) async {
+      final semantics = tester.ensureSemantics();
+      for (final (link, spoken) in [
+        (IrisLink.phone, 'Usando el celular'),
+        (IrisLink.board, 'Placa conectada'),
+        (IrisLink.searching, 'Buscando la placa'),
+      ]) {
+        await tester.pumpWidget(_app(
+          AssistantTopBar(phase: AssistantPhase.ready, link: link, onOpenSettings: () {}),
+          reduceMotion: true,
+        ));
+        final node = tester.getSemantics(find.bySemanticsLabel(spoken));
+        expect(node.flagsCollection.isButton, isFalse, reason: spoken);
+      }
+      expect(find.byTooltip('Configuración'), findsOneWidget);
+      semantics.dispose();
     });
   });
 
@@ -218,7 +348,9 @@ void main() {
 
       // El usuario sube para releer: deja de seguir.
       await tester.drag(find.byType(SingleChildScrollView), const Offset(0, 150));
-      await tester.pumpAndSettle();
+      // (sin pumpAndSettle: el iris de la tarjeta se mueve mientras suena la voz)
+      await tester.pump(const Duration(milliseconds: 400));
+      await tester.pump(const Duration(milliseconds: 400));
       expect(state.isFollowing, isFalse);
       final readingAt = position.pixels;
       expect(readingAt, lessThan(position.maxScrollExtent));
@@ -258,19 +390,18 @@ void main() {
             background: const ColoredBox(color: Colors.black),
             topBar: AssistantTopBar(
               phase: AssistantPhase.ready,
-              hardwareLabel: 'Modulo conectado',
-              hardwareIcon: Icons.bluetooth_connected,
+              link: IrisLink.board,
               onOpenSettings: () {},
             ),
             status: const StatusLine(text: 'La placa no respondio. Leo con el celular...', active: false),
             alert: const VisionAlertBanner(alert: VisionAlert(what: 'un cruce peatonal', confidence: 81)),
-            answer: withAnswer
-                ? StreamingAnswer(
-                    text: List.filled(30, 'Hay una mesa con un vaso y una puerta al fondo.').join(' '),
-                    progress: progress,
-                  )
-                : null,
             carousel: ModeCarousel(
+              answer: withAnswer
+                  ? StreamingAnswer(
+                      text: List.filled(30, 'Hay una mesa con un vaso y una puerta al fondo.').join(' '),
+                      progress: progress,
+                    )
+                  : null,
               controller: controller,
               mode: mode,
               onModeChanged: (m) => setState(() => mode = m),
@@ -303,10 +434,43 @@ void main() {
       await pumpScreen(tester, withAnswer: false);
     });
 
-    testWidgets('hoja de ajustes en modo Modulo', (tester) async {
+    testWidgets('configuracion: en automatico no hay selector Celular/Placa', (tester) async {
+      _phoneSize(tester);
+      bool? changedTo;
+      await tester.pumpWidget(_app(
+        SettingsSheet(
+          autoDetect: true,
+          onAutoDetectChanged: (v) => changedTo = v,
+          hardwareMode: HardwareMode.standalone,
+          onHardwareModeChanged: (_) {},
+          busy: false,
+          boardConnected: false,
+          boardLabel: 'Iris 1',
+          problem: ValueNotifier(null),
+          needsPermissions: false,
+          onRequestPermissions: () {},
+          onOpenAppSettings: () {},
+          onPickBoard: () {},
+          answersOnPhone: true,
+          onAnswersOnPhoneChanged: (_) {},
+          boardVolume: ValueNotifier(50),
+          onBoardVolumeChanged: (_) {},
+        ),
+      ));
+      expect(find.text('Detectar la placa sola'), findsOneWidget);
+      expect(find.text('Celular'), findsNothing);
+      // La placa se puede elegir aunque todavia no haya conectado.
+      expect(find.text('Cambiar placa'), findsOneWidget);
+      await tester.tap(find.text('Detectar la placa sola'));
+      expect(changedTo, isFalse);
+    });
+
+    testWidgets('configuracion en modo Modulo manual', (tester) async {
       _phoneSize(tester);
       await tester.pumpWidget(_app(
         SettingsSheet(
+          autoDetect: false,
+          onAutoDetectChanged: (_) {},
           hardwareMode: HardwareMode.esp32,
           onHardwareModeChanged: (_) {},
           busy: false,
@@ -327,6 +491,7 @@ void main() {
       ));
       await tester.pump();
       expect(tester.takeException(), isNull);
+      expect(find.text('Celular'), findsOneWidget);
       expect(find.text('Cambiar placa'), findsOneWidget);
       expect(find.text('Mi cuenta'), findsOneWidget);
     });

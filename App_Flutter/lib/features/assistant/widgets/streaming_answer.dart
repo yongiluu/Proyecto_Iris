@@ -3,10 +3,12 @@ import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart' show ScrollDirection;
 
 import '../../../core/theme/app_theme.dart';
+import '../../../core/widgets/glass.dart';
 import '../../../services/ai/tts_service.dart';
+import 'iris_logo.dart';
 
-/// Respuesta de Iris que se va escribiendo al ritmo de la voz (tipo karaoke) y que se puede
-/// desplazar. Mientras la voz avanza, la vista la sigue sola; si la persona desplaza con el dedo,
+/// Respuesta de Iris que se va escribiendo al ritmo de la voz y que se puede desplazar. Las
+/// letras recien dichas aparecen encendidas (cian, con resplandor) y se enfrian a blanco. Mientras la voz avanza, la vista la sigue sola; si la persona desplaza con el dedo,
 /// deja de seguirla hasta que vuelva al final (o toque "Seguir la voz").
 ///
 /// - Solo se sincroniza si [progress] habla de este mismo [text]; si no (otra frase lo corto, o
@@ -112,48 +114,65 @@ class StreamingAnswerState extends State<StreamingAnswer> {
     _scheduleFollow();
   }
 
+  /// Cuantas letras recien escritas todavia "se estan encendiendo".
+  static const int _inkTail = 14;
+
+  /// Letras recien dichas: nacen cian brillante y con resplandor, y se enfrian a blanco.
+  List<InlineSpan> _inkSpans(String fresh) {
+    final spans = <InlineSpan>[];
+    for (int i = 0; i < fresh.length; i++) {
+      // 0 = la mas vieja de la cola, 1 = la que acaba de aparecer.
+      final heat = fresh.length == 1 ? 1.0 : i / (fresh.length - 1);
+      spans.add(TextSpan(
+        text: fresh[i],
+        style: TextStyle(
+          color: Color.lerp(AppTheme.textOnDark, AppTheme.brightCyan, heat),
+          shadows: [Shadow(color: AppTheme.accentCyan.withValues(alpha: 0.85 * heat), blurRadius: 4 + 12 * heat)],
+        ),
+      ));
+    }
+    return spans;
+  }
+
   @override
   Widget build(BuildContext context) {
     final end = _visibleEnd;
     final text = widget.text;
     final spoken = text.substring(0, end);
-    // La palabra que esta sonando, resaltada en cian.
-    final lastSpace = spoken.trimRight().lastIndexOf(RegExp(r'\s'));
     final streaming = _streaming;
-    final before = streaming && lastSpace > 0 ? spoken.substring(0, lastSpace + 1) : spoken;
-    final current = streaming && lastSpace > 0 ? spoken.substring(lastSpace + 1) : '';
+    // Mientras suena, las ultimas letras brillan: el texto "se va encendiendo" con la voz.
+    final tailStart = streaming ? (spoken.length - _inkTail).clamp(0, spoken.length) : spoken.length;
+    final settled = spoken.substring(0, tailStart);
+    final fresh = spoken.substring(tailStart);
 
-    const bodyStyle = TextStyle(color: AppTheme.textOnDark, fontSize: 19, height: 1.45);
+    const bodyStyle = TextStyle(color: AppTheme.textOnDark, fontSize: 19, height: 1.45, letterSpacing: 0.1);
 
     return Semantics(
       container: true,
       label: '${widget.title}: $text',
       child: ExcludeSemantics(
-        child: Container(
-          decoration: BoxDecoration(
-            color: AppTheme.cardDark,
-            borderRadius: BorderRadius.circular(AppTheme.cardRadius),
-          ),
-          padding: const EdgeInsets.fromLTRB(16, 8, 6, 8),
+        child: GlassCard(
+          tint: AppTheme.cardDark,
+          borderColor: streaming ? AppTheme.accentCyan.withValues(alpha: 0.55) : AppTheme.glassBorder,
+          padding: const EdgeInsets.fromLTRB(18, 6, 6, 10),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             mainAxisSize: MainAxisSize.min,
             children: [
               Row(
                 children: [
-                  const Icon(Icons.spatial_audio_off, color: AppTheme.accentCyan, size: 18),
-                  const SizedBox(width: 6),
+                  IrisLogo(
+                    size: 16,
+                    color: AppTheme.accentCyan,
+                    state: streaming ? IrisState.speaking : IrisState.idle,
+                  ),
+                  const SizedBox(width: 8),
                   Expanded(
                     child: Text(
                       widget.title.toUpperCase(),
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                        color: AppTheme.accentCyan,
-                        fontSize: 12,
-                        fontWeight: FontWeight.w800,
-                        letterSpacing: 1.2,
-                      ),
+                      style: AppTheme.mono.copyWith(fontSize: 11, color: AppTheme.accentCyan),
                     ),
                   ),
                   if (streaming && !_follow)
@@ -175,9 +194,12 @@ class StreamingAnswerState extends State<StreamingAnswer> {
               Flexible(
                 child: NotificationListener<ScrollNotification>(
                   onNotification: _onScrollNotification,
-                  child: Scrollbar(
+                  child: RawScrollbar(
                     controller: _scroll,
                     thumbVisibility: true,
+                    thumbColor: Colors.white30,
+                    radius: const Radius.circular(2),
+                    thickness: 3,
                     child: SingleChildScrollView(
                       controller: _scroll,
                       padding: const EdgeInsets.only(right: 12, bottom: 4),
@@ -187,12 +209,8 @@ class StreamingAnswerState extends State<StreamingAnswer> {
                         TextSpan(
                           style: bodyStyle,
                           children: [
-                            TextSpan(text: before),
-                            if (current.isNotEmpty)
-                              TextSpan(
-                                text: current,
-                                style: const TextStyle(color: AppTheme.brightCyan, fontWeight: FontWeight.w600),
-                              ),
+                            TextSpan(text: settled),
+                            ..._inkSpans(fresh),
                           ],
                         ),
                       ),

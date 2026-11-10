@@ -2,16 +2,19 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import '../../../core/theme/app_theme.dart';
+import '../../../core/widgets/glass.dart';
 import '../assistant_modes.dart';
 
-/// Ajustes que no se usan a cada rato: Celular o Modulo, placa, respuestas en el celular,
-/// volumen de la placa, Mi cuenta y misiones de datos. Se abre con el engranaje de arriba.
+/// Contenido de la pantalla de Configuracion: conexion (la placa se detecta sola; el cambio
+/// manual Celular/Placa vive aca), placa, voz, Mi cuenta y misiones de datos.
 ///
 /// No depende de los servicios: recibe el estado y callbacks (la pantalla lo reconstruye cuando
 /// algo cambia), asi se puede probar sin Bluetooth.
 class SettingsSheet extends StatefulWidget {
   const SettingsSheet({
     super.key,
+    required this.autoDetect,
+    required this.onAutoDetectChanged,
     required this.hardwareMode,
     required this.onHardwareModeChanged,
     required this.busy,
@@ -29,6 +32,10 @@ class SettingsSheet extends StatefulWidget {
     this.onOpenAccount,
     this.onOpenMissions,
   });
+
+  /// true = Iris usa la placa cuando la encuentra y el celular cuando no.
+  final bool autoDetect;
+  final ValueChanged<bool> onAutoDetectChanged;
 
   final HardwareMode hardwareMode;
   final ValueChanged<HardwareMode> onHardwareModeChanged;
@@ -60,68 +67,89 @@ class SettingsSheet extends StatefulWidget {
 class _SettingsSheetState extends State<SettingsSheet> {
   int? _volumeDrag; // valor mientras se arrastra el slider (se manda al soltar)
 
-  static const _sectionStyle = TextStyle(
-    color: AppTheme.accentCyan,
-    fontSize: 13,
-    fontWeight: FontWeight.w800,
-    letterSpacing: 1.2,
-  );
-
   @override
   Widget build(BuildContext context) {
     final isModule = widget.hardwareMode == HardwareMode.esp32;
-    return SafeArea(
-      child: SingleChildScrollView(
-        padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Semantics(
-              header: true,
-              child: const Text('Ajustes',
-                  style: TextStyle(color: AppTheme.textOnDark, fontSize: 22, fontWeight: FontWeight.w800)),
+    // La seccion de la placa se ve tambien en automatico: ahi se elige la placa y se ven los
+    // problemas de Bluetooth aunque todavia no haya conectado.
+    final showBoard = isModule || widget.autoDetect;
+    return SingleChildScrollView(
+      padding: const EdgeInsets.fromLTRB(16, 0, 16, 24),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const SectionLabel('Conexión'),
+          GlassCard(
+            padding: const EdgeInsets.fromLTRB(16, 6, 12, 12),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                MergeSemantics(
+                  child: SwitchListTile(
+                    contentPadding: EdgeInsets.zero,
+                    value: widget.autoDetect,
+                    onChanged: widget.busy ? null : widget.onAutoDetectChanged,
+                    title: const Text('Detectar la placa sola'),
+                    subtitle: const Text('Iris usa la placa cuando la encuentra y el celular cuando no'),
+                  ),
+                ),
+                if (!widget.autoDetect) ...[
+                  const SizedBox(height: 6),
+                  _HardwareToggle(
+                    mode: widget.hardwareMode,
+                    enabled: !widget.busy,
+                    onChanged: widget.onHardwareModeChanged,
+                  ),
+                ],
+              ],
             ),
-            const SizedBox(height: 12),
-            const ExcludeSemantics(child: Text('CAMARA Y MICROFONO', style: _sectionStyle)),
-            const SizedBox(height: 6),
-            _HardwareToggle(
-              mode: widget.hardwareMode,
-              enabled: !widget.busy,
-              onChanged: widget.onHardwareModeChanged,
-            ),
-            if (isModule) ...[
-              const SizedBox(height: 16),
-              const ExcludeSemantics(child: Text('MODULO', style: _sectionStyle)),
-              const SizedBox(height: 4),
-              _buildModuleSection(),
-            ],
-            if (widget.onOpenAccount != null || widget.onOpenMissions != null) ...[
-              const SizedBox(height: 12),
-              const Divider(color: Colors.white24),
-            ],
-            if (widget.onOpenAccount != null)
-              _SettingsTile(
-                icon: Icons.account_circle_outlined,
-                label: 'Mi cuenta',
-                hint: 'Memoria, acompañantes y privacidad',
-                onTap: widget.onOpenAccount!,
-              ),
-            if (widget.onOpenMissions != null)
-              _SettingsTile(
-                icon: Icons.assignment_outlined,
-                label: 'Misiones de datos',
-                hint: 'Recoleccion de datos para el equipo',
-                onTap: widget.onOpenMissions!,
-              ),
+          ),
+          if (showBoard) ...[
+            const SectionLabel('Placa'),
+            GlassCard(padding: const EdgeInsets.fromLTRB(16, 14, 12, 10), child: _buildModuleSection()),
           ],
-        ),
+          if (widget.onOpenAccount != null || widget.onOpenMissions != null) ...[
+            const SectionLabel('Cuenta'),
+            GlassCard(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+              child: Column(
+                children: [
+                  if (widget.onOpenAccount != null)
+                    _SettingsTile(
+                      icon: Icons.account_circle_outlined,
+                      label: 'Mi cuenta',
+                      hint: 'Memoria, acompañantes y privacidad',
+                      onTap: widget.onOpenAccount!,
+                    ),
+                  if (widget.onOpenAccount != null && widget.onOpenMissions != null) const Divider(),
+                  if (widget.onOpenMissions != null)
+                    _SettingsTile(
+                      icon: Icons.assignment_outlined,
+                      label: 'Misiones de datos',
+                      hint: 'Recoleccion de datos para el equipo',
+                      onTap: widget.onOpenMissions!,
+                    ),
+                ],
+              ),
+            ),
+          ],
+          const SizedBox(height: 20),
+          const ExcludeSemantics(
+            child: Text(
+              'Todo se puede pedir por voz: "Oye Iris, ¿qué dice aquí?", "describe en vivo", "habla más lento".',
+              textAlign: TextAlign.center,
+              style: TextStyle(color: AppTheme.textFaint, fontSize: 13, height: 1.4),
+            ),
+          ),
+        ],
       ),
     );
   }
 
   Widget _buildModuleSection() {
     final connected = widget.boardConnected;
+    final statusColor = connected ? AppTheme.success : AppTheme.alertAmber;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -130,16 +158,20 @@ class _SettingsSheetState extends State<SettingsSheet> {
           child: ExcludeSemantics(
             child: Row(
               children: [
-                Icon(
-                  connected ? Icons.bluetooth_connected : Icons.bluetooth_searching,
-                  color: connected ? AppTheme.accentCyan : AppTheme.alertAmber,
-                  size: 22,
+                Container(
+                  width: 10,
+                  height: 10,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: statusColor,
+                    boxShadow: [BoxShadow(color: statusColor.withValues(alpha: 0.8), blurRadius: 10)],
+                  ),
                 ),
-                const SizedBox(width: 8),
+                const SizedBox(width: 12),
                 Expanded(
                   child: Text(
                     connected ? 'Conectado a ${widget.boardLabel}' : 'Buscando el modulo...',
-                    style: const TextStyle(color: AppTheme.textOnDark, fontSize: 16),
+                    style: const TextStyle(color: AppTheme.textOnDark, fontSize: 17, fontWeight: FontWeight.w500),
                   ),
                 ),
               ],
@@ -162,14 +194,8 @@ class _SettingsSheetState extends State<SettingsSheet> {
                       Wrap(
                         spacing: 8,
                         children: [
-                          TextButton(
-                            onPressed: widget.onRequestPermissions,
-                            child: const Text('Dar permiso', style: TextStyle(color: AppTheme.accentCyan)),
-                          ),
-                          TextButton(
-                            onPressed: widget.onOpenAppSettings,
-                            child: const Text('Abrir ajustes', style: TextStyle(color: AppTheme.accentCyan)),
-                          ),
+                          TextButton(onPressed: widget.onRequestPermissions, child: const Text('Dar permiso')),
+                          TextButton(onPressed: widget.onOpenAppSettings, child: const Text('Abrir ajustes')),
                         ],
                       ),
                   ],
@@ -178,26 +204,24 @@ class _SettingsSheetState extends State<SettingsSheet> {
             );
           },
         ),
+        const SizedBox(height: 4),
         _SettingsTile(
           icon: Icons.swap_horiz,
           label: 'Cambiar placa',
           onTap: widget.onPickBoard,
         ),
+        const Divider(),
         MergeSemantics(
           child: SwitchListTile(
             contentPadding: EdgeInsets.zero,
             value: widget.answersOnPhone,
             onChanged: widget.onAnswersOnPhoneChanged,
-            activeThumbColor: Colors.black,
-            activeTrackColor: AppTheme.accentCyan,
-            inactiveThumbColor: AppTheme.textOnDarkMuted,
-            inactiveTrackColor: Colors.white24,
-            title: const Text('Respuestas en el celular',
-                style: TextStyle(color: AppTheme.textOnDark, fontSize: 16)),
-            subtitle: const Text('La voz de Iris suena en el celular y no en la placa',
-                style: TextStyle(color: AppTheme.textOnDarkMuted, fontSize: 13)),
+            title: const Text('Respuestas en el celular'),
+            subtitle: const Text('La voz de Iris suena en el celular y no en la placa'),
           ),
         ),
+        const Divider(),
+        const SizedBox(height: 8),
         _buildBoardVolume(connected),
       ],
     );
@@ -216,9 +240,12 @@ class _SettingsSheetState extends State<SettingsSheet> {
               value: '$volume por ciento',
               child: ExcludeSemantics(
                 child: IconButton(
-                  iconSize: 28,
+                  iconSize: 26,
                   constraints: const BoxConstraints(minWidth: 48, minHeight: 48),
-                  style: IconButton.styleFrom(backgroundColor: Colors.white12),
+                  style: IconButton.styleFrom(
+                    backgroundColor: AppTheme.glassFill,
+                    side: const BorderSide(color: AppTheme.glassBorder),
+                  ),
                   onPressed: connected ? () => widget.onBoardVolumeChanged(volume + delta) : null,
                   icon: Icon(delta < 0 ? Icons.remove : Icons.add, color: AppTheme.textOnDark),
                 ),
@@ -243,8 +270,6 @@ class _SettingsSheetState extends State<SettingsSheet> {
                       max: 100,
                       divisions: 19,
                       label: '$shown',
-                      activeColor: AppTheme.accentCyan,
-                      inactiveColor: Colors.white24,
                       onChanged: connected ? (v) => setState(() => _volumeDrag = v.round()) : null,
                       onChangeEnd: connected
                           ? (v) {
@@ -265,7 +290,7 @@ class _SettingsSheetState extends State<SettingsSheet> {
   }
 }
 
-/// Celular / Modulo: dos opciones excluyentes.
+/// Celular / Placa: dos opciones excluyentes (solo con la deteccion automatica apagada).
 class _HardwareToggle extends StatelessWidget {
   const _HardwareToggle({required this.mode, required this.enabled, required this.onChanged});
 
@@ -297,8 +322,9 @@ class _HardwareToggle extends StatelessWidget {
                   constraints: const BoxConstraints(minHeight: 52),
                   padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
                   decoration: BoxDecoration(
-                    color: selected ? AppTheme.accentCyan.withValues(alpha: 0.28) : Colors.transparent,
+                    color: selected ? AppTheme.accentCyan.withValues(alpha: 0.24) : Colors.transparent,
                     borderRadius: BorderRadius.circular(28),
+                    border: Border.all(color: selected ? AppTheme.accentCyan : Colors.transparent),
                   ),
                   child: Row(
                     mainAxisAlignment: MainAxisAlignment.center,
@@ -311,9 +337,7 @@ class _HardwareToggle extends StatelessWidget {
                           child: Text(label,
                               maxLines: 1,
                               style: TextStyle(
-                                  color: fg,
-                                  fontSize: 17,
-                                  fontWeight: selected ? FontWeight.w800 : FontWeight.w500)),
+                                  color: fg, fontSize: 17, fontWeight: selected ? FontWeight.w600 : FontWeight.w400)),
                         ),
                       ),
                     ],
@@ -334,7 +358,7 @@ class _HardwareToggle extends StatelessWidget {
           option(HardwareMode.standalone, Icons.smartphone, 'Celular', 'Modo Celular',
               'Usa la cámara y el micrófono del teléfono'),
           const SizedBox(width: 4),
-          option(HardwareMode.esp32, Icons.memory, 'Modulo', 'Modo Módulo', 'Usa la cámara y el micrófono de la placa'),
+          option(HardwareMode.esp32, Icons.memory, 'Placa', 'Modo Módulo', 'Usa la cámara y el micrófono de la placa'),
         ],
       ),
     );
@@ -355,11 +379,9 @@ class _SettingsTile extends StatelessWidget {
       contentPadding: EdgeInsets.zero,
       minTileHeight: 52,
       leading: Icon(icon, color: AppTheme.accentCyan),
-      title: Text(label, style: const TextStyle(color: AppTheme.textOnDark, fontSize: 17)),
-      subtitle: hint == null
-          ? null
-          : Text(hint!, style: const TextStyle(color: AppTheme.textOnDarkMuted, fontSize: 13)),
-      trailing: const Icon(Icons.chevron_right, color: AppTheme.textOnDarkMuted),
+      title: Text(label),
+      subtitle: hint == null ? null : Text(hint!),
+      trailing: const Icon(Icons.chevron_right, color: AppTheme.textFaint),
       onTap: onTap,
     );
   }

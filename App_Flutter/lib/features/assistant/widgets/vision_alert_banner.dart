@@ -62,6 +62,7 @@ class VisionAlertBanner extends StatelessWidget {
           decoration: BoxDecoration(
             color: AppTheme.cardDark,
             borderRadius: BorderRadius.circular(AppTheme.cardRadius),
+            border: Border.all(color: AppTheme.alertAmber.withValues(alpha: 0.45)),
           ),
           child: Row(
             crossAxisAlignment: CrossAxisAlignment.center,
