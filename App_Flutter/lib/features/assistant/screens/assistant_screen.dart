@@ -967,7 +967,9 @@ class _AssistantScreenState extends State<AssistantScreen>
       _readTextTimeout = Timer(const Duration(seconds: 8), () {
         _readTextTimeout = null;
         if (!mounted) return;
-        _boardHasNoReader = true;
+        // Solo se descarta la placa si NO dijo que tiene lector (firmware antiguo). Si lo anuncio en su
+        // saludo, una lectura lenta (muchas lineas) no debe dejarla sin usar el resto de la sesion.
+        if (boardReader != true) _boardHasNoReader = true;
         // La placa puede no tener el lector instalado: se lee con la camara del celular.
         setState(() => _statusText = 'La placa no respondio. Leo con el celular...');
         unawaited(_readWithPhone());

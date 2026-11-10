@@ -9,7 +9,7 @@ namespace {
 enum class CameraMode { Color, Jpeg, GrayVga };
 
 SemaphoreHandle_t cameraMutex = nullptr;
-bool cameraReady = false;
+volatile bool cameraReady = false;
 volatile bool fixedExposure = false;  // detector de luz
 
 void applyExposure() {
@@ -108,7 +108,7 @@ bool restartCamera(CameraMode mode) {
 // Si la camara quedo apagada por un error, se intenta encender de nuevo cada kRecoverEveryMs.
 constexpr uint32_t kRecoverEveryMs = 3000;
 uint32_t lastRecoverMs = 0;
-bool shutdownRequested = false;
+volatile bool shutdownRequested = false;
 
 void tryRecover() {
   if (cameraReady || shutdownRequested || millis() - lastRecoverMs < kRecoverEveryMs) return;
@@ -118,7 +118,15 @@ void tryRecover() {
   Serial.printf("[Camara] Recuperacion %s\n", cameraReady ? "OK" : "fallida, se reintenta");
   xSemaphoreGive(cameraMutex);
 }
+
+// Con el candado tomado: la camara pudo apagarse (shutdownCamera, antes de actualizar por WiFi) o
+// fallar mientras esta tarea esperaba. Sin esto, una foto pedida justo entonces la volvia a encender.
+bool lockedCameraUsable() {
+  if (cameraReady && !shutdownRequested) return true;
+  xSemaphoreGive(cameraMutex);
+  return false;
 }
+}  // namespace
 
 bool initCamera() {
   if (cameraMutex == nullptr) cameraMutex = xSemaphoreCreateMutex();
@@ -134,6 +142,7 @@ camera_fb_t* acquireColorFrame() {
     if (!cameraReady) return nullptr;
   }
   if (xSemaphoreTake(cameraMutex, kColorLockTimeoutTicks) != pdTRUE) return nullptr;
+  if (!lockedCameraUsable()) return nullptr;
 
   camera_fb_t* frame = esp_camera_fb_get();
   if (frame == nullptr) xSemaphoreGive(cameraMutex);
@@ -161,6 +170,7 @@ camera_fb_t* acquireJpegFrame() {
     if (!cameraReady) return nullptr;
   }
   if (xSemaphoreTake(cameraMutex, kJpegLockTimeoutTicks) != pdTRUE) return nullptr;
+  if (!lockedCameraUsable()) return nullptr;
 
   if (!restartCamera(CameraMode::Jpeg)) {
     cameraReady = restartCamera(CameraMode::Color);
@@ -188,6 +198,7 @@ camera_fb_t* acquireGrayVgaFrame() {
     if (!cameraReady) return nullptr;
   }
   if (xSemaphoreTake(cameraMutex, kJpegLockTimeoutTicks) != pdTRUE) return nullptr;
+  if (!lockedCameraUsable()) return nullptr;
 
   if (!restartCamera(CameraMode::GrayVga)) {
     cameraReady = restartCamera(CameraMode::Color);
@@ -211,7 +222,7 @@ camera_fb_t* acquireGrayVgaFrame() {
 
 void releaseJpegFrame(camera_fb_t* frame) {
   if (frame != nullptr) esp_camera_fb_return(frame);
-  cameraReady = restartCamera(CameraMode::Color);
+  cameraReady = !shutdownRequested && restartCamera(CameraMode::Color);
   xSemaphoreGive(cameraMutex);
 }
 

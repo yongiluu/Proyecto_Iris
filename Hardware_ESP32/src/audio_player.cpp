@@ -5,6 +5,7 @@
 #include <esp_system.h>
 #include <Preferences.h>
 #include <freertos/FreeRTOS.h>
+#include <freertos/semphr.h>
 #include <freertos/stream_buffer.h>
 #include <freertos/task.h>
 #include <math.h>
@@ -43,6 +44,9 @@ constexpr int16_t kBeepAmplitude = 8000;
 
 StreamBufferHandle_t playbackStream = nullptr;
 StaticStreamBuffer_t playbackStreamStruct;
+// Un stream buffer de FreeRTOS admite UN solo escritor a la vez, y aqui escriben tres tareas: el hilo
+// BLE (la voz), el loop (tonos) y la tarea de vision (pitidos del detector de luz).
+SemaphoreHandle_t enqueueMutex = nullptr;
 volatile TickType_t lastEnqueueTick = 0;
 // Los tonos ("te escucho", "pensando") suenan al instante, sin esperar a juntar audio.
 volatile bool playNowRequested = false;
@@ -202,7 +206,9 @@ bool initAudioPlayer() {
   } else {
     playbackStream = xStreamBufferCreate(kFallbackBufferBytes, 1);
   }
-  if (playbackStream == nullptr) {
+  enqueueMutex = xSemaphoreCreateMutex();
+  if (playbackStream == nullptr || enqueueMutex == nullptr) {
+    playbackStream = nullptr;
     Serial.println("[Audio] Error: sin memoria para el buffer de reproduccion");
     return false;
   }
@@ -211,15 +217,19 @@ bool initAudioPlayer() {
   return true;
 }
 
-void playAudioBuffer(const uint8_t* payload, size_t length) {
+namespace {
+// isAnswer: audio de la respuesta que mando la app (cuenta para CMD_AUDIO_BEGIN); los tonos no.
+void enqueueAudio(const uint8_t* payload, size_t length, bool isAnswer) {
   if (playbackStream == nullptr || payload == nullptr) return;
 
   length &= ~(size_t)1; // PCM de 16 bits: descartar un byte suelto
   if (length == 0) return;
 
+  xSemaphoreTake(enqueueMutex, portMAX_DELAY);
   size_t sent = xStreamBufferSend(playbackStream, payload, length, kEnqueueTimeoutTicks);
+  xSemaphoreGive(enqueueMutex);
   lastEnqueueTick = xTaskGetTickCount();
-  if (expectedBytes > 0) {
+  if (isAnswer && expectedBytes > 0) {
     receivedBytes = receivedBytes + sent;
     if (receivedBytes >= expectedBytes) {
       reportReceived = receivedBytes;
@@ -231,6 +241,16 @@ void playAudioBuffer(const uint8_t* payload, size_t length) {
   if (sent < length) {
     Serial.println("[Audio] Buffer de reproduccion lleno: audio descartado");
   }
+}
+}  // namespace
+
+void playAudioBuffer(const uint8_t* payload, size_t length) {
+  enqueueAudio(payload, length, true);
+}
+
+size_t pendingPlaybackMs() {
+  if (playbackStream == nullptr) return 0;
+  return xStreamBufferBytesAvailable(playbackStream) * 1000 / kBytesPerSecond;
 }
 
 void playTone(float frequencyHz, int durationMs) {
@@ -248,7 +268,7 @@ void playTone(float frequencyHz, int durationMs) {
       float phase = 2.0f * (float)M_PI * frequencyHz * (float)(produced + i) / AUDIO_SAMPLE_RATE;
       chunk[i] = (int16_t)(kBeepAmplitude * sinf(phase));
     }
-    playAudioBuffer((const uint8_t*)chunk, count * sizeof(int16_t));
+    enqueueAudio((const uint8_t*)chunk, count * sizeof(int16_t), false);
     produced += count;
   }
   playNowRequested = true;

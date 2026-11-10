@@ -152,7 +152,13 @@ size_t ocrCtcDecode(const uint8_t* best, char* out, size_t outSize) {
     for (int t = 0; t < kOcrTimeSteps; t++) {
         const int index = best[t];
         if (index != previous && index != 0 && index < kOcrNumClasses) {
-            for (const char* c = kOcrCharset[index]; *c && len + 1 < outSize; c++) out[len++] = *c;
+            // El caracter entero o nada: una letra con tilde son 2 bytes y no se debe cortar al medio.
+            const char* c = kOcrCharset[index];
+            const size_t bytes = strlen(c);
+            if (len + bytes + 1 <= outSize) {
+                memcpy(out + len, c, bytes);
+                len += bytes;
+            }
         }
         previous = index;
     }

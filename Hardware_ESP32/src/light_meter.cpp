@@ -67,7 +67,9 @@ int lightMeterStep(const uint8_t* gray, size_t length) {
 
   // Escala perceptual: la diferencia entre 5 y 20 importa mas que entre 200 y 215.
   const int level = (int)lroundf(100.0f * sqrtf(smoothed / 255.0f));
-  playTone(lightMeterFrequency(level), LIGHT_METER_TONE_MS);
+  // Mientras Iris habla no se pita: los tonos quedarian en cola detras de la voz y sonarian todos
+  // juntos al terminar la respuesta (un pitido cada 0,16 s durante una respuesta de 10 s = 60 pitidos).
+  if (pendingPlaybackMs() < 2 * LIGHT_METER_PERIOD_MS) playTone(lightMeterFrequency(level), LIGHT_METER_TONE_MS);
 #if LIGHT_METER_DEBUG
   Serial.printf("[Luz] brillo %.1f -> nivel %d (%.0f Hz)\n", mean, level, lightMeterFrequency(level));
 #endif

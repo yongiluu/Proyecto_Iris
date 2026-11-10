@@ -1,13 +1,13 @@
-Modelo int8: 1132 KB de flash; activaciones del peor paso ~281 KB (arena estimada ~382 KB, va en PSRAM)
+Modelo int8: 1109 KB de flash; activaciones del peor paso ~281 KB (arena estimada ~382 KB, va en PSRAM)
 
 == Test (int8, lo que correria en la placa) (940 fotos) ==
-Objetos: precision 58.1%, recall 53.1%, F1 55.5% (umbral 0,5)
+Objetos: precision 58.2%, recall 53.2%, F1 55.6% (umbral 0,5)
   peores: espejo 0% (n=10), paraguas 0% (n=10), cortina 11% (n=16), poste 15% (n=11), lampara 17% (n=18), puerta 17% (n=47)
-  mejores: computador 67% (n=40), auto 69% (n=112), gato 69% (n=33), persona 73% (n=261), bus 75% (n=30), taza 77% (n=44)
-Posicion (objetos presentes con etiqueta): 67.9% de acierto (n=1812)
-Distancia (objetos presentes con etiqueta): 73.6% de acierto (n=1812)
-Color (objetos presentes con etiqueta): 43.9% de acierto (n=818)
-Personas: 80.0% de acierto (n=940)
+  mejores: computador 67% (n=40), gato 68% (n=33), auto 70% (n=112), persona 73% (n=261), bus 75% (n=30), taza 75% (n=44)
+Posicion (objetos presentes con etiqueta): 68.0% de acierto (n=1812)
+Distancia (objetos presentes con etiqueta): 73.5% de acierto (n=1812)
+Color (objetos presentes con etiqueta): 43.4% de acierto (n=818)
+Personas: 80.1% de acierto (n=940)
 Lugar: 80.7% de acierto (n=140)
 Calidad: 99.7% de acierto (n=940)
 Peligros: sin etiquetas todavia (las pone el profesor)
@@ -32,7 +32,7 @@ Frases de ejemplo (alumno | etiquetas):
     alumno:    Parece que estás en la calle. Adelante, muy cerca, hay un árbol. A tu derecha hay un edificio gris.
     etiquetas: Parece que estás en la calle. Adelante, muy cerca, hay un árbol. A tu derecha hay un edificio gris. Al fondo hay un auto, varias personas y un semáforo.
 - openimages/644395d01b541528.jpg
-    alumno:    Adelante, muy cerca, hay un edificio y una planta. A tu izquierda hay un árbol.
+    alumno:    Adelante, muy cerca, hay un edificio gris y una planta. A tu izquierda hay un árbol.
     etiquetas: A tu izquierda hay un árbol. A tu derecha hay un semáforo. Al fondo hay un poste de luz y una señal de tránsito.
 - openimages/e0beab2586c099f5.jpg
     alumno:    No reconozco objetos claros adelante.

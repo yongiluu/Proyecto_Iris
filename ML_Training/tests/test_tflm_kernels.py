@@ -73,7 +73,10 @@ def build(reference=False) -> None:
     with ThreadPoolExecutor(max(1, (os.cpu_count() or 4) // 2)) as pool:
         objects = list(pool.map(lambda s: compile_one(s, False), cpp)) + \
                   list(pool.map(lambda s: compile_one(s, True), c))
-    command = [sys.executable, "-m", "ziglang", "c++", *objects, "-o", str(BINARY)]
+    # Lista de objetos en un archivo: con rutas largas la linea de comandos pasa el limite de Windows.
+    listing = BUILD_DIR / "link.rsp"
+    listing.write_text("\n".join(f'"{o.as_posix()}"' for o in objects), encoding="utf-8")
+    command = [sys.executable, "-m", "ziglang", "c++", f"@{listing}", "-o", str(BINARY)]
     result = subprocess.run([str(x) for x in command], capture_output=True, text=True)
     if result.returncode != 0:
         raise SystemExit(f"Error enlazando:\n{result.stderr[-3000:]}")
