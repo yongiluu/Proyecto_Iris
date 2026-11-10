@@ -1,0 +1,20 @@
+== Validacion (float32) (6000 lineas) ==
+Error por caracter (CER): 2.2% | lineas perfectas: 88.6%
+Lineas con CER <= 10%: 93.1%
+
+Ejemplos (leido | real):
+  ✔ 'Días'                           | 'Días'
+  ✔ 'nacional'                       | 'nacional'
+  ✔ 'NO'                             | 'NO'
+  ✔ 'Estoy Muy Ocupada Con'          | 'Estoy Muy Ocupada Con'
+  ✔ 'COLO COLO 226'                  | 'COLO COLO 226'
+  ✔ 'ME LLEGÓ'                       | 'ME LLEGÓ'
+  ✔ 'JUGO $1.000'                    | 'JUGO $1.000'
+  ✔ 'ABIERTO'                        | 'ABIERTO'
+  ✔ 'Creo que'                       | 'Creo que'
+  ✔ 'la cabeza de que'               | 'la cabeza de que'
+  ✔ 'Bus 84'                         | 'Bus 84'
+  ✔ '5/12/2029'                      | '5/12/2029'
+  ✔ 'Y ESTAMOS'                      | 'Y ESTAMOS'
+  ✔ 'la'                             | 'la'
+  ✔ 'Línea 29B'                      | 'Línea 29B'

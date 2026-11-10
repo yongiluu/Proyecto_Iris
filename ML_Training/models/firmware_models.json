@@ -3,5 +3,15 @@
     "arena": 390784,
     "flags": 0,
     "tflite": "models/scene_student_int8.tflite"
+  },
+  "ocr_detector": {
+    "arena": 515584,
+    "flags": 0,
+    "tflite": "models/ocr_detector_int8.tflite"
+  },
+  "ocr_lector": {
+    "arena": 442368,
+    "flags": 0,
+    "tflite": "models/ocr_reader_int8.tflite"
   }
 }

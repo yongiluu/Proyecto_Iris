@@ -1,0 +1,1 @@
+Detector (validacion, 1500 escenas): celdas con texto encontradas 83.7%, celdas marcadas que si eran texto 93.7%, escenas sin texto con alguna marca 7.7%
