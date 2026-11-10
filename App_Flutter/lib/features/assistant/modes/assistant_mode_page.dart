@@ -1,10 +1,10 @@
 import 'package:flutter/material.dart';
 
-import '../../../core/theme/app_theme.dart';
+import '../widgets/iris_logo.dart';
 import '../widgets/mode_action_button.dart';
 
-/// Modo Iris (asistente): mantener presionado para hablar. La descripcion continua vive aca
-/// como un interruptor secundario.
+/// Modo Iris (asistente): mantener presionado el iris para hablar. El iris muestra lo que hace
+/// Iris: escucha, piensa (se deshace en puntos) o responde.
 class AssistantModePage extends StatelessWidget {
   const AssistantModePage({
     super.key,
@@ -13,10 +13,9 @@ class AssistantModePage extends StatelessWidget {
     required this.canTalkHere,
     required this.isModule,
     required this.moduleConnected,
-    required this.continuousMode,
-    required this.onContinuousChanged,
     required this.onPressDown,
     required this.onPressUp,
+    this.isSpeaking = false,
     this.pulseScale = 1,
   });
 
@@ -27,10 +26,10 @@ class AssistantModePage extends StatelessWidget {
   final bool canTalkHere;
   final bool isModule;
   final bool moduleConnected;
-  final bool continuousMode;
-  final ValueChanged<bool> onContinuousChanged;
   final VoidCallback onPressDown;
   final VoidCallback onPressUp;
+  /// Iris esta diciendo la respuesta: una ola recorre el iris.
+  final bool isSpeaking;
   final double pulseScale;
 
   @override
@@ -61,7 +60,6 @@ class AssistantModePage extends StatelessWidget {
     }
 
     return ModePage(
-      extra: _ContinuousToggle(value: continuousMode, onChanged: onContinuousChanged),
       caption: caption,
       action: ModeActionButton(
         icon: isListening ? Icons.graphic_eq : (canTalkHere ? Icons.mic : Icons.memory),
@@ -69,65 +67,14 @@ class AssistantModePage extends StatelessWidget {
         semanticHint: hint,
         enabled: canTalkHere,
         active: isListening,
+        irisState: isListening
+            ? IrisState.listening
+            : (isProcessing ? IrisState.thinking : (isSpeaking ? IrisState.speaking : IrisState.idle)),
         scale: isListening ? pulseScale : 1,
         onPressDown: onPressDown,
         onPressUp: onPressUp,
         // TalkBack: un toque empieza a escuchar y otro envia.
         onSemanticTap: () => isListening ? onPressUp() : onPressDown(),
-      ),
-    );
-  }
-}
-
-class _ContinuousToggle extends StatelessWidget {
-  const _ContinuousToggle({required this.value, required this.onChanged});
-
-  final bool value;
-  final ValueChanged<bool> onChanged;
-
-  @override
-  Widget build(BuildContext context) {
-    return Semantics(
-      container: true,
-      toggled: value,
-      label: 'Descripción continua',
-      hint: 'Describe lo que ve la cámara de forma automática',
-      onTap: () => onChanged(!value),
-      child: ExcludeSemantics(
-        child: Material(
-          type: MaterialType.transparency,
-          child: InkWell(
-            customBorder: const StadiumBorder(),
-            onTap: () => onChanged(!value),
-            child: Container(
-              constraints: const BoxConstraints(minHeight: 48),
-              padding: const EdgeInsets.only(left: 14, right: 4),
-              decoration: ShapeDecoration(
-                color: value ? AppTheme.accentCyan.withValues(alpha: 0.25) : AppTheme.cardDark,
-                shape: StadiumBorder(side: BorderSide(color: value ? AppTheme.accentCyan : Colors.white24)),
-              ),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Icon(Icons.autorenew, size: 20, color: value ? AppTheme.brightCyan : AppTheme.textOnDarkMuted),
-                  const SizedBox(width: 8),
-                  const Flexible(
-                    child: Text('Descripcion continua',
-                        style: TextStyle(color: AppTheme.textOnDark, fontSize: 15, fontWeight: FontWeight.w600)),
-                  ),
-                  Switch(
-                    value: value,
-                    onChanged: onChanged,
-                    activeThumbColor: Colors.black,
-                    activeTrackColor: AppTheme.accentCyan,
-                    inactiveThumbColor: AppTheme.textOnDarkMuted,
-                    inactiveTrackColor: Colors.white24,
-                  ),
-                ],
-              ),
-            ),
-          ),
-        ),
       ),
     );
   }

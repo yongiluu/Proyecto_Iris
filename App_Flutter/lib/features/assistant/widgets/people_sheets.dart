@@ -15,8 +15,8 @@ Future<String?> askPersonName(BuildContext context) {
       }
 
       return AlertDialog(
-        backgroundColor: const Color(0xFF0B1116),
-        title: const Text('Agregar persona', style: TextStyle(color: AppTheme.textOnDark)),
+        backgroundColor: AppTheme.inkRaised,
+        title: Text('Agregar persona', style: TextStyle(color: AppTheme.text)),
         content: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -25,35 +25,35 @@ Future<String?> askPersonName(BuildContext context) {
               controller: controller,
               autofocus: true,
               textCapitalization: TextCapitalization.words,
-              style: const TextStyle(color: AppTheme.textOnDark, fontSize: 18),
-              decoration: const InputDecoration(
+              style: TextStyle(color: AppTheme.text, fontSize: 18),
+              decoration: InputDecoration(
                 labelText: 'Nombre',
                 hintText: 'Ej. Raul',
-                labelStyle: TextStyle(color: AppTheme.textOnDarkMuted),
-                hintStyle: TextStyle(color: Colors.white38),
+                labelStyle: TextStyle(color: AppTheme.textMuted),
+                hintStyle: TextStyle(color: AppTheme.textFaint),
               ),
               onSubmitted: (_) => submit(),
             ),
             const SizedBox(height: 12),
-            const Text(
+            Text(
               'Pidele permiso antes de guardar su cara. Se guarda solo en este celular, nada sale de aqui.',
-              style: TextStyle(color: AppTheme.textOnDarkMuted, fontSize: 14, height: 1.3),
+              style: TextStyle(color: AppTheme.textMuted, fontSize: 14, height: 1.3),
             ),
             const SizedBox(height: 6),
-            const Text(
+            Text(
               'Voy a sacar 5 fotos y te ire guiando por voz.',
-              style: TextStyle(color: AppTheme.textOnDarkMuted, fontSize: 14, height: 1.3),
+              style: TextStyle(color: AppTheme.textMuted, fontSize: 14, height: 1.3),
             ),
           ],
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context),
-            child: const Text('Cancelar', style: TextStyle(color: AppTheme.accentCyan)),
+            child: Text('Cancelar', style: TextStyle(color: AppTheme.accentCyan)),
           ),
           TextButton(
             onPressed: submit,
-            child: const Text('Empezar', style: TextStyle(color: AppTheme.accentCyan, fontWeight: FontWeight.w700)),
+            child: Text('Empezar', style: TextStyle(color: AppTheme.accentCyan, fontWeight: FontWeight.w700)),
           ),
         ],
       );
@@ -85,18 +85,18 @@ class _PeopleListSheetState extends State<PeopleListSheet> {
     final ok = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
-        backgroundColor: const Color(0xFF0B1116),
-        title: Text('¿Olvidar a $name?', style: const TextStyle(color: AppTheme.textOnDark)),
-        content: const Text('Se borra su cara de este celular. No se puede deshacer.',
-            style: TextStyle(color: AppTheme.textOnDarkMuted)),
+        backgroundColor: AppTheme.inkRaised,
+        title: Text('¿Olvidar a $name?', style: TextStyle(color: AppTheme.text)),
+        content: Text('Se borra su cara de este celular. No se puede deshacer.',
+            style: TextStyle(color: AppTheme.textMuted)),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context, false),
-            child: const Text('Cancelar', style: TextStyle(color: AppTheme.accentCyan)),
+            child: Text('Cancelar', style: TextStyle(color: AppTheme.accentCyan)),
           ),
           TextButton(
             onPressed: () => Navigator.pop(context, true),
-            child: const Text('Olvidar', style: TextStyle(color: AppTheme.listeningRed, fontWeight: FontWeight.w700)),
+            child: Text('Olvidar', style: TextStyle(color: AppTheme.listeningRed, fontWeight: FontWeight.w700)),
           ),
         ],
       ),
@@ -117,31 +117,31 @@ class _PeopleListSheetState extends State<PeopleListSheet> {
           children: [
             Semantics(
               header: true,
-              child: const Text('Personas guardadas',
-                  style: TextStyle(color: AppTheme.textOnDark, fontSize: 22, fontWeight: FontWeight.w800)),
+              child: Text('Personas guardadas',
+                  style: TextStyle(color: AppTheme.text, fontSize: 22, fontWeight: FontWeight.w800)),
             ),
             const SizedBox(height: 4),
-            const Text('Solo en este celular. Tambien puedes decir: "Oye Iris, olvida a" y el nombre.',
-                style: TextStyle(color: AppTheme.textOnDarkMuted, fontSize: 14)),
+            Text('Solo en este celular. Tambien puedes decir: "Oye Iris, olvida a" y el nombre.',
+                style: TextStyle(color: AppTheme.textMuted, fontSize: 14)),
             const SizedBox(height: 8),
             if (_names.isEmpty)
-              const Padding(
-                padding: EdgeInsets.symmetric(vertical: 20),
+              Padding(
+                padding: const EdgeInsets.symmetric(vertical: 20),
                 child: Text('Todavia no hay nadie. Usa "Agregar persona" o di: "Oye Iris, recuerda a" y el nombre.',
-                    style: TextStyle(color: AppTheme.textOnDark, fontSize: 16)),
+                    style: TextStyle(color: AppTheme.text, fontSize: 16)),
               ),
             for (final name in _names)
               ListTile(
                 contentPadding: EdgeInsets.zero,
                 minTileHeight: 52,
-                leading: const Icon(Icons.person, color: AppTheme.accentCyan),
-                title: Text(name, style: const TextStyle(color: AppTheme.textOnDark, fontSize: 18)),
+                leading: Icon(Icons.person, color: AppTheme.accentCyan),
+                title: Text(name, style: TextStyle(color: AppTheme.text, fontSize: 18)),
                 subtitle: Text('${widget.samplesOf(name)} fotos',
-                    style: const TextStyle(color: AppTheme.textOnDarkMuted)),
+                    style: TextStyle(color: AppTheme.textMuted)),
                 trailing: IconButton(
                   tooltip: 'Olvidar a $name',
                   constraints: const BoxConstraints(minWidth: 48, minHeight: 48),
-                  icon: const Icon(Icons.delete_outline, color: AppTheme.textOnDarkMuted),
+                  icon: Icon(Icons.delete_outline, color: AppTheme.textMuted),
                   onPressed: () => _confirmForget(name),
                 ),
               ),

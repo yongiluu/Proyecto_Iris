@@ -30,6 +30,10 @@ android {
             // TODO: Add your own signing config for the release build.
             // Signing with the debug keys for now, so `flutter run --release` works.
             signingConfig = signingConfigs.getByName("debug")
+            // Sin R8: al optimizar, borraba metodos que los plugins llaman desde nativo (shared_preferences
+            // via JNI) y la app arrancaba rota. El APK queda algo mas grande, pero funciona igual que en debug.
+            isMinifyEnabled = false
+            isShrinkResources = false
         }
     }
 }

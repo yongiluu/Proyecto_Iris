@@ -12,6 +12,12 @@ enum IrisMode {
     icon: Icons.auto_awesome,
     hint: 'Pregunta lo que quieras o pide que describa lo que hay al frente',
   ),
+  live(
+    shortName: 'En vivo',
+    spokenName: 'En vivo',
+    icon: Icons.sensors,
+    hint: 'Iris describe sola lo que va apareciendo adelante',
+  ),
   readText(
     shortName: 'Leer',
     spokenName: 'Leer texto',

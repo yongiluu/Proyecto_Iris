@@ -29,6 +29,7 @@ class EnvConfig {
   static bool get backendConfigured => supabaseUrl.isNotEmpty && supabaseAnonKey.isNotEmpty;
 
   static Future<void> init() async {
-    await dotenv.load(fileName: '.env');
+    // Un .env vacio o ausente no debe dejar la app en blanco: arranca sin llaves (modo sin nube).
+    await dotenv.load(fileName: '.env', isOptional: true);
   }
 }

@@ -1,6 +1,20 @@
 import 'package:flutter/material.dart';
 
+import '../../core/theme/app_theme.dart';
+import '../../core/widgets/glass.dart';
 import '../../services/backend/backend_service.dart';
+import '../assistant/widgets/iris_logo.dart';
+
+const _loading = Center(child: IrisLogo(size: 72, state: IrisState.thinking, glow: true));
+
+Widget _message(String text) => Center(
+      child: Padding(
+        padding: const EdgeInsets.all(32),
+        child: Text(text,
+            textAlign: TextAlign.center,
+            style: TextStyle(color: AppTheme.textMuted, fontSize: 17, height: 1.4)),
+      ),
+    );
 
 const _weekdays = ['lunes', 'martes', 'miércoles', 'jueves', 'viernes', 'sábado', 'domingo'];
 const _months = ['enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio', 'julio', 'agosto', 'septiembre',
@@ -28,28 +42,36 @@ class _HistoryScreenState extends State<HistoryScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(title: const Text('Mi historial')),
-      body: FutureBuilder<List<MemoryDay>>(
+    return IrisPage(
+      title: 'Mi historial',
+      child: FutureBuilder<List<MemoryDay>>(
         future: _days,
         builder: (context, snapshot) {
-          if (snapshot.connectionState != ConnectionState.done) {
-            return const Center(child: CircularProgressIndicator());
-          }
+          if (snapshot.connectionState != ConnectionState.done) return _loading;
           final days = snapshot.data ?? const [];
-          if (snapshot.hasError) return const Center(child: Text('No se pudo cargar el historial.'));
-          if (days.isEmpty) return const Center(child: Text('Todavía no hay conversaciones guardadas.'));
+          if (snapshot.hasError) return _message('No se pudo cargar el historial.');
+          if (days.isEmpty) return _message('Todavía no hay conversaciones guardadas.');
           return ListView.separated(
+            padding: const EdgeInsets.fromLTRB(16, 8, 16, 32),
             itemCount: days.length,
-            separatorBuilder: (_, __) => const Divider(height: 1),
+            separatorBuilder: (_, _) => const SizedBox(height: 12),
             itemBuilder: (context, i) {
               final day = days[i];
               final text = (day.diary ?? day.summary).replaceAll(RegExp(r'[#*]'), '').trim();
-              return ListTile(
-                title: Text(_dayName(day.day), style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w600)),
-                subtitle: Text(text.isEmpty ? 'Sin resumen todavía' : text, maxLines: 4, overflow: TextOverflow.ellipsis),
-                onTap: () => Navigator.of(context).push(
-                    MaterialPageRoute(builder: (_) => _DayScreen(day: day))),
+              return GlassCard(
+                padding: EdgeInsets.zero,
+                child: ListTile(
+                  contentPadding: const EdgeInsets.fromLTRB(18, 10, 12, 12),
+                  title: Padding(
+                    padding: const EdgeInsets.only(bottom: 6),
+                    child: Text(_dayName(day.day),
+                        style: TextStyle(fontSize: 20, fontWeight: FontWeight.w600, color: AppTheme.text)),
+                  ),
+                  subtitle: Text(text.isEmpty ? 'Sin resumen todavía' : text,
+                      maxLines: 4, overflow: TextOverflow.ellipsis),
+                  trailing: Icon(Icons.chevron_right, color: AppTheme.textFaint),
+                  onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => _DayScreen(day: day))),
+                ),
               );
             },
           );
@@ -66,25 +88,26 @@ class _DayScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(title: Text(_dayName(day.day))),
-      body: FutureBuilder<List<MemoryMessage>>(
+    return IrisPage(
+      title: _dayName(day.day),
+      child: FutureBuilder<List<MemoryMessage>>(
         future: BackendService.instance.memoryMessages(day.id),
         builder: (context, snapshot) {
-          if (snapshot.connectionState != ConnectionState.done) {
-            return const Center(child: CircularProgressIndicator());
-          }
+          if (snapshot.connectionState != ConnectionState.done) return _loading;
           final messages = snapshot.data ?? const [];
           if (messages.isEmpty) {
             // Los mensajes viejos se borran (retencion); queda el diario.
             final diary = (day.diary ?? day.summary).replaceAll(RegExp(r'[#*]'), '').trim();
-            return Padding(
+            return SingleChildScrollView(
               padding: const EdgeInsets.all(16),
-              child: Text(diary.isEmpty ? 'No quedan mensajes de este día.' : diary, style: const TextStyle(fontSize: 18)),
+              child: GlassCard(
+                child: Text(diary.isEmpty ? 'No quedan mensajes de este día.' : diary,
+                    style: TextStyle(fontSize: 18, height: 1.45, color: AppTheme.text)),
+              ),
             );
           }
           return ListView.builder(
-            padding: const EdgeInsets.all(12),
+            padding: const EdgeInsets.fromLTRB(16, 8, 16, 32),
             itemCount: messages.length,
             itemBuilder: (context, i) {
               final m = messages[i];
@@ -99,13 +122,22 @@ class _DayScreen extends StatelessWidget {
                     padding: const EdgeInsets.all(12),
                     constraints: BoxConstraints(maxWidth: MediaQuery.of(context).size.width * 0.8),
                     decoration: BoxDecoration(
-                      color: m.fromUser ? const Color(0xFFB2EBF2) : Colors.white,
-                      borderRadius: BorderRadius.circular(12),
+                      // Tu: cian; Iris: vidrio.
+                      color: m.fromUser ? AppTheme.accentCyan.withValues(alpha: 0.20) : AppTheme.glassFill,
+                      border: Border.all(
+                        color: m.fromUser ? AppTheme.accentCyan.withValues(alpha: 0.55) : AppTheme.glassBorder,
+                      ),
+                      borderRadius: BorderRadius.only(
+                        topLeft: const Radius.circular(18),
+                        topRight: const Radius.circular(18),
+                        bottomLeft: Radius.circular(m.fromUser ? 18 : 4),
+                        bottomRight: Radius.circular(m.fromUser ? 4 : 18),
+                      ),
                     ),
                     child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                      Text(m.text, style: const TextStyle(fontSize: 17)),
+                      Text(m.text, style: TextStyle(fontSize: 17, height: 1.4, color: AppTheme.text)),
                       const SizedBox(height: 4),
-                      Text(time, style: const TextStyle(fontSize: 12, color: Colors.black54)),
+                      Text(time, style: AppTheme.mono.copyWith(fontSize: 11, letterSpacing: 1, color: AppTheme.textFaint)),
                     ]),
                   ),
                 ),

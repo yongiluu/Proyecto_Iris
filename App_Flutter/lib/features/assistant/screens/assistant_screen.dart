@@ -2,9 +2,10 @@
 // IRIS - Main Assistant Screen (Dual Mode: Standalone & ESP32)
 // ============================================================================
 //
-// Pantalla principal: camara de fondo, una barra compacta arriba y un carrusel de modos
-// (Iris, Leer texto, Buscar luz, Personas). Todo se puede pedir tambien por voz desde
-// cualquier pagina ("Oye Iris, ¿que dice aqui?"). Los ajustes poco usados van en el engranaje.
+// Pantalla principal: de fondo la camara (celular), la ultima foto de la placa o la aurora; una
+// barra compacta arriba y un carrusel de modos (Iris, En vivo, Leer texto, Buscar luz, Personas)
+// cuyo boton es el iris. Todo se puede pedir tambien por voz desde cualquier pagina
+// ("Oye Iris, ¿que dice aqui?"). La placa se detecta sola; lo poco usado va en Configuracion.
 
 import 'dart:async';
 
@@ -18,6 +19,7 @@ import 'package:vibration/vibration.dart';
 import '../assistant_modes.dart';
 import '../modes/assistant_mode_page.dart';
 import '../modes/light_mode_page.dart';
+import '../modes/live_mode_page.dart';
 import '../modes/people_mode_page.dart';
 import '../modes/read_text_mode_page.dart';
 import '../widgets/assistant_header.dart';
@@ -28,6 +30,9 @@ import '../widgets/people_sheets.dart';
 import '../widgets/settings_sheet.dart';
 import '../widgets/streaming_answer.dart';
 import '../widgets/vision_alert_banner.dart';
+import '../../../core/theme/app_theme.dart';
+import '../../../core/widgets/aurora_background.dart';
+import '../../../core/widgets/glass.dart';
 import '../../../services/hardware/camera_service.dart';
 import '../../../services/hardware/esp32_speech_service.dart';
 import '../../../services/hardware/phone_light_meter.dart';
@@ -73,6 +78,11 @@ class _AssistantScreenState extends State<AssistantScreen>
 
   // ─── State ───
   HardwareMode _hardwareMode = HardwareMode.standalone;
+  /// La app elige sola: la placa cuando esta conectada, el celular cuando no. Se apaga en
+  /// Configuracion para elegir a mano.
+  bool _autoHardware = true;
+  Timer? _autoHardwareRetry;
+  static const String _prefAutoHardware = 'iris_auto_hardware';
   bool _isListening = false;
   bool _isInitialized = false;
   bool _isProcessing = false;
@@ -201,6 +211,8 @@ class _AssistantScreenState extends State<AssistantScreen>
             _ttsService.speakStatus('Bluetooth conectado');
           }
         }
+        // Deteccion automatica: la placa aparecio (o se perdio) y la app cambia sola.
+        _syncAutoHardware();
       };
 
       _esp32SpeechService.onAudioEvent = _onAudioEvent;
@@ -224,6 +236,7 @@ class _AssistantScreenState extends State<AssistantScreen>
       try {
         final prefs = await SharedPreferences.getInstance();
         _answersOnPhone = prefs.getBool(_prefAnswersOnPhone) ?? true;
+        _autoHardware = prefs.getBool(_prefAutoHardware) ?? true;
       } catch (_) {}
 
       // Un servicio que falla (ej. sin permiso de camara) no debe impedir usar los demas.
@@ -240,6 +253,8 @@ class _AssistantScreenState extends State<AssistantScreen>
 
       setState(() => _isInitialized = true);
       _updatePhoneVision();
+      // Si la placa ya conecto mientras arrancaba el resto, usarla desde el principio.
+      _syncAutoHardware();
 
       if (_hardwareMode == HardwareMode.esp32) {
          setState(() {
@@ -368,7 +383,7 @@ class _AssistantScreenState extends State<AssistantScreen>
     unawaited(_esp32SpeechService.refreshBoards());
     await showModalBottomSheet<void>(
       context: context,
-      backgroundColor: const Color(0xFF0B1116),
+      backgroundColor: AppTheme.inkRaised,
       isScrollControlled: true,
       builder: (context) => BoardPicker(service: _esp32SpeechService),
     );
@@ -588,6 +603,24 @@ class _AssistantScreenState extends State<AssistantScreen>
     }
   }
 
+  /// "Describe en vivo": lleva a la pagina En vivo, que lo enciende al entrar.
+  void _startLive() {
+    if (_mode != IrisMode.live) {
+      _goToMode(IrisMode.live);
+    } else if (!_continuousMode) {
+      _toggleContinuousMode(true);
+    }
+  }
+
+  /// "Deja de describir": sale de la pagina En vivo (salir lo apaga).
+  void _stopLive() {
+    if (_mode == IrisMode.live) {
+      _goToMode(IrisMode.assistant);
+    } else if (_continuousMode) {
+      _toggleContinuousMode(false);
+    }
+  }
+
   void _startContinuousMode() {
     _continuousTimer?.cancel();
 
@@ -696,13 +729,12 @@ class _AssistantScreenState extends State<AssistantScreen>
     if (activateKeywords.any((k) => lowerPrompt.contains(k))) {
        _stopThinking();
        _resetState('Activando modo continuo...');
-       _goToMode(IrisMode.assistant);
-       _toggleContinuousMode(true);
+       _startLive();
        return;
     } else if (deactivateKeywords.any((k) => lowerPrompt.contains(k))) {
        _stopThinking();
        _resetState('Desactivando modo continuo...');
-       _toggleContinuousMode(false);
+       _stopLive();
        return;
     }
 
@@ -868,10 +900,9 @@ class _AssistantScreenState extends State<AssistantScreen>
                 : (slower ? 'Ya estoy hablando lo mas lento que puedo.' : 'Ya estoy hablando lo mas rapido que puedo.'),
             esp32Service: _activeEsp32);
       case IrisIntentType.liveOn:
-        _goToMode(IrisMode.assistant);
-        _toggleContinuousMode(true);
+        _startLive();
       case IrisIntentType.liveOff:
-        _toggleContinuousMode(false);
+        _stopLive();
       case IrisIntentType.moreDetail:
         _goToMode(IrisMode.assistant);
         await _askAgent('Describe con detalle lo que hay adelante.');
@@ -956,6 +987,12 @@ class _AssistantScreenState extends State<AssistantScreen>
     if (previous == IrisMode.light && next != IrisMode.light && _lightIsOn) {
       unawaited(_setLight(false, speak: false));
     }
+    // En vivo es una pagina: entrar la enciende y salir la apaga.
+    if (next == IrisMode.live && !_continuousMode) {
+      _toggleContinuousMode(true);
+    } else if (previous == IrisMode.live && next != IrisMode.live && _continuousMode) {
+      _toggleContinuousMode(false);
+    }
     // En la pagina Personas el celular mira solo y avisa a quien reconoce.
     if (next == IrisMode.people) {
       _startPeopleScan();
@@ -1018,6 +1055,8 @@ class _AssistantScreenState extends State<AssistantScreen>
   void _announceMode(IrisMode mode) {
     _hapticService.vibrateTick();
     final talkBack = MediaQuery.maybeAccessibleNavigationOf(context) ?? false;
+    // En vivo ya se anuncia al encenderse ("Modo en vivo...").
+    if (mode == IrisMode.live) return;
     if (talkBack || _isListening || _isProcessing || _isTaskBusy || _ttsService.isSpeaking) return;
     _ttsService.speakStatus(mode.spokenName, esp32Service: _activeEsp32);
   }
@@ -1277,7 +1316,7 @@ class _AssistantScreenState extends State<AssistantScreen>
     if (!mounted) return;
     await showModalBottomSheet<void>(
       context: context,
-      backgroundColor: const Color(0xFF0B1116),
+      backgroundColor: AppTheme.inkRaised,
       isScrollControlled: true,
       showDragHandle: true,
       builder: (context) => PeopleListSheet(
@@ -1298,6 +1337,7 @@ class _AssistantScreenState extends State<AssistantScreen>
     _continuousTimer?.cancel();
     _proximityTimer?.cancel();
     _localThinkingTimer?.cancel();
+    _autoHardwareRetry?.cancel();
     _phoneVision.dispose();
     _phoneLight.dispose();
     _textReaderInstance?.dispose();
@@ -1323,53 +1363,90 @@ class _AssistantScreenState extends State<AssistantScreen>
   /// true si el sistema pidio quitar animaciones (accesibilidad).
   bool get _reduceMotion => MediaQuery.maybeDisableAnimationsOf(context) ?? false;
 
+  /// Animo del fondo y del iris segun lo que hace Iris ahora.
+  AuroraMood _moodFor(SpeechProgress speech) {
+    if (_isListening) return AuroraMood.listening;
+    if (!_isInitialized || _isProcessing || _isTaskBusy) return AuroraMood.thinking;
+    if (_isSpeakingAnswer(speech)) return AuroraMood.speaking;
+    return AuroraMood.calm;
+  }
+
+  bool _isSpeakingAnswer(SpeechProgress speech) => speech.text.isNotEmpty && !speech.done;
+
   /// Fondo de pantalla. Solo imagen: nada de texto aca, porque queda detras de las tarjetas.
-  Widget _buildCameraPreview() {
-    const emptyBackground = DecoratedBox(
-      decoration: BoxDecoration(
-        gradient: RadialGradient(
-          center: Alignment(0, -0.3),
-          radius: 1.2,
-          colors: [Color(0xFF0A1A20), Colors.black],
-        ),
-      ),
-    );
-
-    if (_hardwareMode == HardwareMode.esp32) {
-      return ValueListenableBuilder<Uint8List?>(
-        valueListenable: _esp32SpeechService.lastPhotoNotifier,
-        builder: (context, photoData, child) {
-          if (photoData == null) return emptyBackground;
-          return Image.memory(
-            photoData,
-            fit: BoxFit.cover,
-            gaplessPlayback: true,
-            excludeFromSemantics: true,
+  ///
+  /// - Celular: la camara en vivo.
+  /// - Placa: la aurora, y cuando la placa manda una foto, esa foto.
+  /// - En ambos, los colores de la aurora se mueven mientras Iris escucha, piensa o responde.
+  Widget _buildBackdrop() {
+    return ValueListenableBuilder<SpeechProgress>(
+      valueListenable: _ttsService.progress,
+      builder: (context, speech, _) {
+        final mood = _moodFor(speech);
+        if (_hardwareMode == HardwareMode.esp32) {
+          return ValueListenableBuilder<Uint8List?>(
+            valueListenable: _esp32SpeechService.lastPhotoNotifier,
+            builder: (context, photoData, child) => IrisBackdrop(
+              mood: mood,
+              image: photoData == null
+                  ? null
+                  : Image.memory(photoData, fit: BoxFit.cover, gaplessPlayback: true, excludeFromSemantics: true),
+            ),
           );
-        },
-      );
-    }
+        }
 
-    final controller = _nativeCameraService.controller;
-    final previewSize = controller?.value.previewSize;
-    if (!_nativeCameraService.isInitialized || controller == null || previewSize == null) {
-      return emptyBackground;
-    }
-    return ExcludeSemantics(
-      child: FittedBox(
-        fit: BoxFit.cover,
-        clipBehavior: Clip.hardEdge,
-        child: SizedBox(
-          width: previewSize.height,
-          height: previewSize.width,
-          child: CameraPreview(controller),
-        ),
-      ),
+        final controller = _nativeCameraService.controller;
+        final previewSize = controller?.value.previewSize;
+        if (!_nativeCameraService.isInitialized || controller == null || previewSize == null) {
+          return IrisBackdrop(mood: mood);
+        }
+        return IrisBackdrop(
+          mood: mood,
+          image: ExcludeSemantics(
+            child: FittedBox(
+              fit: BoxFit.cover,
+              clipBehavior: Clip.hardEdge,
+              child: SizedBox(
+                width: previewSize.height,
+                height: previewSize.width,
+                child: CameraPreview(controller),
+              ),
+            ),
+          ),
+        );
+      },
     );
   }
 
+  // ─── Deteccion automatica de la placa ───
+
+  /// Con la deteccion automatica: placa conectada = modo placa; si no, celular. Si Iris esta
+  /// escuchando o pensando, espera a que termine para no cortar la conversacion.
+  void _syncAutoHardware() {
+    if (!mounted || !_autoHardware) return;
+    final wanted = _esp32SpeechService.isConnected ? HardwareMode.esp32 : HardwareMode.standalone;
+    if (wanted == _hardwareMode) return;
+    if (_isListening || _isProcessing) {
+      _autoHardwareRetry?.cancel();
+      _autoHardwareRetry = Timer(const Duration(seconds: 1), _syncAutoHardware);
+      return;
+    }
+    _selectHardwareMode(wanted, automatic: true);
+  }
+
+  Future<void> _setAutoHardware(bool value) async {
+    setState(() => _autoHardware = value);
+    try {
+      (await SharedPreferences.getInstance()).setBool(_prefAutoHardware, value);
+    } catch (_) {}
+    if (!value) return;
+    await _esp32SpeechService.ensurePermissions();
+    _syncAutoHardware();
+  }
+
   /// Cambio de modo (misma logica de siempre).
-  void _selectHardwareMode(HardwareMode mode) {
+  /// [automatic]: lo decidio la deteccion de la placa (no la persona en Configuracion).
+  void _selectHardwareMode(HardwareMode mode, {bool automatic = false}) {
     if (_isListening || _isProcessing) return; // Bloquear cambio si esta ocupado
     if (mode == _hardwareMode) return;
     // El detector de luz y la lectura en curso eran del otro hardware.
@@ -1398,58 +1475,89 @@ class _AssistantScreenState extends State<AssistantScreen>
     _proximityTimer = null;
     _proximityAlertLevel = 0;
     _updatePhoneVision();
+    if (automatic) {
+      _hapticService.vibrateStart();
+      _ttsService.speakStatus(
+        mode == HardwareMode.esp32 ? 'Placa conectada' : 'Se desconecto la placa. Sigo con el celular',
+        esp32Service: _activeEsp32,
+      );
+      return;
+    }
     _ttsService.speakStatus(
       mode == HardwareMode.esp32 ? 'Modo modulo activado' : 'Modo Celular activado',
       esp32Service: mode == HardwareMode.esp32 ? _esp32SpeechService : null,
     );
   }
 
+  /// Apariencia clara u oscura: se aplica al instante a toda la app y se recuerda.
+  Future<void> _setLightAppearance(bool light) async {
+    AppTheme.setBrightness(light ? Brightness.light : Brightness.dark);
+    SystemChrome.setSystemUIOverlayStyle(SystemUiOverlayStyle(
+      statusBarColor: Colors.transparent,
+      statusBarIconBrightness: light ? Brightness.dark : Brightness.light,
+      systemNavigationBarColor: Colors.transparent,
+    ));
+    if (mounted) setState(() {});
+    try {
+      (await SharedPreferences.getInstance()).setBool(AppTheme.prefLightAppearance, light);
+    } catch (_) {}
+  }
+
+  /// Configuracion: pantalla completa (sube desde abajo) con la misma aurora de fondo.
   Future<void> _openSettings() async {
     if (_settingsOpen) return;
     _settingsOpen = true;
-    await showModalBottomSheet<void>(
-      context: context,
-      backgroundColor: const Color(0xFF0B1116),
-      isScrollControlled: true,
-      showDragHandle: true,
-      constraints: BoxConstraints(maxHeight: MediaQuery.sizeOf(context).height * 0.88),
-      builder: (sheetContext) => ValueListenableBuilder<int>(
-        valueListenable: _revision,
-        builder: (_, _, _) => SettingsSheet(
-          hardwareMode: _hardwareMode,
-          onHardwareModeChanged: _selectHardwareMode,
-          busy: _isBusy,
-          boardConnected: _esp32SpeechService.isConnected,
-          boardLabel: _esp32SpeechService.connectedBoardLabel ?? 'la placa',
-          problem: _esp32SpeechService.problem,
-          needsPermissions: _esp32SpeechService.needsPermissions,
-          onRequestPermissions: () async {
-            await _esp32SpeechService.ensurePermissions();
-            if (mounted) setState(() {});
-          },
-          onOpenAppSettings: openAppSettings,
-          onPickBoard: _showBoardPicker,
-          answersOnPhone: _answersOnPhone,
-          onAnswersOnPhoneChanged: _setAnswersOnPhone,
-          boardVolume: _esp32SpeechService.boardVolume,
-          onBoardVolumeChanged: _esp32SpeechService.setBoardVolume,
-          onOpenAccount: BackendService.instance.enabled
-              ? () {
-                  Navigator.pop(sheetContext);
-                  Navigator.of(context).push(MaterialPageRoute(builder: (_) => const AccountScreen()));
-                }
-              : null,
-          onOpenMissions: kShowDataMissions
-              ? () {
-                  Navigator.pop(sheetContext);
-                  Navigator.of(context).push(MaterialPageRoute(
-                    builder: (_) => MissionsScreen(esp32: _esp32SpeechService, phoneCamera: _nativeCameraService),
-                  ));
-                }
-              : null,
+    await Navigator.of(context).push(PageRouteBuilder<void>(
+      transitionDuration: _reduceMotion ? Duration.zero : const Duration(milliseconds: 380),
+      reverseTransitionDuration: _reduceMotion ? Duration.zero : const Duration(milliseconds: 260),
+      pageBuilder: (pageContext, _, _) => IrisPage(
+        title: 'Configuración',
+        child: ValueListenableBuilder<int>(
+          valueListenable: _revision,
+          builder: (_, _, _) => SettingsSheet(
+            lightAppearance: AppTheme.isLight,
+            onLightAppearanceChanged: _setLightAppearance,
+            autoDetect: _autoHardware,
+            onAutoDetectChanged: _setAutoHardware,
+            hardwareMode: _hardwareMode,
+            onHardwareModeChanged: _selectHardwareMode,
+            busy: _isBusy,
+            boardConnected: _esp32SpeechService.isConnected,
+            boardLabel: _esp32SpeechService.connectedBoardLabel ?? 'la placa',
+            problem: _esp32SpeechService.problem,
+            needsPermissions: _esp32SpeechService.needsPermissions,
+            onRequestPermissions: () async {
+              await _esp32SpeechService.ensurePermissions();
+              if (mounted) setState(() {});
+            },
+            onOpenAppSettings: openAppSettings,
+            onPickBoard: _showBoardPicker,
+            answersOnPhone: _answersOnPhone,
+            onAnswersOnPhoneChanged: _setAnswersOnPhone,
+            boardVolume: _esp32SpeechService.boardVolume,
+            onBoardVolumeChanged: _esp32SpeechService.setBoardVolume,
+            onOpenAccount: BackendService.instance.enabled
+                ? () => Navigator.of(pageContext).push(MaterialPageRoute(builder: (_) => const AccountScreen()))
+                : null,
+            onOpenMissions: kShowDataMissions
+                ? () => Navigator.of(pageContext).push(MaterialPageRoute(
+                      builder: (_) => MissionsScreen(esp32: _esp32SpeechService, phoneCamera: _nativeCameraService),
+                    ))
+                : null,
+          ),
         ),
       ),
-    );
+      transitionsBuilder: (_, animation, _, child) {
+        final curved = CurvedAnimation(parent: animation, curve: Curves.easeOutCubic, reverseCurve: Curves.easeInCubic);
+        return FadeTransition(
+          opacity: curved,
+          child: SlideTransition(
+            position: Tween(begin: const Offset(0, 0.06), end: Offset.zero).animate(curved),
+            child: child,
+          ),
+        );
+      },
+    ));
     _settingsOpen = false;
   }
 
@@ -1473,18 +1581,14 @@ class _AssistantScreenState extends State<AssistantScreen>
     final connected = _esp32SpeechService.isConnected;
 
     return Scaffold(
-      backgroundColor: Colors.black,
+      backgroundColor: AppTheme.ink,
       body: FadeTransition(
         opacity: _fadeAnimation,
         child: AssistantLayout(
-          background: _buildCameraPreview(),
+          background: _buildBackdrop(),
           topBar: AssistantTopBar(
             phase: phase,
-            hardwareLabel: !isModule ? 'Celular' : (connected ? 'Modulo conectado' : 'Buscando modulo'),
-            hardwareIcon: !isModule
-                ? Icons.smartphone
-                : (connected ? Icons.bluetooth_connected : Icons.bluetooth_searching),
-            hardwareWarning: isModule && !connected,
+            link: !isModule ? IrisLink.phone : (connected ? IrisLink.board : IrisLink.searching),
             onOpenSettings: _openSettings,
           ),
           // Si hay aviso de vision, ese texto va en su tarjeta (con su propio liveRegion).
@@ -1493,14 +1597,14 @@ class _AssistantScreenState extends State<AssistantScreen>
             active: _isBusy || _isTaskBusy,
           ),
           alert: visionAlert == null ? null : VisionAlertBanner(alert: visionAlert),
-          answer: _lastDescription.isEmpty
-              ? null
-              : StreamingAnswer(
-                  text: _lastDescription,
-                  progress: _ttsService.progress,
-                  title: _answerTitle,
-                ),
           carousel: ModeCarousel(
+            answer: _lastDescription.isEmpty
+                ? null
+                : StreamingAnswer(
+                    text: _lastDescription,
+                    progress: _ttsService.progress,
+                    title: _answerTitle,
+                  ),
             controller: _pageController,
             mode: _mode,
             onModeChanged: (mode) => _onPageSwiped(mode.index),
@@ -1519,19 +1623,24 @@ class _AssistantScreenState extends State<AssistantScreen>
         // En modo Modulo se habla con "Oye Iris" (o el doble toque de volumen): el boton no graba.
         final canTalkHere = !isModule || (kAppPttEnabled && _esp32SpeechService.isConnected);
         return AnimatedBuilder(
-          animation: _pulseAnimation,
+          animation: Listenable.merge([_pulseAnimation, _ttsService.progress]),
           builder: (context, _) => AssistantModePage(
             isListening: _isListening,
             isProcessing: _isProcessing,
+            isSpeaking: _isSpeakingAnswer(_ttsService.progress.value),
             canTalkHere: canTalkHere,
             isModule: isModule,
             moduleConnected: _esp32SpeechService.isConnected,
-            continuousMode: _continuousMode,
-            onContinuousChanged: _toggleContinuousMode,
             onPressDown: _talkButtonDown,
             onPressUp: _talkButtonUp,
             pulseScale: _pulseAnimation.value,
           ),
+        );
+      case IrisMode.live:
+        return LiveModePage(
+          isOn: _continuousMode,
+          onBoard: _continuousOnBoard,
+          onToggle: () => _toggleContinuousMode(!_continuousMode),
         );
       case IrisMode.readText:
         return ReadTextModePage(

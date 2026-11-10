@@ -6,41 +6,43 @@ import 'shimmer_text.dart';
 
 enum AssistantPhase { starting, listening, thinking, ready }
 
-/// Barra de arriba, una sola linea: logo + fase ("Iris lista"), el chip del hardware
-/// ("Celular" / "Modulo conectado") y el engranaje de ajustes.
+/// Con que esta trabajando Iris. La app lo decide sola: usa la placa cuando la encuentra.
+enum IrisLink {
+  /// Camara y microfono del celular.
+  phone,
+
+  /// Modo placa elegido a mano y todavia no conecta.
+  searching,
+
+  /// Placa conectada.
+  board,
+}
+
+/// Barra de arriba, una sola linea: el logo vivo con la fase ("LISTA", "PENSANDO"), un indicador
+/// discreto de conexion (no es un boton) y el acceso a Configuracion.
 class AssistantTopBar extends StatelessWidget {
   const AssistantTopBar({
     super.key,
     required this.phase,
-    required this.hardwareLabel,
-    required this.hardwareIcon,
+    required this.link,
     required this.onOpenSettings,
-    this.hardwareWarning = false,
   });
 
   final AssistantPhase phase;
-
-  /// "Celular", "Modulo conectado", "Buscando modulo".
-  final String hardwareLabel;
-  final IconData hardwareIcon;
-
-  /// Ambar: el modulo no esta conectado o falta un permiso.
-  final bool hardwareWarning;
+  final IrisLink link;
   final VoidCallback onOpenSettings;
 
   @override
   Widget build(BuildContext context) {
-    final (String label, String spoken, Color accent) = switch (phase) {
-      AssistantPhase.starting => ('INICIANDO', 'Iniciando', AppTheme.textOnDarkMuted),
-      AssistantPhase.listening => ('ESCUCHANDO', 'Escuchando', AppTheme.listeningRed),
-      AssistantPhase.thinking => ('PENSANDO', 'Pensando', AppTheme.brightCyan),
-      AssistantPhase.ready => ('IRIS LISTA', 'Iris lista', AppTheme.accentCyan),
+    final (String label, String spoken, Color accent, IrisState iris) = switch (phase) {
+      AssistantPhase.starting => ('INICIANDO', 'Iniciando', AppTheme.textMuted, IrisState.thinking),
+      AssistantPhase.listening => ('ESCUCHANDO', 'Escuchando', AppTheme.listeningRed, IrisState.listening),
+      AssistantPhase.thinking => ('PENSANDO', 'Pensando', AppTheme.violet, IrisState.thinking),
+      AssistantPhase.ready => ('LISTA', 'Iris lista', AppTheme.accentCyan, IrisState.idle),
     };
-    final busy = phase == AssistantPhase.listening || phase == AssistantPhase.thinking;
-    final chipColor = hardwareWarning ? AppTheme.alertAmber : AppTheme.textOnDarkMuted;
 
     return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 4, 4, 0),
+      padding: const EdgeInsets.fromLTRB(18, 6, 6, 0),
       child: Row(
         children: [
           Expanded(
@@ -50,17 +52,8 @@ class AssistantTopBar extends StatelessWidget {
               child: ExcludeSemantics(
                 child: Row(
                   children: [
-                    if (phase == AssistantPhase.listening)
-                      Icon(Icons.mic, color: accent, size: 24)
-                    else
-                      // Logo de Iris: quieto en reposo, girando mientras piensa o arranca.
-                      IrisLogo(
-                        size: 24,
-                        color: accent,
-                        spinning: phase == AssistantPhase.thinking || phase == AssistantPhase.starting,
-                        turnDuration: Duration(milliseconds: phase == AssistantPhase.thinking ? 1600 : 4000),
-                      ),
-                    const SizedBox(width: 8),
+                    IrisLogo(size: 26, color: accent, state: iris),
+                    const SizedBox(width: 10),
                     Flexible(
                       child: FittedBox(
                         fit: BoxFit.scaleDown,
@@ -68,11 +61,9 @@ class AssistantTopBar extends StatelessWidget {
                         child: Text(
                           label,
                           maxLines: 1,
-                          style: TextStyle(
-                            color: busy ? accent : AppTheme.textOnDark,
-                            fontSize: 16,
-                            fontWeight: FontWeight.w900,
-                            letterSpacing: 1.4,
+                          style: AppTheme.mono.copyWith(
+                            fontSize: 13,
+                            color: phase == AssistantPhase.ready ? AppTheme.text : accent,
                           ),
                         ),
                       ),
@@ -82,56 +73,62 @@ class AssistantTopBar extends StatelessWidget {
               ),
             ),
           ),
-          // Chip del hardware: tambien abre los ajustes.
-          Flexible(
-            child: Semantics(
-              button: true,
-              label: '$hardwareLabel. Ajustes de conexión',
-              child: ExcludeSemantics(
-                child: Material(
-                  type: MaterialType.transparency,
-                  child: InkWell(
-                    customBorder: const StadiumBorder(),
-                    onTap: onOpenSettings,
-                    child: Container(
-                      constraints: const BoxConstraints(minHeight: 48),
-                      padding: const EdgeInsets.symmetric(horizontal: 10),
-                      alignment: Alignment.center,
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-                        decoration: ShapeDecoration(
-                          color: AppTheme.cardDark,
-                          shape: StadiumBorder(side: BorderSide(color: chipColor.withValues(alpha: 0.6))),
-                        ),
-                        child: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Icon(hardwareIcon, size: 16, color: chipColor),
-                            const SizedBox(width: 5),
-                            Flexible(
-                              child: FittedBox(
-                                fit: BoxFit.scaleDown,
-                                child: Text(hardwareLabel,
-                                    maxLines: 1, style: TextStyle(color: chipColor, fontSize: 13)),
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
-                  ),
-                ),
-              ),
-            ),
-          ),
+          LinkIndicator(link: link),
           IconButton(
-            tooltip: 'Ajustes',
-            iconSize: 26,
+            tooltip: 'Configuración',
+            iconSize: 24,
             constraints: const BoxConstraints(minWidth: 48, minHeight: 48),
-            icon: const Icon(Icons.settings_outlined, color: AppTheme.textOnDarkMuted),
+            icon: Icon(Icons.tune_rounded, color: AppTheme.textMuted),
             onPressed: onOpenSettings,
           ),
         ],
+      ),
+    );
+  }
+}
+
+/// Indicador de conexion: un punto de luz y una palabra. Verde con la placa, apagado con el
+/// celular, ambar si se pidio la placa y aun no aparece.
+class LinkIndicator extends StatelessWidget {
+  const LinkIndicator({super.key, required this.link});
+
+  final IrisLink link;
+
+  @override
+  Widget build(BuildContext context) {
+    final (String label, String spoken, Color color) = switch (link) {
+      IrisLink.board => ('PLACA', 'Placa conectada', AppTheme.success),
+      IrisLink.searching => ('BUSCANDO', 'Buscando la placa', AppTheme.alertAmber),
+      IrisLink.phone => ('CELULAR', 'Usando el celular', AppTheme.textFaint),
+    };
+    final lit = link != IrisLink.phone;
+    return Semantics(
+      label: spoken,
+      child: ExcludeSemantics(
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 6),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                width: 8,
+                height: 8,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: color,
+                  boxShadow: lit ? [BoxShadow(color: color.withValues(alpha: 0.8), blurRadius: 8)] : null,
+                ),
+              ),
+              const SizedBox(width: 7),
+              Text(
+                label,
+                maxLines: 1,
+                textScaler: MediaQuery.textScalerOf(context).clamp(maxScaleFactor: 1.3),
+                style: AppTheme.mono.copyWith(fontSize: 11, color: lit ? color : AppTheme.textMuted),
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }
@@ -150,7 +147,7 @@ class StatusLine extends StatelessWidget {
   Widget build(BuildContext context) {
     if (text.isEmpty) return const SizedBox.shrink();
     return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 0, 16, 6),
+      padding: const EdgeInsets.fromLTRB(18, 2, 18, 6),
       child: Semantics(
         liveRegion: announce,
         label: text,
@@ -158,6 +155,7 @@ class StatusLine extends StatelessWidget {
           child: ShimmerText(
             text,
             active: active,
+            highlightColor: AppTheme.violet,
             style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w500, height: 1.3),
           ),
         ),

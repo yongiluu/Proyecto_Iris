@@ -44,14 +44,14 @@ class BoardPicker extends StatelessWidget {
               children: [
                 Row(
                   children: [
-                    const Expanded(
+                    Expanded(
                       child: Text('Elige tu placa Iris',
-                          style: TextStyle(color: Colors.white, fontSize: 20, fontWeight: FontWeight.bold)),
+                          style: TextStyle(color: AppTheme.text, fontSize: 20, fontWeight: FontWeight.bold)),
                     ),
                     IconButton(
                       tooltip: 'Buscar de nuevo',
                       onPressed: service.refreshBoards,
-                      icon: const Icon(Icons.refresh, color: AppTheme.accentCyan),
+                      icon: Icon(Icons.refresh, color: AppTheme.accentCyan),
                     ),
                   ],
                 ),
@@ -66,13 +66,13 @@ class BoardPicker extends StatelessWidget {
                           service.isScanning || problem == null
                               ? 'Buscando placas... Enciende la placa y acercala al celular.'
                               : problem,
-                          style: const TextStyle(color: AppTheme.textOnDarkMuted, fontSize: 16),
+                          style: TextStyle(color: AppTheme.textMuted, fontSize: 16),
                         ),
                       ),
                     ),
                   ),
                 if (service.needsPermissions)
-                  const TextButton(
+                  TextButton(
                     onPressed: openAppSettings,
                     child: Text('Abrir ajustes de la app', style: TextStyle(color: AppTheme.accentCyan)),
                   ),
@@ -81,17 +81,17 @@ class BoardPicker extends StatelessWidget {
                     contentPadding: EdgeInsets.zero,
                     leading: Icon(
                       board.id == service.connectedBoardId ? Icons.bluetooth_connected : Icons.memory,
-                      color: board.id == service.preferredBoardId ? AppTheme.accentCyan : AppTheme.textOnDarkMuted,
+                      color: board.id == service.preferredBoardId ? AppTheme.accentCyan : AppTheme.textMuted,
                     ),
-                    title: Text(board.label, style: const TextStyle(color: Colors.white, fontSize: 18)),
+                    title: Text(board.label, style: TextStyle(color: AppTheme.text, fontSize: 18)),
                     subtitle: Text(
                       '${board.id}  ·  ${board.id == service.connectedBoardId ? 'conectada' : 'senal ${board.rssi} dBm'}',
-                      style: const TextStyle(color: AppTheme.textOnDarkMuted),
+                      style: TextStyle(color: AppTheme.textMuted),
                     ),
                     trailing: IconButton(
                       tooltip: 'Poner apodo',
                       onPressed: () => _rename(context, board),
-                      icon: const Icon(Icons.edit, color: AppTheme.textOnDarkMuted),
+                      icon: Icon(Icons.edit, color: AppTheme.textMuted),
                     ),
                     onTap: () {
                       service.selectBoard(board.id);

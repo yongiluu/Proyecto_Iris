@@ -40,7 +40,7 @@ class PeopleModePage extends StatelessWidget {
           Expanded(
             child: Text(
               enrollStatus!,
-              style: const TextStyle(color: AppTheme.textOnDark, fontSize: 16, fontWeight: FontWeight.w600),
+              style: TextStyle(color: AppTheme.text, fontSize: 16, fontWeight: FontWeight.w600),
             ),
           ),
           const SizedBox(width: 8),
