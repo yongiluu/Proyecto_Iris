@@ -34,7 +34,11 @@ void beginAudioStream(size_t totalBytes);
 // (si recibidos < anunciados se perdieron paquetes BLE). Llamar desde el loop.
 bool takeAudioStreamReport(size_t* received, size_t* expected);
 
-// Tono senoidal (ej. pitidos de cercania). Llamar desde el loop, no desde callbacks BLE.
+// Tono senoidal (ej. pitidos de cercania, detector de luz). Desde cualquier tarea menos el hilo BLE.
 void playTone(float frequencyHz, int durationMs);
+
+// Cuanto audio (ms) queda en la cola por sonar. Los tonos se encolan DETRAS de la voz: quien pita seguido
+// (detector de luz) debe saltarse el pitido si hay voz en cola, o suenan todos juntos al final.
+size_t pendingPlaybackMs();
 
 #endif
