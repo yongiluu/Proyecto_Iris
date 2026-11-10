@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
 
 import '../../../core/theme/app_theme.dart';
+import '../../../core/widgets/iris_splash.dart';
 
 /// Lo que esta haciendo Iris: cada estado mueve el logo de otra forma.
 enum IrisState {
@@ -115,6 +116,12 @@ class _IrisLogoState extends State<IrisLogo> with TickerProviderStateMixin {
 
   @override
   Widget build(BuildContext context) {
+    final logo = _buildLogo();
+    // El iris grande es donde nace la animacion de arranque.
+    return widget.glow ? IrisSplashAnchor(child: logo) : logo;
+  }
+
+  Widget _buildLogo() {
     return ExcludeSemantics(
       child: RepaintBoundary(
         child: CustomPaint(

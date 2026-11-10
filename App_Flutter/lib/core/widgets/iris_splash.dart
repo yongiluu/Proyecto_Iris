@@ -4,8 +4,20 @@ import 'package:flutter/material.dart';
 
 import '../theme/app_theme.dart';
 
-/// Arranque de Iris: el logo aparece chico en el centro y se abre hasta que sus rayos salen de
-/// la pantalla, dejando ver la app por el hueco del medio (como un iris que se dilata).
+/// Marca donde esta el iris grande de la pantalla, para que el del arranque nazca exactamente
+/// encima (mismo centro y mismo tamaño) y no se vean dos iris desalineados.
+class IrisSplashAnchor extends StatelessWidget {
+  const IrisSplashAnchor({super.key, required this.child});
+
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) => child;
+}
+
+/// Arranque de Iris: el logo aparece sobre el iris de la pantalla y se abre hasta que sus rayos
+/// salen por los bordes, dejando ver la app por el hueco del medio (como un iris que se dilata).
+/// Debajo queda el iris real, en el mismo lugar.
 ///
 /// [child] se construye desde el primer cuadro (los servicios arrancan mientras tanto). Con
 /// "quitar animaciones" del sistema no se muestra.
@@ -21,6 +33,9 @@ class IrisSplash extends StatefulWidget {
 class _IrisSplashState extends State<IrisSplash> with SingleTickerProviderStateMixin {
   late final AnimationController _controller =
       AnimationController(vsync: this, duration: const Duration(milliseconds: 2300));
+
+  /// Centro y diametro del iris de la pantalla (null = centro de la pantalla).
+  final ValueNotifier<Rect?> _anchor = ValueNotifier(null);
   bool _done = false;
   bool _started = false;
 
@@ -33,14 +48,43 @@ class _IrisSplashState extends State<IrisSplash> with SingleTickerProviderStateM
       _done = true;
       return;
     }
+    WidgetsBinding.instance.addPostFrameCallback((_) => _findAnchor());
     _controller.forward().whenComplete(() {
       if (mounted) setState(() => _done = true);
     });
   }
 
+  /// Busca el iris grande ya dibujado debajo. Solo al principio, mientras el logo esta chico:
+  /// despues no se mueve aunque la pantalla de abajo cambie.
+  void _findAnchor() {
+    if (!mounted || _done) return;
+    final origin = context.findRenderObject();
+    Rect? found;
+    void visit(Element element) {
+      if (found != null) return;
+      if (element.widget is IrisSplashAnchor) {
+        final box = element.findRenderObject();
+        if (box is RenderBox && box.hasSize && box.attached && origin is RenderBox) {
+          found = box.localToGlobal(Offset.zero, ancestor: origin) & box.size;
+          return;
+        }
+      }
+      element.visitChildren(visit);
+    }
+
+    context.visitChildElements(visit);
+    if (found != null) {
+      _anchor.value = found;
+    } else if (_controller.value < 0.2) {
+      // La pantalla de abajo todavia no puso su iris: probar en el cuadro siguiente.
+      WidgetsBinding.instance.addPostFrameCallback((_) => _findAnchor());
+    }
+  }
+
   @override
   void dispose() {
     _controller.dispose();
+    _anchor.dispose();
     super.dispose();
   }
 
@@ -55,7 +99,7 @@ class _IrisSplashState extends State<IrisSplash> with SingleTickerProviderStateM
           AbsorbPointer(
             child: ExcludeSemantics(
               child: RepaintBoundary(
-                child: CustomPaint(painter: _SplashPainter(_controller), size: Size.infinite),
+                child: CustomPaint(painter: _SplashPainter(_controller, _anchor), size: Size.infinite),
               ),
             ),
           ),
@@ -65,43 +109,62 @@ class _IrisSplashState extends State<IrisSplash> with SingleTickerProviderStateM
 }
 
 class _SplashPainter extends CustomPainter {
-  _SplashPainter(this.progress) : super(repaint: progress);
+  _SplashPainter(this.progress, this.anchor) : super(repaint: Listenable.merge([progress, anchor]));
 
   final Animation<double> progress;
+  final ValueNotifier<Rect?> anchor;
 
+  // Misma geometria que el iris de la pantalla (IrisPainter).
   static const int _rays = 24;
-  static const double _logoRadius = 46;
+  static const double _step = 2 * math.pi / _rays;
+  static const double _fill = 0.84;
+  static const double _innerRatio = 0.40;
+  static const double _defaultSize = 150;
 
   static double _segment(double t, double from, double to) => ((t - from) / (to - from)).clamp(0.0, 1.0);
 
   @override
   void paint(Canvas canvas, Size size) {
     final t = progress.value;
-    final center = size.center(Offset.zero);
-    final diagonal = size.bottomRight(Offset.zero).distance;
+    final target = anchor.value;
+    final center = target?.center ?? size.center(Offset.zero);
+    final logoRadius = (target?.shortestSide ?? _defaultSize) / 2 * _fill;
+    // Hasta la esquina mas lejana: el hueco tiene que cubrir toda la pantalla.
+    final reach = [
+      Offset.zero,
+      Offset(size.width, 0),
+      Offset(0, size.height),
+      Offset(size.width, size.height),
+    ].map((corner) => (corner - center).distance).reduce(math.max);
 
-    final appear = Curves.easeOutBack.transform(_segment(t, 0.0, 0.26));
+    final appear = Curves.easeOutCubic.transform(_segment(t, 0.0, 0.26));
     final open = Curves.easeInOutCubic.transform(_segment(t, 0.46, 1.0));
-    final fade = Curves.easeIn.transform(_segment(t, 0.58, 0.96));
+    final fade = Curves.easeIn.transform(_segment(t, 0.62, 0.98));
 
     // Crece hasta que el hueco del centro es mas grande que la pantalla: solo se ven los rayos
     // saliendo por los bordes, nunca el circulo completo.
-    final maxScale = diagonal / (_logoRadius * 0.40) * 1.15;
+    final maxScale = reach / (logoRadius * _innerRatio) * 1.2;
     final scale = appear * (1 + open * open * (maxScale - 1));
-    final radius = _logoRadius * scale;
-    final inner = radius * 0.40;
+    final radius = logoRadius * scale;
+    final inner = radius * _innerRatio;
 
-    // Fondo: se abre desde el centro junto con el iris.
-    final background = Paint()
-      ..shader = RadialGradient(
-        colors: [
-          AppTheme.ink.withValues(alpha: 0),
-          AppTheme.ink.withValues(alpha: 1 - fade),
-          AppTheme.ink.withValues(alpha: 1 - fade),
-        ],
-        stops: [(inner / diagonal).clamp(0.0, 0.98), (inner * 1.6 / diagonal).clamp(0.01, 0.99), 1],
-      ).createShader(Rect.fromCircle(center: center, radius: diagonal));
-    canvas.drawRect(Offset.zero & size, open == 0 ? (Paint()..color = AppTheme.ink) : background);
+    // Fondo: tapa la app y se abre desde el centro junto con el iris. El iris real queda oculto
+    // hasta que el hueco lo supera.
+    if (open == 0) {
+      canvas.drawRect(Offset.zero & size, Paint()..color = AppTheme.ink);
+    } else {
+      final edge = (inner / reach).clamp(0.0, 0.97);
+      final background = Paint()
+        ..shader = RadialGradient(
+          colors: [
+            AppTheme.ink.withValues(alpha: 0),
+            AppTheme.ink.withValues(alpha: 1 - fade),
+            AppTheme.ink.withValues(alpha: 1 - fade),
+          ],
+          stops: [edge, (edge + 0.02).clamp(0.0, 0.99), 1],
+        ).createShader(Rect.fromCircle(center: center, radius: reach));
+      canvas.drawRect(Offset.zero & size, background);
+    }
 
     if (radius <= 0) return;
     final halo = Paint()
@@ -112,12 +175,14 @@ class _SplashPainter extends CustomPainter {
 
     final paint = Paint()
       ..isAntiAlias = true
-      ..color = Color.lerp(AppTheme.accentCyan, AppTheme.brightCyan, open)!.withValues(alpha: 1 - fade * 0.85);
+      ..color = AppTheme.accentCyan.withValues(alpha: 1 - fade * 0.9);
     final innerHalf = radius * 0.014;
     final outerHalf = radius * 0.062;
     canvas.save();
     canvas.translate(center.dx, center.dy);
-    canvas.rotate(-0.35 * (1 - appear) + 0.5 * open);
+    // Gira dos pasos al aparecer y queda con los rayos en el mismo angulo que el iris real; al
+    // abrirse gira pasos enteros, asi los rayos siempre coinciden con los de abajo.
+    canvas.rotate(-2 * _step * (1 - appear) + 2 * _step * open);
     for (int i = 0; i < _rays; i++) {
       final path = Path()
         ..moveTo(-innerHalf, -inner)
@@ -126,7 +191,7 @@ class _SplashPainter extends CustomPainter {
         ..lineTo(-outerHalf, -radius)
         ..close();
       canvas.drawPath(path, paint);
-      canvas.rotate(2 * math.pi / _rays);
+      canvas.rotate(_step);
     }
     canvas.restore();
   }
