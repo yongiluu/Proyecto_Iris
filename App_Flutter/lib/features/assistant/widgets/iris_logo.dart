@@ -17,7 +17,7 @@ enum IrisState {
   /// Pensando: los rayos se deshacen en puntos que giran en anillos.
   thinking,
 
-  /// Respondiendo o describiendo: una ola recorre los rayos.
+  /// Respondiendo o describiendo: los rayos se levantan y bajan, alternados, sin perder el circulo.
   speaking,
 }
 
@@ -27,17 +27,19 @@ class IrisLogo extends StatefulWidget {
   const IrisLogo({
     super.key,
     this.size = 24,
-    this.color = AppTheme.accentCyan,
-    this.thinkingColor = AppTheme.violet,
+    this.color,
+    this.thinkingColor,
     this.state = IrisState.idle,
     this.glow = false,
   });
 
   final double size;
-  final Color color;
 
-  /// Color hacia el que viran los puntos de afuera mientras piensa.
-  final Color thinkingColor;
+  /// Por defecto, el cian de la marca.
+  final Color? color;
+
+  /// Color hacia el que viran los puntos de afuera mientras piensa (por defecto, violeta).
+  final Color? thinkingColor;
   final IrisState state;
 
   /// Halo de luz detras (para el logo grande).
@@ -122,8 +124,8 @@ class _IrisLogoState extends State<IrisLogo> with TickerProviderStateMixin {
             think: _think,
             listen: _listen,
             speak: _speak,
-            color: widget.color,
-            thinkingColor: widget.thinkingColor,
+            color: widget.color ?? AppTheme.accentCyan,
+            thinkingColor: widget.thinkingColor ?? AppTheme.violet,
             glow: widget.glow,
           ),
         ),
@@ -167,7 +169,7 @@ class IrisPainter extends CustomPainter {
 
     // En reposo el dibujo ocupa ~84% del espacio: el resto es margen para crecer al escuchar.
     final breath = 1 + 0.025 * math.sin(t * 1.3);
-    final radius = full * 0.84 * breath;
+    final radius = full * 0.84 * breath * (1 - 0.05 * s);
     final inner = radius * 0.40;
 
     if (glow) {
@@ -189,11 +191,14 @@ class IrisPainter extends CustomPainter {
     for (int i = 0; i < rays; i++) {
       final angle = i * _step - math.pi / 2;
 
-      // Largo del rayo: voz (irregular) al escuchar, ola que da la vuelta al hablar.
+      // Escuchando: cada rayo se alarga como una onda de voz (irregular).
       final voice = 0.5 + 0.5 * math.sin(t * 7.3 + i * 1.7) * math.sin(t * 3.1 + i * 0.9);
-      final wave = 0.5 + 0.5 * math.sin(t * 4.2 - i * _step * 3);
-      final outer = radius * (1 + l * (0.02 + 0.17 * voice) + s * (0.14 * wave - 0.04));
-      final innerR = inner * (1 - 0.18 * l * voice);
+      // Hablando: el rayo entero se levanta y baja, sin estirarse. Los pares suben cuando los
+      // impares bajan, asi la silueta sigue siendo un circulo.
+      final wave = 0.5 + 0.5 * math.sin(t * 4.6 + (i.isEven ? 0 : math.pi));
+      final lift = radius * s * 0.085 * (wave * 2 - 1);
+      final outer = radius * (1 + l * (0.02 + 0.17 * voice)) + lift;
+      final innerR = inner * (1 - 0.18 * l * voice) + lift;
 
       if (rayAlpha > 0) {
         final innerHalf = radius * 0.014;

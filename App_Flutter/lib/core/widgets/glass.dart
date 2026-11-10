@@ -13,16 +13,17 @@ class GlassCard extends StatelessWidget {
     required this.child,
     this.padding = const EdgeInsets.all(16),
     this.radius = AppTheme.cardRadius,
-    this.tint = AppTheme.glassFill,
-    this.borderColor = AppTheme.glassBorder,
+    this.tint,
+    this.borderColor,
     this.blur = 18,
   });
 
   final Widget child;
   final EdgeInsetsGeometry padding;
   final double radius;
-  final Color tint;
-  final Color borderColor;
+  /// Relleno; por defecto el vidrio del tema.
+  final Color? tint;
+  final Color? borderColor;
   final double blur;
 
   @override
@@ -34,9 +35,9 @@ class GlassCard extends StatelessWidget {
         filter: ImageFilter.blur(sigmaX: blur, sigmaY: blur),
         child: DecoratedBox(
           decoration: BoxDecoration(
-            color: tint,
+            color: tint ?? AppTheme.glassFill,
             borderRadius: shape,
-            border: Border.all(color: borderColor),
+            border: Border.all(color: borderColor ?? AppTheme.glassBorder),
           ),
           // Material propio: las filas (ListTile, interruptores) pintan aqui su onda al tocar.
           child: Material(
@@ -70,7 +71,7 @@ class IrisPage extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
                 Padding(
-                  padding: const EdgeInsets.fromLTRB(4, 4, 12, 4),
+                  padding: const EdgeInsets.fromLTRB(4, 8, 12, 0),
                   child: Row(
                     children: [
                       if (Navigator.of(context).canPop())
@@ -78,7 +79,7 @@ class IrisPage extends StatelessWidget {
                           tooltip: 'Volver',
                           iconSize: 26,
                           constraints: const BoxConstraints(minWidth: 48, minHeight: 48),
-                          icon: const Icon(Icons.arrow_back_rounded, color: AppTheme.textOnDark),
+                          icon: Icon(Icons.arrow_back_rounded, color: AppTheme.text),
                           onPressed: () => Navigator.of(context).maybePop(),
                         )
                       else
@@ -90,11 +91,11 @@ class IrisPage extends StatelessWidget {
                             title,
                             maxLines: 2,
                             overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(
-                              color: AppTheme.textOnDark,
-                              fontSize: 26,
-                              fontWeight: FontWeight.w600,
-                              letterSpacing: -0.4,
+                            style: TextStyle(
+                              color: AppTheme.text,
+                              fontSize: 30,
+                              fontWeight: FontWeight.w300,
+                              letterSpacing: -0.6,
                             ),
                           ),
                         ),
@@ -112,7 +113,7 @@ class IrisPage extends StatelessWidget {
   }
 }
 
-/// Titulo de seccion en mayusculas monoespaciadas ("CONEXION", "MEMORIA").
+/// Titulo de seccion pequeño, en mayusculas y con aire ("CONEXION", "MEMORIA").
 class SectionLabel extends StatelessWidget {
   const SectionLabel(this.text, {super.key});
 
@@ -121,12 +122,12 @@ class SectionLabel extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Padding(
-      padding: const EdgeInsets.fromLTRB(6, 22, 6, 8),
+      padding: const EdgeInsets.fromLTRB(8, 28, 8, 10),
       child: Semantics(
         header: true,
         label: text,
         child: ExcludeSemantics(
-          child: Text(text.toUpperCase(), style: AppTheme.mono.copyWith(color: AppTheme.accentCyan)),
+          child: Text(text.toUpperCase(), style: AppTheme.sectionLabel),
         ),
       ),
     );

@@ -12,7 +12,7 @@ Widget _message(String text) => Center(
         padding: const EdgeInsets.all(32),
         child: Text(text,
             textAlign: TextAlign.center,
-            style: const TextStyle(color: AppTheme.textOnDarkMuted, fontSize: 17, height: 1.4)),
+            style: TextStyle(color: AppTheme.textMuted, fontSize: 17, height: 1.4)),
       ),
     );
 
@@ -65,11 +65,11 @@ class _HistoryScreenState extends State<HistoryScreen> {
                   title: Padding(
                     padding: const EdgeInsets.only(bottom: 6),
                     child: Text(_dayName(day.day),
-                        style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w600, color: AppTheme.textOnDark)),
+                        style: TextStyle(fontSize: 20, fontWeight: FontWeight.w600, color: AppTheme.text)),
                   ),
                   subtitle: Text(text.isEmpty ? 'Sin resumen todavía' : text,
                       maxLines: 4, overflow: TextOverflow.ellipsis),
-                  trailing: const Icon(Icons.chevron_right, color: AppTheme.textFaint),
+                  trailing: Icon(Icons.chevron_right, color: AppTheme.textFaint),
                   onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => _DayScreen(day: day))),
                 ),
               );
@@ -102,7 +102,7 @@ class _DayScreen extends StatelessWidget {
               padding: const EdgeInsets.all(16),
               child: GlassCard(
                 child: Text(diary.isEmpty ? 'No quedan mensajes de este día.' : diary,
-                    style: const TextStyle(fontSize: 18, height: 1.45, color: AppTheme.textOnDark)),
+                    style: TextStyle(fontSize: 18, height: 1.45, color: AppTheme.text)),
               ),
             );
           }
@@ -135,7 +135,7 @@ class _DayScreen extends StatelessWidget {
                       ),
                     ),
                     child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                      Text(m.text, style: const TextStyle(fontSize: 17, height: 1.4, color: AppTheme.textOnDark)),
+                      Text(m.text, style: TextStyle(fontSize: 17, height: 1.4, color: AppTheme.text)),
                       const SizedBox(height: 4),
                       Text(time, style: AppTheme.mono.copyWith(fontSize: 11, letterSpacing: 1, color: AppTheme.textFaint)),
                     ]),

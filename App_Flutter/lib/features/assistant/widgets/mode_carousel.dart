@@ -178,7 +178,7 @@ class ModeDial extends StatelessWidget {
                           height: 4,
                           decoration: BoxDecoration(
                             borderRadius: BorderRadius.circular(2),
-                            color: Color.lerp(Colors.white24, AppTheme.accentCyan, t),
+                            color: Color.lerp(AppTheme.textFaint.withValues(alpha: 0.45), AppTheme.accentCyan, t),
                           ),
                         );
                       }),
@@ -250,11 +250,11 @@ class _DialLabel extends StatelessWidget {
                       softWrap: false,
                       textScaler: scaler,
                       style: TextStyle(
-                        color: Color.lerp(AppTheme.textOnDarkMuted, AppTheme.textOnDark, near),
+                        color: Color.lerp(AppTheme.textMuted, AppTheme.text, near),
                         fontSize: 30,
                         fontWeight: FontWeight.w600,
                         letterSpacing: -0.6,
-                        shadows: const [Shadow(color: Colors.black87, blurRadius: 12)],
+                        shadows: [Shadow(color: AppTheme.textHalo, blurRadius: 12)],
                       ),
                     ),
                   ),

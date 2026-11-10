@@ -10,7 +10,10 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:camera/camera.dart';
 
+import 'package:shared_preferences/shared_preferences.dart';
+
 import 'app.dart';
+import 'core/theme/app_theme.dart';
 import 'core/constants/env_config.dart';
 import 'features/data_collection/training_upload_queue.dart';
 import 'services/backend/backend_service.dart';
@@ -35,11 +38,17 @@ Future<void> main() async {
     DeviceOrientation.portraitUp,
   ]);
 
+  // Apariencia elegida en Configuracion (oscura por defecto).
+  try {
+    final light = (await SharedPreferences.getInstance()).getBool(AppTheme.prefLightAppearance) ?? false;
+    AppTheme.setBrightness(light ? Brightness.light : Brightness.dark);
+  } catch (_) {}
+
   // Hide system bars for immersive full-screen experience
   SystemChrome.setSystemUIOverlayStyle(
-    const SystemUiOverlayStyle(
+    SystemUiOverlayStyle(
       statusBarColor: Colors.transparent,
-      statusBarIconBrightness: Brightness.light,
+      statusBarIconBrightness: AppTheme.isLight ? Brightness.dark : Brightness.light,
       systemNavigationBarColor: Colors.transparent,
     ),
   );

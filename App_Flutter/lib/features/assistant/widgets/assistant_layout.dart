@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import '../../../core/theme/app_theme.dart';
+
 /// Ordena la pantalla principal sobre el fondo (camara, foto de la placa o aurora):
 ///
 ///   [topBar]   una linea: fase, indicador de conexion, configuracion
@@ -69,42 +71,29 @@ class _Scrims extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return const IgnorePointer(
+    final ink = AppTheme.ink;
+    Widget veil(Alignment alignment, double height, List<double> alphas) => Align(
+          alignment: alignment,
+          child: FractionallySizedBox(
+            heightFactor: height,
+            widthFactor: 1,
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.topCenter,
+                  end: Alignment.bottomCenter,
+                  colors: [for (final a in alphas) ink.withValues(alpha: a)],
+                ),
+              ),
+            ),
+          ),
+        );
+    return IgnorePointer(
       child: Stack(
         fit: StackFit.expand,
         children: [
-          Align(
-            alignment: Alignment.topCenter,
-            child: FractionallySizedBox(
-              heightFactor: 0.25,
-              widthFactor: 1,
-              child: DecoratedBox(
-                decoration: BoxDecoration(
-                  gradient: LinearGradient(
-                    begin: Alignment.topCenter,
-                    end: Alignment.bottomCenter,
-                    colors: [Color(0xB3060913), Color(0x00060913)],
-                  ),
-                ),
-              ),
-            ),
-          ),
-          Align(
-            alignment: Alignment.bottomCenter,
-            child: FractionallySizedBox(
-              heightFactor: 0.45,
-              widthFactor: 1,
-              child: DecoratedBox(
-                decoration: BoxDecoration(
-                  gradient: LinearGradient(
-                    begin: Alignment.topCenter,
-                    end: Alignment.bottomCenter,
-                    colors: [Color(0x00060913), Color(0xCC060913)],
-                  ),
-                ),
-              ),
-            ),
-          ),
+          veil(Alignment.topCenter, 0.25, const [0.70, 0]),
+          veil(Alignment.bottomCenter, 0.45, const [0, 0.80]),
         ],
       ),
     );

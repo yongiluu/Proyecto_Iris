@@ -35,7 +35,7 @@ class AssistantTopBar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final (String label, String spoken, Color accent, IrisState iris) = switch (phase) {
-      AssistantPhase.starting => ('INICIANDO', 'Iniciando', AppTheme.textOnDarkMuted, IrisState.thinking),
+      AssistantPhase.starting => ('INICIANDO', 'Iniciando', AppTheme.textMuted, IrisState.thinking),
       AssistantPhase.listening => ('ESCUCHANDO', 'Escuchando', AppTheme.listeningRed, IrisState.listening),
       AssistantPhase.thinking => ('PENSANDO', 'Pensando', AppTheme.violet, IrisState.thinking),
       AssistantPhase.ready => ('LISTA', 'Iris lista', AppTheme.accentCyan, IrisState.idle),
@@ -63,7 +63,7 @@ class AssistantTopBar extends StatelessWidget {
                           maxLines: 1,
                           style: AppTheme.mono.copyWith(
                             fontSize: 13,
-                            color: phase == AssistantPhase.ready ? AppTheme.textOnDark : accent,
+                            color: phase == AssistantPhase.ready ? AppTheme.text : accent,
                           ),
                         ),
                       ),
@@ -78,7 +78,7 @@ class AssistantTopBar extends StatelessWidget {
             tooltip: 'Configuración',
             iconSize: 24,
             constraints: const BoxConstraints(minWidth: 48, minHeight: 48),
-            icon: const Icon(Icons.tune_rounded, color: AppTheme.textOnDarkMuted),
+            icon: Icon(Icons.tune_rounded, color: AppTheme.textMuted),
             onPressed: onOpenSettings,
           ),
         ],
@@ -124,7 +124,7 @@ class LinkIndicator extends StatelessWidget {
                 label,
                 maxLines: 1,
                 textScaler: MediaQuery.textScalerOf(context).clamp(maxScaleFactor: 1.3),
-                style: AppTheme.mono.copyWith(fontSize: 11, color: lit ? color : AppTheme.textOnDarkMuted),
+                style: AppTheme.mono.copyWith(fontSize: 11, color: lit ? color : AppTheme.textMuted),
               ),
             ],
           ),

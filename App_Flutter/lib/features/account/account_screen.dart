@@ -69,7 +69,7 @@ class _AccountScreenState extends State<AccountScreen> {
               label: 'Código: $spaced',
               child: ExcludeSemantics(
                 child: Text(code,
-                    style: const TextStyle(
+                    style: TextStyle(
                         fontFamily: 'monospace',
                         fontSize: 44,
                         fontWeight: FontWeight.w600,
@@ -187,7 +187,7 @@ class _AccountScreenState extends State<AccountScreen> {
                           child: ExcludeSemantics(
                             child: Text(
                               name.trim().isEmpty ? '?' : name.trim()[0].toUpperCase(),
-                              style: const TextStyle(color: AppTheme.brightCyan, fontSize: 24, fontWeight: FontWeight.w600),
+                              style: TextStyle(color: AppTheme.brightCyan, fontSize: 24, fontWeight: FontWeight.w600),
                             ),
                           ),
                         ),
@@ -197,11 +197,11 @@ class _AccountScreenState extends State<AccountScreen> {
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
                               Text(name,
-                                  style: const TextStyle(
-                                      color: AppTheme.textOnDark, fontSize: 21, fontWeight: FontWeight.w600)),
+                                  style: TextStyle(
+                                      color: AppTheme.text, fontSize: 21, fontWeight: FontWeight.w600)),
                               const SizedBox(height: 2),
                               Text(_backend.user?.email ?? '',
-                                  style: const TextStyle(color: AppTheme.textOnDarkMuted, fontSize: 14)),
+                                  style: TextStyle(color: AppTheme.textMuted, fontSize: 14)),
                             ],
                           ),
                         ),
@@ -223,7 +223,7 @@ class _AccountScreenState extends State<AccountScreen> {
                       value: _retentionOptions.containsKey(retention) ? retention : 30,
                       dropdownColor: AppTheme.inkRaised,
                       underline: const SizedBox.shrink(),
-                      style: const TextStyle(color: AppTheme.brightCyan, fontSize: 16),
+                      style: TextStyle(color: AppTheme.brightCyan, fontSize: 16),
                       items: [
                         for (final e in _retentionOptions.entries) DropdownMenuItem(value: e.key, child: Text(e.value)),
                       ],
@@ -233,12 +233,12 @@ class _AccountScreenState extends State<AccountScreen> {
                   ListTile(
                     leading: const Icon(Icons.history),
                     title: const Text('Ver mi historial'),
-                    trailing: const Icon(Icons.chevron_right, color: AppTheme.textFaint),
+                    trailing: Icon(Icons.chevron_right, color: AppTheme.textFaint),
                     onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const HistoryScreen())),
                   ),
                   ListTile(
-                    leading: const Icon(Icons.delete_forever, color: AppTheme.dangerRed),
-                    title: const Text('Borrar toda mi memoria', style: TextStyle(color: AppTheme.dangerRed)),
+                    leading: Icon(Icons.delete_forever, color: AppTheme.dangerRed),
+                    title: Text('Borrar toda mi memoria', style: TextStyle(color: AppTheme.dangerRed)),
                     onTap: _deleteMemory,
                   ),
                 ]),
@@ -316,8 +316,8 @@ class _AccountScreenState extends State<AccountScreen> {
                 OutlinedButton.icon(
                   style: OutlinedButton.styleFrom(
                     minimumSize: const Size.fromHeight(56),
-                    foregroundColor: AppTheme.textOnDark,
-                    side: const BorderSide(color: AppTheme.glassBorder),
+                    foregroundColor: AppTheme.text,
+                    side: BorderSide(color: AppTheme.glassBorder),
                     shape: const StadiumBorder(),
                   ),
                   icon: const Icon(Icons.logout),

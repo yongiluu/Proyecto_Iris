@@ -60,7 +60,7 @@ class VisionAlertBanner extends StatelessWidget {
           width: double.infinity,
           padding: const EdgeInsets.fromLTRB(14, 14, 16, 14),
           decoration: BoxDecoration(
-            color: AppTheme.cardDark,
+            color: AppTheme.card,
             borderRadius: BorderRadius.circular(AppTheme.cardRadius),
             border: Border.all(color: AppTheme.alertAmber.withValues(alpha: 0.45)),
           ),
@@ -70,11 +70,11 @@ class VisionAlertBanner extends StatelessWidget {
               Container(
                 width: 52,
                 height: 52,
-                decoration: const BoxDecoration(
+                decoration: BoxDecoration(
                   color: AppTheme.alertAmber,
                   shape: BoxShape.circle,
                 ),
-                child: Icon(alert.icon, color: Colors.black, size: 32),
+                child: Icon(alert.icon, color: AppTheme.ink, size: 32),
               ),
               const SizedBox(width: 14),
               Expanded(
@@ -82,7 +82,7 @@ class VisionAlertBanner extends StatelessWidget {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    const Text(
+                    Text(
                       'ADELANTE',
                       style: TextStyle(
                         color: AppTheme.alertAmber,
@@ -94,8 +94,8 @@ class VisionAlertBanner extends StatelessWidget {
                     const SizedBox(height: 2),
                     Text(
                       _capitalize(alert.what),
-                      style: const TextStyle(
-                        color: Colors.white,
+                      style: TextStyle(
+                        color: AppTheme.text,
                         fontSize: 22,
                         fontWeight: FontWeight.w700,
                         height: 1.2,
@@ -108,7 +108,7 @@ class VisionAlertBanner extends StatelessWidget {
                 const SizedBox(width: 10),
                 Text(
                   '$confidence%',
-                  style: const TextStyle(
+                  style: TextStyle(
                     color: AppTheme.alertAmber,
                     fontSize: 16,
                     fontWeight: FontWeight.w700,

@@ -32,6 +32,13 @@ class _AuroraBackgroundState extends State<AuroraBackground> with TickerProvider
     AuroraMood.thinking: [Color(0xFF8B5CF6), Color(0xFFEC4899), Color(0xFF6366F1), Color(0xFF22D3EE)],
     AuroraMood.speaking: [Color(0xFF22D3EE), Color(0xFF8B5CF6), Color(0xFF06B6D4), Color(0xFFF472B6)],
   };
+  /// Apariencia clara: los mismos tonos en pastel, sobre blanco frio.
+  static const Map<AuroraMood, List<Color>> _lightPalettes = {
+    AuroraMood.calm: [Color(0xFF7DD3FC), Color(0xFFC4B5FD), Color(0xFFA5B4FC), Color(0xFFF9A8D4)],
+    AuroraMood.listening: [Color(0xFF22D3EE), Color(0xFF38BDF8), Color(0xFF60A5FA), Color(0xFFA78BFA)],
+    AuroraMood.thinking: [Color(0xFFA78BFA), Color(0xFFF472B6), Color(0xFF818CF8), Color(0xFF22D3EE)],
+    AuroraMood.speaking: [Color(0xFF22D3EE), Color(0xFFA78BFA), Color(0xFF2DD4BF), Color(0xFFF472B6)],
+  };
   static const Map<AuroraMood, double> _speeds = {
     AuroraMood.calm: 0,
     AuroraMood.listening: 0.55,
@@ -111,8 +118,9 @@ class _AuroraBackgroundState extends State<AuroraBackground> with TickerProvider
           painter: _AuroraPainter(
             phase: _phase,
             blend: _blend,
-            from: _palettes[_from]!,
-            to: _palettes[widget.mood]!,
+            from: (AppTheme.isLight ? _lightPalettes : _palettes)[_from]!,
+            to: (AppTheme.isLight ? _lightPalettes : _palettes)[widget.mood]!,
+            light: AppTheme.isLight,
             fromIntensity: _intensities[_from]!,
             toIntensity: _intensities[widget.mood]!,
             overlay: widget.overlay,
@@ -132,6 +140,7 @@ class _AuroraPainter extends CustomPainter {
     required this.fromIntensity,
     required this.toIntensity,
     required this.overlay,
+    required this.light,
   }) : super(repaint: Listenable.merge([phase, blend]));
 
   final ValueListenable<double> phase;
@@ -141,6 +150,7 @@ class _AuroraPainter extends CustomPainter {
   final double fromIntensity;
   final double toIntensity;
   final bool overlay;
+  final bool light;
 
   // Centro (en fracciones de la pantalla), radio y desfase de cada mancha.
   static const _blobs = [
@@ -156,7 +166,8 @@ class _AuroraPainter extends CustomPainter {
     if (!overlay) canvas.drawRect(rect, Paint()..color = AppTheme.ink);
     final p = phase.value;
     final b = Curves.easeInOut.transform(blend.value);
-    final intensity = fromIntensity + (toIntensity - fromIntensity) * b;
+    // En claro la luz no se suma (quemaria a blanco): se pinta encima, un poco mas suave.
+    final intensity = (fromIntensity + (toIntensity - fromIntensity) * b) * (light ? 0.85 : 1);
     final unit = size.shortestSide;
 
     for (int i = 0; i < _blobs.length; i++) {
@@ -168,7 +179,7 @@ class _AuroraPainter extends CustomPainter {
       );
       final radius = unit * blob.r * (1 + 0.12 * math.sin(p * 1.1 + blob.o * 0.7));
       final paint = Paint()
-        ..blendMode = BlendMode.plus
+        ..blendMode = light ? BlendMode.srcOver : BlendMode.plus
         ..shader = RadialGradient(
           colors: [
             color.withValues(alpha: intensity),
@@ -180,7 +191,7 @@ class _AuroraPainter extends CustomPainter {
       canvas.drawRect(rect, paint);
     }
 
-    if (!overlay) {
+    if (!overlay && !light) {
       // Viñeta: bordes mas oscuros para que el texto y el iris destaquen.
       final vignette = Paint()
         ..shader = RadialGradient(
@@ -193,7 +204,11 @@ class _AuroraPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(_AuroraPainter old) =>
-      old.from != from || old.to != to || old.overlay != overlay || old.toIntensity != toIntensity;
+      old.from != from ||
+      old.to != to ||
+      old.overlay != overlay ||
+      old.light != light ||
+      old.toIntensity != toIntensity;
 }
 
 /// Fondo de la pantalla principal: la imagen (camara del celular o foto de la placa) si la hay,
@@ -212,7 +227,7 @@ class IrisBackdrop extends StatelessWidget {
     return Stack(
       fit: StackFit.expand,
       children: [
-        const ColoredBox(color: AppTheme.ink),
+        ColoredBox(color: AppTheme.ink),
         image,
         IgnorePointer(
           child: AnimatedOpacity(

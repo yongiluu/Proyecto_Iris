@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../../../core/theme/app_theme.dart';
 import '../widgets/iris_logo.dart';
 import '../widgets/mode_action_button.dart';
 
@@ -32,7 +33,7 @@ class LiveModePage extends StatelessWidget {
         semanticHint: isOn ? 'Toca dos veces para pausar' : 'Toca dos veces para que Iris describa sola lo que ve',
         toggled: isOn,
         active: isOn,
-        activeColor: const Color(0xFF5EF2B0),
+        activeColor: AppTheme.success,
         irisState: isOn ? IrisState.speaking : IrisState.idle,
         onTap: onToggle,
       ),

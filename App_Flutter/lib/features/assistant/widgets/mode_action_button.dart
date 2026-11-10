@@ -25,7 +25,7 @@ class ModeActionButton extends StatelessWidget {
     this.onSemanticTap,
     this.enabled = true,
     this.active = false,
-    this.activeColor = AppTheme.listeningRed,
+    this.activeColor,
     this.irisState,
     this.scale = 1,
     this.size,
@@ -43,7 +43,7 @@ class ModeActionButton extends StatelessWidget {
 
   /// Escuchando / encendido: se pinta con [activeColor].
   final bool active;
-  final Color activeColor;
+  final Color? activeColor;
 
   /// Como se mueve el iris. Si es null: ola mientras esta [active], reposo si no.
   final IrisState? irisState;
@@ -61,7 +61,7 @@ class ModeActionButton extends StatelessWidget {
   Widget build(BuildContext context) {
     final reduceMotion = MediaQuery.maybeDisableAnimationsOf(context) ?? false;
     final usable = enabled || active;
-    final Color color = active ? activeColor : (enabled ? AppTheme.accentCyan : AppTheme.textFaint);
+    final Color color = active ? (activeColor ?? AppTheme.listeningRed) : (enabled ? AppTheme.accentCyan : AppTheme.textFaint);
     final state = irisState ?? (active ? IrisState.speaking : IrisState.idle);
     final semanticTap = onSemanticTap ?? onTap;
     final size = this.size ?? (MediaQuery.sizeOf(context).width * 0.50).clamp(132.0, 208.0);
@@ -83,7 +83,7 @@ class ModeActionButton extends StatelessWidget {
               color: color.withValues(alpha: active ? 0.30 : 0.14),
               border: Border.all(color: color.withValues(alpha: usable ? 0.75 : 0.35), width: 1.2),
             ),
-            child: Icon(icon, color: usable ? AppTheme.textOnDark : AppTheme.textFaint, size: pupil * 0.56),
+            child: Icon(icon, color: usable ? AppTheme.text : AppTheme.textFaint, size: pupil * 0.56),
           ),
         ],
       ),
@@ -152,12 +152,12 @@ class ModePage extends StatelessWidget {
                 child: Text(
                   caption,
                   textAlign: TextAlign.center,
-                  style: const TextStyle(
-                    color: AppTheme.textOnDarkMuted,
+                  style: TextStyle(
+                    color: AppTheme.textMuted,
                     fontSize: 15,
                     fontWeight: FontWeight.w500,
                     height: 1.25,
-                    shadows: [Shadow(color: Colors.black87, blurRadius: 8)],
+                    shadows: [Shadow(color: AppTheme.textHalo, blurRadius: 8)],
                   ),
                 ),
               ),
@@ -198,12 +198,12 @@ class ModeChipButton extends StatelessWidget {
           style: OutlinedButton.styleFrom(
             minimumSize: const Size(48, 48),
             padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
-            backgroundColor: highlighted ? AppTheme.accentCyan.withValues(alpha: 0.22) : AppTheme.cardDark,
-            foregroundColor: AppTheme.textOnDark,
+            backgroundColor: highlighted ? AppTheme.accentCyan.withValues(alpha: 0.22) : AppTheme.card,
+            foregroundColor: AppTheme.text,
             side: BorderSide(color: highlighted ? AppTheme.accentCyan : AppTheme.glassBorder),
             shape: const StadiumBorder(),
           ),
-          icon: Icon(icon, size: 20, color: highlighted ? AppTheme.brightCyan : AppTheme.textOnDarkMuted),
+          icon: Icon(icon, size: 20, color: highlighted ? AppTheme.brightCyan : AppTheme.textMuted),
           label: Text(label, style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600)),
         ),
       ),

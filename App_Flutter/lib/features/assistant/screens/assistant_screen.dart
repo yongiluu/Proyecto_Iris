@@ -383,7 +383,7 @@ class _AssistantScreenState extends State<AssistantScreen>
     unawaited(_esp32SpeechService.refreshBoards());
     await showModalBottomSheet<void>(
       context: context,
-      backgroundColor: const Color(0xFF0B1116),
+      backgroundColor: AppTheme.inkRaised,
       isScrollControlled: true,
       builder: (context) => BoardPicker(service: _esp32SpeechService),
     );
@@ -1316,7 +1316,7 @@ class _AssistantScreenState extends State<AssistantScreen>
     if (!mounted) return;
     await showModalBottomSheet<void>(
       context: context,
-      backgroundColor: const Color(0xFF0B1116),
+      backgroundColor: AppTheme.inkRaised,
       isScrollControlled: true,
       showDragHandle: true,
       builder: (context) => PeopleListSheet(
@@ -1489,6 +1489,20 @@ class _AssistantScreenState extends State<AssistantScreen>
     );
   }
 
+  /// Apariencia clara u oscura: se aplica al instante a toda la app y se recuerda.
+  Future<void> _setLightAppearance(bool light) async {
+    AppTheme.setBrightness(light ? Brightness.light : Brightness.dark);
+    SystemChrome.setSystemUIOverlayStyle(SystemUiOverlayStyle(
+      statusBarColor: Colors.transparent,
+      statusBarIconBrightness: light ? Brightness.dark : Brightness.light,
+      systemNavigationBarColor: Colors.transparent,
+    ));
+    if (mounted) setState(() {});
+    try {
+      (await SharedPreferences.getInstance()).setBool(AppTheme.prefLightAppearance, light);
+    } catch (_) {}
+  }
+
   /// Configuracion: pantalla completa (sube desde abajo) con la misma aurora de fondo.
   Future<void> _openSettings() async {
     if (_settingsOpen) return;
@@ -1501,6 +1515,8 @@ class _AssistantScreenState extends State<AssistantScreen>
         child: ValueListenableBuilder<int>(
           valueListenable: _revision,
           builder: (_, _, _) => SettingsSheet(
+            lightAppearance: AppTheme.isLight,
+            onLightAppearanceChanged: _setLightAppearance,
             autoDetect: _autoHardware,
             onAutoDetectChanged: _setAutoHardware,
             hardwareMode: _hardwareMode,

@@ -17,8 +17,8 @@ class ShimmerText extends StatefulWidget {
     required this.active,
     this.style,
     this.textAlign = TextAlign.start,
-    this.baseColor = AppTheme.textOnDarkMuted,
-    this.highlightColor = AppTheme.brightCyan,
+    this.baseColor,
+    this.highlightColor,
     this.period = const Duration(milliseconds: 1600),
   });
 
@@ -26,8 +26,8 @@ class ShimmerText extends StatefulWidget {
   final bool active;
   final TextStyle? style;
   final TextAlign textAlign;
-  final Color baseColor;
-  final Color highlightColor;
+  final Color? baseColor;
+  final Color? highlightColor;
   final Duration period;
 
   @override
@@ -92,7 +92,11 @@ class _ShimmerTextState extends State<ShimmerText> with SingleTickerProviderStat
           return ShaderMask(
             blendMode: BlendMode.srcIn,
             shaderCallback: (bounds) => LinearGradient(
-              colors: [widget.baseColor, widget.highlightColor, widget.baseColor],
+              colors: [
+                widget.baseColor ?? AppTheme.textMuted,
+                widget.highlightColor ?? AppTheme.brightCyan,
+                widget.baseColor ?? AppTheme.textMuted,
+              ],
               stops: const [0.35, 0.5, 0.65],
               // El brillo entra por la izquierda y sale por la derecha.
               transform: _SlideGradient(_controller.value * 2 - 1),

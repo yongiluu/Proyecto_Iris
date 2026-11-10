@@ -126,7 +126,7 @@ class StreamingAnswerState extends State<StreamingAnswer> {
       spans.add(TextSpan(
         text: fresh[i],
         style: TextStyle(
-          color: Color.lerp(AppTheme.textOnDark, AppTheme.brightCyan, heat),
+          color: Color.lerp(AppTheme.text, AppTheme.brightCyan, heat),
           shadows: [Shadow(color: AppTheme.accentCyan.withValues(alpha: 0.85 * heat), blurRadius: 4 + 12 * heat)],
         ),
       ));
@@ -145,14 +145,14 @@ class StreamingAnswerState extends State<StreamingAnswer> {
     final settled = spoken.substring(0, tailStart);
     final fresh = spoken.substring(tailStart);
 
-    const bodyStyle = TextStyle(color: AppTheme.textOnDark, fontSize: 19, height: 1.45, letterSpacing: 0.1);
+    final bodyStyle = TextStyle(color: AppTheme.text, fontSize: 19, height: 1.45, letterSpacing: 0.1);
 
     return Semantics(
       container: true,
       label: '${widget.title}: $text',
       child: ExcludeSemantics(
         child: GlassCard(
-          tint: AppTheme.cardDark,
+          tint: AppTheme.card,
           borderColor: streaming ? AppTheme.accentCyan.withValues(alpha: 0.55) : AppTheme.glassBorder,
           padding: const EdgeInsets.fromLTRB(18, 6, 6, 10),
           child: Column(
@@ -197,7 +197,7 @@ class StreamingAnswerState extends State<StreamingAnswer> {
                   child: RawScrollbar(
                     controller: _scroll,
                     thumbVisibility: true,
-                    thumbColor: Colors.white30,
+                    thumbColor: AppTheme.textFaint.withValues(alpha: 0.5),
                     radius: const Radius.circular(2),
                     thickness: 3,
                     child: SingleChildScrollView(

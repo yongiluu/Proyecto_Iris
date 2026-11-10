@@ -74,11 +74,11 @@ class _LoginScreenState extends State<LoginScreen> {
                         ),
                       ),
                       const SizedBox(height: 28),
-                      const Text(
+                      Text(
                         'Inicia sesión para que Iris recuerde tus conversaciones, guarde tus preferencias '
                         'y puedas vincular a un familiar o acompañante.',
                         textAlign: TextAlign.center,
-                        style: TextStyle(color: AppTheme.textOnDarkMuted, fontSize: 17, height: 1.45),
+                        style: TextStyle(color: AppTheme.textMuted, fontSize: 17, height: 1.45),
                       ),
                       const SizedBox(height: 32),
                       ConstrainedBox(
@@ -86,10 +86,10 @@ class _LoginScreenState extends State<LoginScreen> {
                         child: FilledButton(
                           onPressed: _busy ? null : _signIn,
                           style: FilledButton.styleFrom(
-                            backgroundColor: AppTheme.textOnDark,
+                            backgroundColor: AppTheme.text,
                             foregroundColor: AppTheme.ink,
-                            disabledBackgroundColor: Colors.white24,
-                            disabledForegroundColor: AppTheme.textOnDark,
+                            disabledBackgroundColor: AppTheme.subtleFill,
+                            disabledForegroundColor: AppTheme.text,
                             padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
                           ),
                           child: Row(
@@ -119,12 +119,12 @@ class _LoginScreenState extends State<LoginScreen> {
                           child: Text(
                             _error!,
                             textAlign: TextAlign.center,
-                            style: const TextStyle(color: AppTheme.dangerRed, fontSize: 16, fontWeight: FontWeight.w600),
+                            style: TextStyle(color: AppTheme.dangerRed, fontSize: 16, fontWeight: FontWeight.w600),
                           ),
                         ),
                       ],
                       const SizedBox(height: 28),
-                      const Text(
+                      Text(
                         'Usamos tu cuenta de Google solo para identificarte. Tus conversaciones son privadas: '
                         'solo tú puedes verlas y borrarlas.',
                         textAlign: TextAlign.center,
