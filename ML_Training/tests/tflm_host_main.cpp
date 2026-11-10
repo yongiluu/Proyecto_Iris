@@ -1,6 +1,8 @@
 // Corre un modelo .tflite int8 con la libreria TFLM del firmware (lib/TensorFlowLite_ESP32), en el PC.
 // Uso: tflm_host modelo.tflite entradas.bin salidas.bin
 // entradas.bin = N ejemplos int8 seguidos (tamano del tensor de entrada); salidas.bin = N salidas int8.
+// Con varias salidas (modelo de escenas) escribe todas seguidas, en el orden de las salidas del modelo.
+// TFLM_ARENA_KB cambia el tamano del arena (512 KB por defecto).
 #include <cstdio>
 #include <cstdlib>
 #include <vector>
@@ -47,7 +49,8 @@ int main(int argc, char** argv) {
   const tflite::Model* model = tflite::GetModel(modelBytes.data());
   static tflite::MicroErrorReporter reporter;
   static tflite::AllOpsResolver resolver;
-  static std::vector<uint8_t> arena(512 * 1024);
+  const char* arenaKb = std::getenv("TFLM_ARENA_KB");
+  static std::vector<uint8_t> arena((arenaKb ? std::atoi(arenaKb) : 512) * 1024);
   static TraceProfiler tracer;
   const bool trace = std::getenv("TFLM_TRACE") != nullptr;
   tflite::MicroInterpreter interpreter(model, resolver, arena.data(), arena.size(), &reporter, nullptr,
@@ -56,14 +59,15 @@ int main(int argc, char** argv) {
   if (interpreter.AllocateTensors() != kTfLiteOk) { std::fprintf(stderr, "AllocateTensors fallo\n"); return 1; }
 
   TfLiteTensor* input = interpreter.input(0);
-  TfLiteTensor* output = interpreter.output(0);
   std::fprintf(stderr, "[3] tensores listos, entrada %zu bytes\n", input->bytes);
   const size_t count = inputs.size() / input->bytes;
   FILE* out = std::fopen(argv[3], "wb");
   for (size_t i = 0; i < count; i++) {
     std::copy(inputs.begin() + i * input->bytes, inputs.begin() + (i + 1) * input->bytes, input->data.int8);
     if (interpreter.Invoke() != kTfLiteOk) { std::fprintf(stderr, "Invoke fallo\n"); return 1; }
-    std::fwrite(output->data.int8, 1, output->bytes, out);
+    for (size_t k = 0; k < interpreter.outputs_size(); k++) {
+      std::fwrite(interpreter.output(k)->data.int8, 1, interpreter.output(k)->bytes, out);
+    }
   }
   std::fclose(out);
   std::printf("%zu ejemplos, arena usada %zu bytes\n", count, interpreter.arena_used_bytes());
