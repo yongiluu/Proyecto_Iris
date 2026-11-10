@@ -280,6 +280,7 @@ void enterOtaMode(const char* reason) {
   Serial.printf("[OTA] Modo actualizacion por WiFi (%s)\n", reason);
   if (isTransmitting) stopPushToTalk();
   collectingAudio = false;
+  requestLightMeter(false);
   setVisionPaused(true);
   setAudioEventsPaused(true);
   shutdownCamera();
@@ -291,7 +292,7 @@ void enterOtaMode(const char* reason) {
     // Bluetooth apagado mientras se escribe la flash: con BLE activo algunas subidas se cortaban a la
     // mitad ("Connection was reset"). Al terminar (o a los 10 min) la placa se reinicia y vuelve.
     delay(300);
-    NimBLEDevice::deinit(true);
+    bleManager.shutdown();
   } else {
     bleManager.sendCommand("CMD_OTA_ERROR");
     playTone(330.0f, 600);

@@ -135,10 +135,25 @@ bool BleManager::notifyInChunks(NimBLECharacteristic* characteristic, const uint
         size_t chunk = length - offset;
         if (chunk > maxPayload) chunk = maxPayload;
         if (waitForBuffers && !waitForBleBuffers(deviceConnected)) return false;
+        if (!deviceConnected) return false;  // se desconecto o se apago el BLE a mitad del envio
         characteristic->notify(data + offset, chunk);
         offset += chunk;
     }
     return true;
+}
+
+void BleManager::shutdown() {
+    // NimBLEDevice::deinit(true) borra el servidor y sus caracteristicas: los punteros de aqui quedarian
+    // colgando y deviceConnected en true (el aviso de desconexion ya no llega). Primero se corta el paso
+    // a las demas tareas y se les da tiempo de terminar un envio en curso.
+    deviceConnected = false;
+    delay(100);
+    pTxCharacteristic = nullptr;
+    pRxCharacteristic = nullptr;
+    pCmdCharacteristic = nullptr;
+    pPhotoCharacteristic = nullptr;
+    pServer = nullptr;
+    NimBLEDevice::deinit(true);
 }
 
 bool BleManager::sendAudioChunk(const uint8_t* data, size_t length) {

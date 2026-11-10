@@ -29,6 +29,10 @@ public:
     // (el loop dejaria de leer el microfono y se perderian pedazos de la voz).
     bool canSendNow() const;
 
+    // Apaga el Bluetooth (modo actualizacion por WiFi). Desde aqui send*() devuelve false: las otras
+    // tareas (vision, detector de luz, fotos) pueden seguir llamandolas sin tocar memoria ya liberada.
+    void shutdown();
+
 private:
     bool notifyInChunks(NimBLECharacteristic* characteristic, const uint8_t* data, size_t length,
                         bool waitForBuffers = false);
