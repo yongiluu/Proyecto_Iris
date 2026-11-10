@@ -42,6 +42,15 @@ enum IrisIntentType {
   /// "Callate", "silencio", "para" (corta la voz y lo que este haciendo)
   stop,
 
+  /// "Describe en vivo", "avisame lo que veas": la placa describe sola cada cambio
+  liveOn,
+
+  /// "Deja de describir", "apaga el modo en vivo"
+  liveOff,
+
+  /// "Mas detalle", "describe en detalle": va a la nube (la placa ya dio la version rapida)
+  moreDetail,
+
   /// Cualquier otra cosa: va al agente.
   none,
 }
@@ -62,6 +71,23 @@ class IrisIntent {
 
 class VoiceIntents {
   VoiceIntents._();
+
+  static final RegExp _liveOff = RegExp(
+    r'^((apaga|desactiva|para|deten|termina|quita)( el)? (modo )?(en )?vivo|deja de (describir|avisar|avisarme)|'
+    r'ya no (describas|me avises)|para de describir)( por favor| porfa| iris)*$',
+  );
+
+  static final RegExp _liveOn = RegExp(
+    r'^((activa|prende|enciende|pon|inicia|empieza)( el)? (modo )?(en )?vivo|modo en vivo|'
+    r'describe (en vivo|todo el tiempo|mientras camino|lo que vayas viendo)|'
+    r'avisame (lo que (veas|vaya apareciendo|aparezca)|si (ves|aparece) algo)|'
+    r've (diciendome|describiendome|describiendo) lo que (ves|hay))( por favor| porfa| iris)*$',
+  );
+
+  static final RegExp _moreDetail = RegExp(
+    r'(mas detalle|con detalle|en detalle|mas detallado|detalladamente|describe(lo)? mejor|'
+    r'explicame mejor (que|lo que) (hay|ves))',
+  );
 
   static final RegExp _readText = RegExp(
     r'(que dice|que es lo que dice|que pone|que esta escrito|que hay escrito|'
@@ -150,6 +176,9 @@ class VoiceIntents {
       final name = _cleanName(forget.namedGroup('name'));
       if (name != null) return IrisIntent(IrisIntentType.forgetPerson, name: name);
     }
+    if (_liveOff.hasMatch(text)) return const IrisIntent(IrisIntentType.liveOff);
+    if (_liveOn.hasMatch(text)) return const IrisIntent(IrisIntentType.liveOn);
+    if (_moreDetail.hasMatch(text)) return const IrisIntent(IrisIntentType.moreDetail);
     // "Apaga la luz" antes que "luz": si no, prenderia el detector.
     if (_lightOff.hasMatch(text)) return const IrisIntent(IrisIntentType.lightOff);
     if (_lightOn.hasMatch(text)) return const IrisIntent(IrisIntentType.lightOn);
@@ -187,8 +216,9 @@ class VoiceIntents {
 class LocalAnswers {
   LocalAnswers._();
 
-  static const String help = 'Puedes decirme: que hay adelante, que dice aqui para leer un letrero, '
-      'busca la luz, quien esta aqui, o recuerda a y un nombre para guardar a una persona. '
+  static const String help = 'Puedes decirme: que hay adelante, y si quieres, mas detalle. '
+      'Describe en vivo, para que te avise lo que vaya apareciendo, y deja de describir. '
+      'Que dice aqui para leer un letrero, busca la luz, quien esta aqui, o recuerda a y un nombre. '
       'Tambien: repite, que hora es, habla mas lento o mas rapido, y callate. '
       'Y puedes preguntarme lo que quieras, como el clima o donde estas.';
 

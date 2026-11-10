@@ -16,6 +16,7 @@
 #include "image_convert.h"
 #include "model_store.h"
 #include "scene_describe.h"
+#include "scene_live.h"
 #include "scene_vocab.h"
 #include "tflm_arena.h"
 
@@ -29,6 +30,15 @@ constexpr size_t kMaxSentenceBytes = 400;  // cabe en una notificacion BLE (MTU 
 
 TaskHandle_t sceneTask = nullptr;
 SceneResultCallback onResult = nullptr;
+SceneResultCallback onLive = nullptr;
+
+// Modo en vivo: la tarea mira cada kLivePeriodMs y avisa solo los cambios (scene_live.h).
+constexpr uint32_t kLivePeriodMs = 1500;
+constexpr uint32_t kNotifyDescribe = 1u << 0;  // la app pidio una descripcion (CMD_DESCRIBE)
+constexpr uint32_t kNotifyWake = 1u << 1;      // se prendio o apago el modo en vivo
+volatile bool liveOn = false;
+volatile bool liveReset = false;
+SceneLiveState liveState;
 tflite::MicroInterpreter* interpreter = nullptr;
 bool hazardsTrained = false;
 uint8_t* rgb = nullptr;  // 160x120x3 en PSRAM
@@ -114,13 +124,15 @@ bool setupModel() {
   return true;
 }
 
-void describe(char* sentence) {
+// Corre el modelo sobre el cuadro actual. Pedido normal (live=false): siempre escribe la frase (vacia si
+// fallo) y devuelve true. En vivo: devuelve true solo si la escena cambio y hay que avisarla.
+bool describe(char* sentence, bool live) {
   sentence[0] = '\0';
   const uint32_t started = millis();
   camera_fb_t* frame = acquireColorFrame();
   if (frame == nullptr) {
     Serial.println("[Escena] No se pudo sacar la foto");
-    return;
+    return !live;
   }
   const bool ok = frame->format == PIXFORMAT_RGB565 && frame->width == kInputWidth &&
                   frame->height == kInputHeight && frame->len >= (size_t)kInputWidth * kInputHeight * 2;
@@ -128,7 +140,7 @@ void describe(char* sentence) {
   releaseColorFrame(frame);
   if (!ok) {
     Serial.println("[Escena] El frame no es 160x120 a color");
-    return;
+    return !live;
   }
 
   TfLiteTensor* input = interpreter->input(0);
@@ -140,7 +152,7 @@ void describe(char* sentence) {
   }
   if (interpreter->Invoke() != kTfLiteOk) {
     Serial.println("[Escena] Invoke fallo");
-    return;
+    return !live;
   }
   for (int h = 0; h < kNumHeads; h++) {
     const TfLiteTensor* out = interpreter->output(headOutput[h]);
@@ -151,26 +163,42 @@ void describe(char* sentence) {
   ScenePrediction prediction{headValues[kPresence], headValues[kPosition], headValues[kDistance],
                              headValues[kColor],    headValues[kHazards],  headValues[kPeople],
                              headValues[kPlace],    headValues[kQuality],  hazardsTrained};
+  if (live) {
+    if (liveReset) {
+      liveState = SceneLiveState();
+      liveReset = false;
+    }
+    if (!sceneLiveUpdate(&liveState, prediction, millis())) return false;
+  }
   describeScene(prediction, sentence, kMaxSentenceBytes);
-  Serial.printf("[Escena] %u ms: %s\n", (unsigned)(millis() - started), sentence);
+  Serial.printf("[Escena]%s %u ms: %s\n", live ? " (en vivo)" : "", (unsigned)(millis() - started), sentence);
+  return true;
 }
 
 void sceneLoop(void*) {
   static char sentence[kMaxSentenceBytes];
   for (;;) {
-    ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
-    if (modelStoreWriting()) {
-      sentence[0] = '\0';  // se estan subiendo modelos nuevos: no tocar la particion
-    } else {
-      describe(sentence);
+    uint32_t bits = 0;
+    xTaskNotifyWait(0, UINT32_MAX, &bits, liveOn ? pdMS_TO_TICKS(kLivePeriodMs) : portMAX_DELAY);
+    const bool requested = (bits & kNotifyDescribe) != 0;
+    if (modelStoreWriting()) {  // se estan subiendo modelos nuevos: no tocar la particion
+      sentence[0] = '\0';
+      if (requested && onResult) onResult(sentence);
+      continue;
     }
-    if (onResult) onResult(sentence);
+    if (requested) {
+      describe(sentence, false);
+      if (onResult) onResult(sentence);
+    } else if (liveOn && bits == 0) {  // vencio la espera: toca mirar
+      if (describe(sentence, true) && onLive) onLive(sentence);
+    }
   }
 }
 }  // namespace
 
-bool startSceneTask(SceneResultCallback callback) {
+bool startSceneTask(SceneResultCallback callback, SceneResultCallback liveCallback) {
   onResult = callback;
+  onLive = liveCallback;
   rgb = (uint8_t*)heap_caps_malloc((size_t)kInputWidth * kInputHeight * 3, MALLOC_CAP_SPIRAM);
   if (rgb == nullptr || !setupModel()) return false;
   // Nucleo 0, prioridad baja: tarda ~1 s y no debe cortar el audio ni el Bluetooth.
@@ -178,5 +206,17 @@ bool startSceneTask(SceneResultCallback callback) {
 }
 
 void requestDescribeScene() {
-  if (sceneTask != nullptr) xTaskNotifyGive(sceneTask);
+  if (sceneTask != nullptr) xTaskNotify(sceneTask, kNotifyDescribe, eSetBits);
+}
+
+bool setSceneLive(bool on) {
+  if (sceneTask == nullptr) return false;
+  if (on && !liveOn) liveReset = true;  // empezar de cero: lo que se ve al prender se avisa
+  liveOn = on;
+  xTaskNotify(sceneTask, kNotifyWake, eSetBits);
+  return true;
+}
+
+bool sceneLiveActive() {
+  return liveOn;
 }

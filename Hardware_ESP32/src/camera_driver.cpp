@@ -133,7 +133,19 @@ bool initCamera() {
   if (cameraMutex == nullptr) return false;
 
   cameraReady = startCamera(CameraMode::Color);
+  if (cameraReady) Serial.printf("[Camara] Sensor %s\n", cameraSensorName());
   return cameraReady;
+}
+
+const char* cameraSensorName() {
+  sensor_t* sensor = esp_camera_sensor_get();
+  if (sensor == nullptr) return "?";
+  switch (sensor->id.PID) {
+    case OV2640_PID: return "OV2640";
+    case OV3660_PID: return "OV3660";
+    case OV5640_PID: return "OV5640";
+    default: return "otra";
+  }
 }
 
 camera_fb_t* acquireColorFrame() {

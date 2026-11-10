@@ -7,7 +7,7 @@ o doble toque en el botón de subir volumen del celular, y después la pregunta 
 
 | Modo | Botón grande | Por voz |
 |---|---|---|
-| Iris | Mantener para hablar | Cualquier pregunta: "¿qué hay adelante?", "¿qué tiempo hace?" |
+| Iris | Mantener para hablar | "¿Qué hay adelante?" (contesta la placa al instante, sin internet; "más detalle" pregunta a la nube), "describe en vivo" / "deja de describir", y cualquier pregunta: "¿qué tiempo hace?" |
 | Leer | Tocar para leer | "¿Qué dice aquí?", "léeme esto" |
 | Luz | Prender / apagar | "Busca la luz", "apaga el detector de luz" |
 | Personas | ¿Quién está? | "¿Quién está aquí?", "recuerda a Raúl", "olvida a Raúl" |

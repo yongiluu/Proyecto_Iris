@@ -8,6 +8,9 @@
 // un mutex: siempre se debe llamar a release*() despues de un acquire*() que devolvio un frame.
 bool initCamera();
 
+// Modelo del sensor ("OV2640", "OV3660"...). La XIAO Sense trae OV2640 u OV3660 segun el lote.
+const char* cameraSensorName();
+
 // Frame a color RGB565 (2 bytes por pixel, byte alto primero). nullptr si la camara esta ocupada o fallo.
 camera_fb_t* acquireColorFrame();
 void releaseColorFrame(camera_fb_t* frame);

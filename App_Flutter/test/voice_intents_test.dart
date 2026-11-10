@@ -45,6 +45,18 @@ void main() {
       expectIntent('olvida a Raúl', IrisIntentType.forgetPerson, 'Raul');
     });
 
+    test('en vivo y mas detalle', () {
+      expectIntent('Describe en vivo', IrisIntentType.liveOn);
+      expectIntent('activa el modo en vivo', IrisIntentType.liveOn);
+      expectIntent('avísame lo que veas', IrisIntentType.liveOn);
+      expectIntent('ve diciéndome lo que hay', IrisIntentType.liveOn);
+      expectIntent('apaga el modo en vivo', IrisIntentType.liveOff);
+      expectIntent('ya no me avises', IrisIntentType.liveOff);
+      expectIntent('Más detalle', IrisIntentType.moreDetail);
+      expectIntent('describe en detalle lo que hay adelante', IrisIntentType.moreDetail);
+      expectIntent('¿qué hay adelante?', IrisIntentType.none); // lo contesta la placa (o la nube)
+    });
+
     test('comandos rapidos', () {
       expectIntent('Repite', IrisIntentType.repeat);
       expectIntent('¿Qué dijiste?', IrisIntentType.repeat);

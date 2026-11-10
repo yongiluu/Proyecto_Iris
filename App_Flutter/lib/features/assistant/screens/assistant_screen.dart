@@ -183,6 +183,13 @@ class _AssistantScreenState extends State<AssistantScreen>
           // El detector de luz de la placa se apago con ella.
           _esp32SpeechService.lightMeterOn.value = false;
           _esp32SpeechService.lightLevel.value = null;
+          // Y su modo en vivo tambien (la placa lo apaga al perder la conexion).
+          if (_continuousOnBoard && mounted) {
+            setState(() {
+              _continuousOnBoard = false;
+              _continuousMode = false;
+            });
+          }
         }
         if (mounted && _hardwareMode == HardwareMode.esp32) {
           setState(() {
@@ -198,6 +205,7 @@ class _AssistantScreenState extends State<AssistantScreen>
 
       _esp32SpeechService.onAudioEvent = _onAudioEvent;
       _esp32SpeechService.onTextRead = _onTextRead;
+      _esp32SpeechService.onSceneLive = _onSceneLive;
       _esp32SpeechService.onVisionEvent = _onVisionEvent;
       _esp32SpeechService.onAudioContext = _sensorContext.onAudioContext;
       _esp32SpeechService.onVisionContext = _sensorContext.onVisionContext;
@@ -545,7 +553,27 @@ class _AssistantScreenState extends State<AssistantScreen>
   }
 
   // ─── Continuous Mode ───
+  /// La placa puede describir sola lo que cambia (modo en vivo, sin internet).
+  bool get _boardLiveAvailable => _moduleConnected && _esp32SpeechService.boardHas('vivo') == true;
+  bool _continuousOnBoard = false;
+
   void _toggleContinuousMode(bool value) async {
+    // Con la placa: ella mira cada 1,5 s y avisa solo los cambios. Instantaneo y sin internet.
+    if (_boardLiveAvailable || (_continuousOnBoard && !value)) {
+      _continuousTimer?.cancel();
+      final ok = await _esp32SpeechService.setSceneLive(value);
+      if (!mounted) return;
+      setState(() {
+        _continuousMode = value && ok;
+        _continuousOnBoard = value && ok;
+      });
+      await _ttsService.speakStatus(
+          value
+              ? (ok ? 'Modo en vivo. Te aviso lo que vaya apareciendo adelante.' : 'La placa no pudo prender el modo en vivo')
+              : 'Modo en vivo apagado',
+          esp32Service: _activeEsp32);
+      return;
+    }
     setState(() {
       _continuousMode = value;
     });
@@ -687,7 +715,42 @@ class _AssistantScreenState extends State<AssistantScreen>
       return;
     }
 
+    if (OccipitalAgentService.wantsVision(prompt) && await _answerFromBoard()) {
+      if (_continuousMode && !_continuousOnBoard && _consecutiveCount < 2) _startContinuousMode();
+      return;
+    }
+
+    await _askAgent(prompt);
+
+    if (_continuousMode && !_continuousOnBoard && _consecutiveCount < 2) {
+      _startContinuousMode();
+    }
+  }
+
+  /// "¿Que hay adelante?" lo contesta la PLACA, al instante y sin internet. false si no pudo
+  /// (sin placa, sin modelo o no respondio): entonces pregunta la nube.
+  Future<bool> _answerFromBoard() async {
+    if (!_moduleConnected || _esp32SpeechService.boardHas('escena') != true) return false;
+    _stopThinking();
+    if (mounted) setState(() => _statusText = 'La placa esta mirando...');
+    final local = await _esp32SpeechService.describeSceneOnBoard();
+    if (!mounted || local == null || local.isEmpty) return false;
+    _resetState(null);
+    var sentence = local;
+    if (!_detailHintGiven) {
+      _detailHintGiven = true;
+      sentence += ' Si quieres mas detalle, dime: mas detalle.';
+    }
+    await _showResult(sentence, status: 'Lo que ve la placa', title: 'Lo que ve la placa');
+    return true;
+  }
+
+  bool _detailHintGiven = false;
+
+  /// Pregunta al agente en la nube (con foto si hace falta) y dice la respuesta.
+  Future<void> _askAgent(String prompt) async {
     setState(() {
+      _isProcessing = true;
       _statusText = 'Analizando con Occipital...';
     });
     await _playQuerySentCue();
@@ -727,10 +790,6 @@ class _AssistantScreenState extends State<AssistantScreen>
       _resetState('Error de servicio AI.');
       await _ttsService.speak('Hubo un error, por favor intenta de nuevo.', esp32Service: _activeEsp32);
     }
-
-    if (_continuousMode && _consecutiveCount < 2) {
-      _startContinuousMode();
-    }
   }
 
   /// Si la nube no respondio a una pregunta de vision (sin internet, servidor caido), la placa describe
@@ -744,6 +803,15 @@ class _AssistantScreenState extends State<AssistantScreen>
     final local = await _esp32SpeechService.describeSceneOnBoard();
     if (local == null || local.isEmpty) return cloudReply;
     return 'Sin internet. Lo que ve la placa: $local';
+  }
+
+  /// Modo en vivo: la placa vio un cambio. No interrumpe a la persona ni a Iris: si estan hablando,
+  /// se salta (el proximo cambio llega en segundos).
+  Future<void> _onSceneLive(String sentence) async {
+    if (!mounted || !_continuousOnBoard) return;
+    if (_isListening || _isProcessing || _isTaskBusy || _ttsService.isSpeaking) return;
+    await _hapticService.vibrateTick();
+    await _showResult(sentence, status: 'En vivo', title: 'En vivo');
   }
 
   void _resetState(String? errorMessage) {
@@ -799,6 +867,14 @@ class _AssistantScreenState extends State<AssistantScreen>
                 ? (slower ? 'Listo, hablo mas lento.' : 'Listo, hablo mas rapido.')
                 : (slower ? 'Ya estoy hablando lo mas lento que puedo.' : 'Ya estoy hablando lo mas rapido que puedo.'),
             esp32Service: _activeEsp32);
+      case IrisIntentType.liveOn:
+        _goToMode(IrisMode.assistant);
+        _toggleContinuousMode(true);
+      case IrisIntentType.liveOff:
+        _toggleContinuousMode(false);
+      case IrisIntentType.moreDetail:
+        _goToMode(IrisMode.assistant);
+        await _askAgent('Describe con detalle lo que hay adelante.');
       case IrisIntentType.stop:
         await _stopEverything();
       case IrisIntentType.none:

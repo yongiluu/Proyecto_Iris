@@ -114,7 +114,7 @@ Cada push corre `.github/workflows/pruebas.yml` en GitHub y comprueba:
 |---|---|---|---|
 | RX | `6E400002-...` | app -> placa | Solo audio TTS (PCM 16-bit mono 16 kHz) |
 | TX | `6E400003-...` | placa -> app | Audio del micrófono (PCM 16-bit mono 16 kHz) |
-| CMD | `6E400004-...` | ambos | `CMD_PTT_START/STOP`, `CMD_TAKE_PHOTO`, `CMD_BEEP_THINKING`, `CMD_PHOTO_START:<n>`, `CMD_PHOTO_END`, `CMD_PHOTO_ERROR`, `CMD_AUDIO_EVENT:<clase>:<%>`, `CMD_LIGHT_ON/OFF` (app → placa), `CMD_LIGHT:ON/OFF/<0-100>` (placa → app), `CMD_READ_TEXT` (app → placa), `CMD_TEXT:<texto>` (placa → app), `CMD_DESCRIBE` (app → placa), `CMD_SCENE:<frase>` (placa → app, descripción sin internet), `CMD_HELLO:<s>:<reinicio>:<RAM>:<volumen>:<funciones>` (placa → app, `funciones` ⊂ `luz,ocr,escena`) |
+| CMD | `6E400004-...` | ambos | `CMD_PTT_START/STOP`, `CMD_TAKE_PHOTO`, `CMD_BEEP_THINKING`, `CMD_PHOTO_START:<n>`, `CMD_PHOTO_END`, `CMD_PHOTO_ERROR`, `CMD_AUDIO_EVENT:<clase>:<%>`, `CMD_LIGHT_ON/OFF` (app → placa), `CMD_LIGHT:ON/OFF/<0-100>` (placa → app), `CMD_READ_TEXT` (app → placa), `CMD_TEXT:<texto>` (placa → app), `CMD_DESCRIBE` (app → placa), `CMD_SCENE:<frase>` (placa → app, descripción sin internet), `CMD_LIVE_ON/OFF` (app → placa), `CMD_LIVE:ON/OFF` y `CMD_SCENE_LIVE:<frase>` (placa → app, modo en vivo: solo cuando la escena cambia), `CMD_HELLO:<s>:<reinicio>:<RAM>:<volumen>:<funciones>:<cámara>` (placa → app, `funciones` ⊂ `luz,ocr,escena,vivo`, `cámara` = `OV2640`/`OV3660`) |
 | PHOTO | `6E400005-...` | placa -> app | Fragmentos de la foto JPEG |
 
 ## Problemas Frecuentes

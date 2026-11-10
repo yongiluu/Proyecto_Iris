@@ -123,6 +123,10 @@ void onCommandReceived(const char* command) {
     requestLightMeter(true);
   } else if (strcmp(command, "CMD_LIGHT_OFF") == 0) {
     requestLightMeter(false);
+  } else if (strcmp(command, "CMD_LIVE_ON") == 0 || strcmp(command, "CMD_LIVE_OFF") == 0) {
+    // Modo en vivo: la placa describe sola cada cambio de la escena (CMD_SCENE_LIVE:<frase>).
+    const bool on = command[9] == 'O' && command[10] == 'N';
+    bleManager.sendCommand(setSceneLive(on) && on ? "CMD_LIVE:ON" : "CMD_LIVE:OFF");
   } else if (strcmp(command, "CMD_DESCRIBE") == 0) {
     if (sceneReady) {
       requestDescribeScene();
@@ -148,6 +152,13 @@ void onAudioEvent(const char* label, int confidencePercent) {
 
 // Se ejecuta en la tarea de vision. Formato: CMD_VISION_EVENT:<clase>:<porcentaje>
 // Se ejecuta en la tarea de escenas. Formato: CMD_SCENE:<frase> (vacia si no pudo).
+// Modo en vivo: la escena cambio. Formato: CMD_SCENE_LIVE:<frase>.
+void onSceneLive(const char* sentence) {
+  static char command[440];
+  snprintf(command, sizeof(command), "CMD_SCENE_LIVE:%s", sentence);
+  bleManager.sendCommand(command);
+}
+
 void onSceneDescribed(const char* sentence) {
   static char command[440];
   snprintf(command, sizeof(command), "CMD_SCENE:%s", sentence);
@@ -376,7 +387,7 @@ void setup() {
   if (!startPhotoTask()) Serial.println("Error al crear la tarea de fotos");
   if (!startVisionTask()) Serial.println("Error al crear la tarea de vision");
   modelStoreBegin();  // modelos fuera del programa (lector de texto...); solo informa lo que hay
-  sceneReady = startSceneTask(onSceneDescribed);
+  sceneReady = startSceneTask(onSceneDescribed, onSceneLive);
   if (!sceneReady) Serial.println("Descripcion de escenas apagada (falta su modelo): la app describe con la nube");
 #ifdef IRIS_OCR
   ocrReady = startOcrTask(onTextRead);
@@ -421,7 +432,7 @@ void loop() {
 
   // Al conectarse la app: cuanto lleva encendida la placa y por que se reinicio la ultima vez (con la
   // caja cerrada no hay monitor serial; asi se distingue un reinicio de una desconexion BLE).
-  // CMD_HELLO:<segundos encendida>:<motivo del ultimo reinicio>:<RAM interna libre>:<volumen>:<funciones>
+  // CMD_HELLO:<segundos encendida>:<motivo del ultimo reinicio>:<RAM interna libre>:<volumen>:<funciones>:<camara>
   // <funciones>: lo que sabe hacer este firmware ("luz,ocr"), para que la app no espere una
   // respuesta que nunca va a llegar (ej. "¿que dice aqui?" a una placa sin el lector).
   static bool wasConnected = false;
@@ -440,13 +451,16 @@ void loop() {
     const int reason = (int)esp_reset_reason();
     // "ocr" solo si el lector arranco de verdad (con sus modelos en la particion).
     char kFeatures[32];
-    snprintf(kFeatures, sizeof(kFeatures), "luz%s%s", ocrReady ? ",ocr" : "", sceneReady ? ",escena" : "");
-    char hello[96];
-    snprintf(hello, sizeof(hello), "CMD_HELLO:%lu:%s:%u:%d:%s", (unsigned long)(millis() / 1000),
+    snprintf(kFeatures, sizeof(kFeatures), "luz%s%s", ocrReady ? ",ocr" : "", sceneReady ? ",escena,vivo" : "");
+    char hello[112];
+    snprintf(hello, sizeof(hello), "CMD_HELLO:%lu:%s:%u:%d:%s:%s", (unsigned long)(millis() / 1000),
              reason >= 0 && reason <= 10 ? kReasons[reason] : "?",
-             (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL), getVolumePercent(), kFeatures);
+             (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL), getVolumePercent(), kFeatures,
+             cameraSensorName());
     bleManager.sendCommand(hello);
   }
+  // Sin app no hay quien escuche: el modo en vivo se apaga al desconectarse.
+  if (!connectedNow && wasConnected && sceneLiveActive()) setSceneLive(false);
   wasConnected = connectedNow;
 
   // Si el telefono se desconecta con el boton apretado, no quedarse "transmitiendo"

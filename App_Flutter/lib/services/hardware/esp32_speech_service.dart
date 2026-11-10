@@ -116,6 +116,19 @@ class Esp32SpeechService {
 
   Completer<String?>? _sceneCompleter;
 
+  /// Modo en vivo de la placa: describe sola cada cambio de la escena (CMD_SCENE_LIVE:<frase>).
+  final ValueNotifier<bool> liveOn = ValueNotifier(false);
+
+  /// Frase de un cambio de escena en modo en vivo.
+  void Function(String sentence)? onSceneLive;
+
+  /// Prende o apaga el modo en vivo. false si la placa no lo tiene.
+  Future<bool> setSceneLive(bool on) async {
+    if (!isConnected || boardHas('vivo') != true) return false;
+    await _sendCommand(on ? 'CMD_LIVE_ON' : 'CMD_LIVE_OFF');
+    return true;
+  }
+
   /// Enciende o apaga el detector de luz de la placa (tono mas agudo con mas luz).
   Future<void> setLightMeter(bool on) => _sendCommand(on ? 'CMD_LIGHT_ON' : 'CMD_LIGHT_OFF');
 
@@ -357,6 +370,7 @@ class Esp32SpeechService {
     if (isConnected && connectedBoardId != id) {
       await _dropConnection();
       boardFeatures.value = null;
+      liveOn.value = false;
       onConnectionChanged?.call(false);
     }
     unawaited(_scanAndConnect());
@@ -478,6 +492,7 @@ class Esp32SpeechService {
     if (wasConnected) {
       debugPrint('Iris desconectado.');
       boardFeatures.value = null;
+      liveOn.value = false;
       onConnectionChanged?.call(false);
     }
     // Si se cayo la conexion con el boton apretado, procesar lo grabado hasta ahora.
@@ -574,6 +589,11 @@ class Esp32SpeechService {
       if (parts.length >= 3) onVisionEvent?.call(parts[1], int.tryParse(parts[2]) ?? 0);
     } else if (command.startsWith('CMD_WAKE_WORD:')) {
       onWakeWord?.call(int.tryParse(command.split(':')[1]) ?? 0);
+    } else if (command.startsWith('CMD_SCENE_LIVE:')) {
+      final sentence = command.substring('CMD_SCENE_LIVE:'.length).trim();
+      if (sentence.isNotEmpty) onSceneLive?.call(sentence);
+    } else if (command.startsWith('CMD_LIVE:')) {
+      liveOn.value = command.substring('CMD_LIVE:'.length) == 'ON';
     } else if (command.startsWith('CMD_SCENE:')) {
       final completer = _sceneCompleter;
       if (completer != null && !completer.isCompleted) {
