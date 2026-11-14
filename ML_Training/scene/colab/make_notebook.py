@@ -56,7 +56,7 @@ COMPARAR_PROFESORES = True  #@param {type:"boolean"}
 # True: antes de etiquetar todo, prueba cada candidato con 300 fotos y usa el que mejor coincide con lo
 # que marcaron personas en Open Images (reemplaza a PROFESOR).
 CANDIDATOS = ["Qwen/Qwen3-VL-8B-Instruct", "Qwen/Qwen2.5-VL-7B-Instruct", "Qwen/Qwen2.5-VL-32B-Instruct-AWQ"]
-ALPHA = 0.35  #@param [0.35, 0.5]
+ALPHA = 0.5  #@param [0.35, 0.5]
 # 0.35: Retina 1 (1,1 MB). 0.5: mas capaz (~2 MB); necesita el firmware con la particion de modelos de 4 MB.
 EPOCAS = 40  #@param {type:"integer"}
 RAMA = "main"  #@param {type:"string"}
