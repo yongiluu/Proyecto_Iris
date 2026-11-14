@@ -15,6 +15,7 @@ import base64
 import json
 import os
 import re
+import sys
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
@@ -81,6 +82,7 @@ def main() -> None:
     parser.add_argument("--sources", default="openimages,board", help="openimages,board")
     parser.add_argument("--workers", type=int, default=16, help="pedidos en paralelo (vLLM los agrupa en la GPU)")
     parser.add_argument("--limit", type=int, default=0, help="solo N fotos (prueba)")
+    parser.add_argument("--max-errors-in-a-row", type=int, default=100, help="parar si el servidor deja de responder")
     parser.add_argument("--no-guided", action="store_true", help="si el servidor no soporta response_format json_schema")
     args = parser.parse_args()
 
@@ -103,7 +105,7 @@ def main() -> None:
         return {"image": name, "source": short_name, "prompt": PROMPT_VERSION, "labels": labels,
                 "problems": problems}
 
-    errors, examples = 0, []
+    errors, streak, examples = 0, 0, []
     with open(out_file, "a", encoding="utf-8") as out, ThreadPoolExecutor(args.workers) as pool:
         futures = {pool.submit(work, name): name for name in images}
         for future in tqdm(as_completed(futures), total=len(futures), desc="Profesor"):
@@ -111,8 +113,16 @@ def main() -> None:
                 row = future.result()
             except Exception as e:
                 errors += 1
+                streak += 1
                 tqdm.write(f"  error con {futures[future]}: {e}")
+                if streak >= args.max_errors_in_a_row:
+                    # El servidor se cayo: parar en vez de gastar todas las fotos en errores (se retoma luego).
+                    for f in futures:
+                        f.cancel()
+                    print(f"\n{streak} errores seguidos: el servidor del profesor no responde. Se retoma al volver a correr.")
+                    sys.exit(2)
                 continue
+            streak = 0
             out.write(json.dumps(row, ensure_ascii=False) + "\n")
             out.flush()
             if len(examples) < 10:
