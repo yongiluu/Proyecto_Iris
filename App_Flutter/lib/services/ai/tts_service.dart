@@ -64,7 +64,10 @@ class TtsService {
   bool _nativeHasRealProgress = false;
   Timer? _estimateTimer;
 
-  bool get isSpeaking => _isSpeaking;
+  /// true mientras Iris habla por cualquier camino. La voz de la placa (o del servidor) no pasa por
+  /// el motor del celular: ahi manda [progress], que dura lo mismo que el audio.
+  bool get isSpeaking => _isSpeaking || (progress.value.text.isNotEmpty && !progress.value.done);
+  Timer? _safetyTimer;
 
   // ─── Velocidad de la voz ("habla mas lento" / "mas rapido"), guardada entre usos ───
   static const String _prefRate = 'iris_tts_rate';
@@ -99,7 +102,6 @@ class TtsService {
       await _tts.setSpeechRate(_rate);
       await _tts.setPitch(AppConstants.ttsPitch);
       await _tts.setVolume(AppConstants.ttsVolume);
-      await _tts.setEngine('com.google.android.tts');
 
       _tts.setStartHandler(() => _isSpeaking = true);
       _tts.setCompletionHandler(() {
@@ -123,6 +125,13 @@ class TtsService {
         _estimateTimer?.cancel();
         if (end > current.end) progress.value = SpeechProgress(current.text, end);
       });
+      // Al final y aparte: en un celular sin la voz de Google esto falla, y antes eso dejaba sin
+      // registrar los avisos de arriba (Iris nunca sabia cuando terminaba de hablar).
+      try {
+        await _tts.setEngine('com.google.android.tts');
+      } catch (e) {
+        debugPrint('Voz de Google no disponible, se usa la del sistema: $e');
+      }
     } catch (e) {
       debugPrint('⚠️ Error initializing TTS: $e');
     } finally {
@@ -166,6 +175,12 @@ class TtsService {
       // Modo nativo: altavoz del celular
       _nativeText = textToSpeak;
       _nativeHasRealProgress = false;
+      // Si el motor nunca avisa que termino, no quedarse "hablando" para siempre.
+      _safetyTimer?.cancel();
+      _safetyTimer = Timer(
+        Duration(milliseconds: 5000 + (textToSpeak.length / _nativeCharsPerSecond * 2500).round()),
+        () => _finishCurrent(textToSpeak),
+      );
       await _tts.speak(textToSpeak);
       // Si el motor no avisa palabra por palabra, se estima por tiempo. El primer aviso real
       // cancela la estimacion.
@@ -343,6 +358,7 @@ class TtsService {
   }
 
   Future<void> dispose() async {
+    _safetyTimer?.cancel();
     _estimateTimer?.cancel();
     await _tts.stop();
   }
