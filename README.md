@@ -10,7 +10,7 @@ El sistema funciona al 100% mediante **Bluetooth Low Energy (BLE)**, sin Wi-Fi n
 - **Auto-descubrimiento BLE:** La app escanea y se conecta automáticamente al dispositivo `Iris_ESP32` sin hardcodear direcciones IP, y reconecta sola si se pierde el enlace.
 - **Transmisión de audio bidireccional:** El audio del micrófono I2S viaja en tiempo real a Flutter, y las respuestas (TTS) vuelven para reproducirse en el altavoz.
 - **Visión artificial inalámbrica:** La app pide una foto JPEG a la placa; esta la envía en fragmentos por BLE con *backpressure* y la app valida que llegue completa.
-- **Edge AI en la placa:** detección de personas y de sonidos de alerta (bocina, sirena, perro) con TensorFlow Lite Micro, sin internet. Los modelos se entrenan en [`ML_Training/`](ML_Training/README.md).
+- **Edge AI en la placa:** descripción de escenas a color (**Retina**), sonidos de alerta (bocina, sirena, perro), wake word "Oye Iris" y lector de texto con TensorFlow Lite Micro, sin internet. Los modelos se entrenan en [`ML_Training/`](ML_Training/README.md).
 - **Backend (Supabase):** login con Google, memoria diaria del agente ("¿qué desayuné hoy?", "¿qué pasó ayer?"), acompañantes con alertas y ubicación compartida, y las llaves de IA solo en el servidor. Ver [`Backend_Supabase/README.md`](Backend_Supabase/README.md).
 - **Agente en la nube:** la app transcribe (Whisper), consulta al agente (modelo en Azure AI Foundry, por defecto `gpt-4.1-mini`) y devuelve la voz.
 
@@ -40,7 +40,7 @@ Construida con Flutter, actúa como el cerebro del sistema: procesa el audio rec
 
 ## 2. Firmware del Prototipo (Hardware_ESP32)
 
-Escrito en C++ con PlatformIO. Actúa como periférico BLE usando la librería NimBLE. Está dividido en módulos: `mic_driver`, `audio_player`, `camera_driver`, `ble_manager`, `photo_transfer`, `vision_task` y los modelos de Edge AI.
+Escrito en C++ con PlatformIO. Actúa como periférico BLE usando la librería NimBLE. Está dividido en módulos: `mic_driver`, `audio_player`, `camera_driver`, `ble_manager`, `photo_transfer`, `scene_task` (Retina), `light_task` (detector de luz) y los modelos de Edge AI.
 
 **Cómo compilar y subir el código:**
 1. Abre la carpeta `Hardware_ESP32` usando PlatformIO en VS Code.
@@ -50,7 +50,7 @@ Escrito en C++ con PlatformIO. Actúa como periférico BLE usando la librería N
 
 ### Modelos fuera del programa (XIAO)
 
-La flash de 8 MB de la XIAO se reparte en `Hardware_ESP32/partitions_iris_8MB.csv`: dos ranuras de programa (para actualizar por WiFi) y una partición **`modelos`** de 2 MB. Ahí van los modelos que no caben dentro del programa: el lector de texto y la descripción de escenas (cuando la nube no responde, "¿qué hay adelante?" lo contesta la placa sin internet); después, las caras. Se leen directo de la flash, sin gastar RAM, y se actualizan sin recompilar. La visión y la cercanía siguen dentro del programa: son de seguridad y funcionan aunque la partición esté vacía.
+La flash de 8 MB de la XIAO se reparte en `Hardware_ESP32/partitions_iris_8MB.csv`: dos ranuras de programa (para actualizar por WiFi) y una partición **`modelos`** de 2 MB. Ahí van los modelos que no caben dentro del programa: el lector de texto y la descripción de escenas (cuando la nube no responde, "¿qué hay adelante?" lo contesta la placa sin internet); después, las caras. Se leen directo de la flash, sin gastar RAM, y se actualizan sin recompilar. Los antiguos modelos de visión y cercanía en grises se retiraron: Retina los reemplaza.
 
 **Una sola vez, por USB** (la tabla de particiones nueva no se puede grabar por WiFi):
 
@@ -83,7 +83,7 @@ Asegúrate de conectar los pines a sus respectivos VCC (3.3V o 5V) y GND. La fue
 - El otro pin -> GND (usa resistencia pull-up interna).
 
 **📷 Cámara (OV2640)**
-Configuración estándar D0-D7, XCLK, PCLK, VSYNC, HREF, SIOD, SIOC, PWDN, RESET definidos en `config.h`. Normalmente trabaja a color en 160x120 (RGB565): los modelos locales en grises reciben el cuadrado central convertido a 96x96 en la placa, y la descripción de escenas (en desarrollo, `ML_Training/scene`) usa el frame completo a color. Cuando la app pide una foto (`CMD_TAKE_PHOTO`) se reconfigura a JPEG 640x480, se envía por BLE (`CMD_PHOTO_START:<bytes>` → fragmentos → `CMD_PHOTO_END`) y vuelve a color 160x120.
+Configuración estándar D0-D7, XCLK, PCLK, VSYNC, HREF, SIOD, SIOC, PWDN, RESET definidos en `config.h`. Normalmente trabaja a color en 160x120 (RGB565): el detector de luz usa el cuadrado central convertido a 96x96 en grises, y la descripción de escenas (Retina, `ML_Training/scene`) usa el frame completo a color. Cuando la app pide una foto (`CMD_TAKE_PHOTO`) se reconfigura a JPEG 640x480, se envía por BLE (`CMD_PHOTO_START:<bytes>` → fragmentos → `CMD_PHOTO_END`) y vuelve a color 160x120.
 
 ### XIAO ESP32S3 Sense (prototipo 2)
 - Micrófono PDM integrado: CLK -> GPIO42, DATA -> GPIO41.

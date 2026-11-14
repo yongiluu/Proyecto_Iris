@@ -1,4 +1,6 @@
-# Descripción de escenas en la placa (Iris)
+# Retina: descripción de escenas en la placa (Iris)
+
+**Iris ve, Retina entiende al instante (en la placa), Occipital piensa en profundidad (en la nube).**
 
 > **Objetivo:** que la ESP32-S3, sin internet, mire con su cámara y diga algo como
 > *"Parece que estás en un pasillo. Adelante hay una puerta café y un cuadro. Al fondo hay una persona. No detecto peligros."*
@@ -47,7 +49,7 @@ Lo desconocido (`null`) no se entrena: así se mezclan etiquetas parciales (auto
 La cámara ahora vive a **color, 160x120 (RGB565)**, con el campo de visión completo. Antes vivía en grises 96x96.
 
 - **Descripción de escenas:** usa el frame completo a color.
-- **Modelos de clases y de cercanía (grises 96x96):** usan el cuadrado central convertido a grises en la placa (`image_convert.cpp`). La versión en Python es `vision/board_image.py`, y `tests/test_image_convert.py` comprueba que den **exactamente** lo mismo.
+- **Medidor de luz (grises 96x96):** usa el cuadrado central convertido a grises en la placa (`image_convert.cpp`). La versión en Python es `camara/board_image.py`, y `tests/test_image_convert.py` comprueba que den **exactamente** lo mismo. (Los antiguos modelos en grises de clases y de cercanía se retiraron: Retina los reemplaza.)
 - **Fotos para la nube:** siguen siendo JPEG a color de 640x480.
 
 El entrenamiento simula la cámara: pérdida de color RGB565 (idéntica a la placa), balance de blancos, poca luz, ruido, viñeteado y desenfoque (`dataset.py`).
@@ -65,6 +67,25 @@ python scene/demo.py                       # galería: data/scene/demo_alumno.ht
 ```
 
 Las **etiquetas automáticas** salen de las cajas de Open Images y de los colores de los píxeles. Sirven para probar todo y como respaldo, pero no tienen peligros y son ruidosas.
+
+### En Google Colab (lo que usamos ahora)
+
+Abre `scene/colab/iris_escenas_colab.ipynb` en Colab
+(https://colab.research.google.com/github/yongiluu/Proyecto_Iris/blob/main/ML_Training/scene/colab/iris_escenas_colab.ipynb),
+elige **GPU A100** y *Ejecutar todo*. Guarda el avance en Google Drive (`Iris_escenas`) y retoma si se corta.
+El notebook se genera con `python scene/colab/make_notebook.py` (editar ese archivo, no el `.ipynb`).
+
+Lo que hace, y lo que se agregó para **Retina 2**:
+- `download_images.py --con-train`: elige entre las 1,7 millones de fotos de Open Images (no solo las ~170 mil
+  de validation + test) y reparte más cuota a lo que importa al caminar (`WALKING_BOOST`: escaleras, conos,
+  postes, bicicletas...).
+- `compare_teachers.py`: prueba varios profesores con 300 fotos contra lo que marcaron personas en Open Images
+  y el notebook usa el mejor. `IRIS_PROFESOR=<nombre>` elige uno solo para entrenar.
+- `calibrate.py` (lo aplica `export_model.py`): umbral propio por objeto con las fotos de validación. Retina
+  solo nombra un objeto si acierta ≥80 % de las veces; si nunca llega, lo calla. Los peligros se ajustan a
+  ≤2 % de falsas alarmas. El umbral va dentro del sesgo de la última capa: la placa no cambia
+  (`tests/test_scene_calibrate.py`).
+- `--alpha 0.5`: un alumno más capaz (~2 MB). Cabe en la partición `modelos` de 4 MB del firmware nuevo.
 
 ### En Lambda (el profesor de verdad)
 
@@ -84,8 +105,7 @@ Las etiquetas del profesor (`data/scene/labels_teacher_*.jsonl`) son lo más val
 ```bash
 cd Hardware_ESP32 && pio run -e seeed_xiao_esp32s3_photo_capture -t upload
 cd ../ML_Training
-python vision/capture_photos.py --note pasillo --count 300   # sin clase: solo color para escenas
-python vision/capture_photos.py --label puerta --note casa   # con clase: además, gris 96x96 para el modelo de clases
+python camara/capture_photos.py --note pasillo --count 300   # fotos a color 160x120 en data/scene_board/
 ```
 
 Las fotos a color quedan en `data/scene_board/`, y `label_teacher.py` las etiqueta junto con las de Open Images (fuente `board`). Prioriza **lugares reales de uso**: pasillos, escaleras, veredas, cruces, micro, la universidad.
@@ -136,11 +156,11 @@ Pendiente para el paper: evaluación con personas sobre fotos reales de la placa
 1. **Profesor en Lambda** con 60 mil fotos y la primera versión real del alumno.
 2. **Integración en el firmware:**
    - Pasar `describe.py` a C++ y correr el alumno int8 en la placa, que mandaría `CMD_SCENE:<frase>` a la app.
-   - **Memoria:** el alumno pesa ~0,9 MB (894 mil parámetros). El programa ya usa el 83,5 % de su partición de 3,3 MB, pero el alumno **reemplaza** al modelo de clases actual (`vision_scenes`, ~1 MB): sabe todo lo que ese sabe (personas, vehículos, escaleras, puertas, cruces por el lugar) y más. Así cabe sin cambiar particiones.
+   - **Memoria:** el alumno pesa ~0,9 MB (894 mil parámetros). El programa ya usa el 83,5 % de su partición de 3,3 MB, pero el alumno **reemplazó** a los modelos en grises de clases (`vision_scenes`, ~1 MB) y de cercanía (`proximity`), ya retirados del firmware y del repositorio: sabe todo lo que el de clases sabía (personas, vehículos, escaleras, puertas, cruces por el lugar) y más.
    - Si algún día no cabe, la XIAO tiene 8 MB, pero cambiar particiones requiere grabar **una vez por USB**: no se puede por WiFi.
 3. **Fotos reales** de la placa etiquetadas por el profesor, y fine-tuning.
 4. **v2 generativa:** un decodificador diminuto que genere texto libre en la placa (vocabulario de ~1.500 palabras), entrenado con las frases y el campo `detalle` del profesor.
-5. Reentrenar los modelos de clases y cercanía directo a color: hoy siguen en grises.
+5. ~~Reentrenar los modelos de clases y cercanía directo a color~~: hecho de otra forma, se retiraron y los reemplaza Retina.
 
 ## Licencias
 

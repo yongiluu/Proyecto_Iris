@@ -251,6 +251,7 @@ class TrainingUploadQueue {
     final db = Supabase.instance.client;
     final contentType = switch (item.fileName.split('.').last.toLowerCase()) {
       'wav' => 'audio/wav',
+      'png' => 'image/png',
       'bmp' => 'image/bmp',
       'jpg' || 'jpeg' => 'image/jpeg',
       _ => 'application/octet-stream',

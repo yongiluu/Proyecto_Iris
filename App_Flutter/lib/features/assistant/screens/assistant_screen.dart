@@ -29,7 +29,6 @@ import '../widgets/mode_carousel.dart';
 import '../widgets/people_sheets.dart';
 import '../widgets/settings_sheet.dart';
 import '../widgets/streaming_answer.dart';
-import '../widgets/vision_alert_banner.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../../core/widgets/aurora_background.dart';
 import '../../../core/widgets/glass.dart';
@@ -43,7 +42,6 @@ import '../../../services/ai/occipital_agent_service.dart';
 import '../../../services/ai/voice_intents.dart';
 import '../../../services/backend/backend_service.dart';
 import '../../account/account_screen.dart';
-import '../../../services/ai/phone_vision_service.dart';
 import '../../../services/hardware/sensor_context.dart';
 import '../../data_collection/missions_screen.dart';
 import '../../../services/ai/tts_service.dart';
@@ -68,7 +66,6 @@ class _AssistantScreenState extends State<AssistantScreen>
   final TtsService _ttsService = TtsService();
   final HapticService _hapticService = HapticService();
   final SensorContext _sensorContext = SensorContext();
-  final PhoneVisionService _phoneVision = PhoneVisionService();
   late final PhoneLightMeter _phoneLight = PhoneLightMeter(_nativeCameraService);
   // Se crean al primer uso (abren recursos nativos).
   PhoneTextReader? _textReaderInstance;
@@ -205,7 +202,6 @@ class _AssistantScreenState extends State<AssistantScreen>
           setState(() {
             _statusText = connected ? 'Modulo conectado (Bluetooth)' : 'Buscando el modulo por Bluetooth...';
           });
-          if (!connected) _setProximityAlert(0, fromPhone: false);
           if (connected) {
             _hapticService.vibrateStart();
             _ttsService.speakStatus('Bluetooth conectado');
@@ -218,13 +214,7 @@ class _AssistantScreenState extends State<AssistantScreen>
       _esp32SpeechService.onAudioEvent = _onAudioEvent;
       _esp32SpeechService.onTextRead = _onTextRead;
       _esp32SpeechService.onSceneLive = _onSceneLive;
-      _esp32SpeechService.onVisionEvent = _onVisionEvent;
       _esp32SpeechService.onAudioContext = _sensorContext.onAudioContext;
-      _esp32SpeechService.onVisionContext = _sensorContext.onVisionContext;
-      _phoneVision.onEvent = (label, percent) => _onVisionEvent(label, percent, fromPhone: true);
-      _phoneVision.onContext = _sensorContext.onVisionContext;
-      _phoneVision.onProximity = (level, _) => _setProximityAlert(level, fromPhone: true);
-      _esp32SpeechService.onProximity = (level, _) => _setProximityAlert(level, fromPhone: false);
       _esp32SpeechService.onChooseBoard = (_) {
         if (mounted && _hardwareMode == HardwareMode.esp32 && !_boardSheetOpen) _showBoardPicker();
       };
@@ -246,13 +236,11 @@ class _AssistantScreenState extends State<AssistantScreen>
         _initSafely('bluetooth', _esp32SpeechService.init()),
         _initSafely('voz', _ttsService.initialize()),
         _initSafely('vibracion', _hapticService.initialize()),
-        _initSafely('vision local', _phoneVision.load()),
         _initSafely('personas', _faces.load()),
       ]);
       if (!mounted) return;
 
       setState(() => _isInitialized = true);
-      _updatePhoneVision();
       // Si la placa ya conecto mientras arrancaba el resto, usarla desde el principio.
       _syncAutoHardware();
 
@@ -296,43 +284,18 @@ class _AssistantScreenState extends State<AssistantScreen>
   }
 
   /// Foto con la camara del celular.
-  /// La camara saca una foto a la vez: espera a la de la vision local si hay una en curso.
+  /// Mientras saca la foto, el detector de luz del celular no usa la camara.
   Future<Uint8List?> _capturePhonePhoto() async {
     if (!_nativeCameraService.isInitialized) return null;
     _cloudCaptureBusy = true;
     try {
-      await _phoneVision.waitIdle();
       return await _nativeCameraService.captureSingleFrame();
     } finally {
       _cloudCaptureBusy = false;
     }
   }
 
-  // ─── Vision local en el celular (modo Celular, mismo modelo Edge AI que la placa) ───
   bool _cloudCaptureBusy = false;
-
-  /// Enciende la vision local solo en modo Celular; la placa corre su propio modelo.
-  void _updatePhoneVision() {
-    if (_hardwareMode == HardwareMode.standalone) {
-      _phoneVision.start(_nativeCameraService, _phoneVisionCanCapture);
-    } else {
-      _phoneVision.stop();
-    }
-  }
-
-  bool _phoneVisionCanCapture() =>
-      mounted &&
-      _hardwareMode == HardwareMode.standalone &&
-      !_isListening &&
-      !_isProcessing &&
-      !_cloudCaptureBusy &&
-      // Leer texto, personas y el detector de luz usan la misma camara.
-      !_readingText &&
-      !_peopleBusy &&
-      !_peopleScanning &&
-      !_phoneLight.isOn &&
-      // Las misiones de datos usan la misma camara.
-      (ModalRoute.of(context)?.isCurrent ?? true);
 
   /// A donde mandar la voz de Iris. Con "Escuchar respuestas en el celular" (por defecto, mientras
   /// la placa no tenga altavoz) suena en el celular aunque el modo sea Modulo.
@@ -424,42 +387,6 @@ class _AssistantScreenState extends State<AssistantScreen>
     unawaited(BackendService.instance.reportAlert(label, detail: 'Se escucha $what'));  // la ven sus acompañantes
   }
 
-  // ─── Avisos de la camara de la placa (Edge AI) ───
-  static const Map<String, String> _visionAlertPhrases = {
-    'persona': 'una persona',
-    'vehiculo': 'un vehiculo',
-    'escalera': 'una escalera',
-    'puerta': 'una puerta',
-    'cruce': 'un cruce peatonal',
-  };
-  // Por clase: una escalera no debe callar el aviso de un vehiculo.
-  static const Duration _visionAlertCooldown = Duration(seconds: 20);
-  final Map<String, DateTime> _lastVisionAlert = {};
-
-  /// Avisos de la placa o, en modo Celular, del mismo modelo corriendo en el celular.
-  Future<void> _onVisionEvent(String label, int confidence, {bool fromPhone = false}) async {
-    _sensorContext.onVisionEvent(label);
-    if (!mounted) return;
-    final active = fromPhone
-        ? _hardwareMode == HardwareMode.standalone
-        : _hardwareMode == HardwareMode.esp32 && !_esp32SpeechService.isCollectingData;
-    if (!active) return;
-    if (_isListening || _isProcessing || _isTaskBusy || _ttsService.isSpeaking) return;
-
-    final now = DateTime.now();
-    final last = _lastVisionAlert[label];
-    if (last != null && now.difference(last) < _visionAlertCooldown) return;
-    _lastVisionAlert[label] = now;
-
-    final what = _visionAlertPhrases[label] ?? label;
-    setState(() => _statusText = 'Adelante: $what ($confidence%)');
-    await _hapticService.vibrateTick();
-    await _ttsService.speakStatus('Adelante hay $what', esp32Service: _activeEsp32);
-    if (label == 'vehiculo') {
-      unawaited(BackendService.instance.reportAlert(label, detail: 'Vehiculo adelante'));  // la ven sus acompañantes
-    }
-  }
-
   /// Doble pitido al mandar una consulta a la IA: una persona ciega no ve la pantalla y necesita
   /// saber por audio que la pregunta salio (pedido del profesor Raul).
   /// Con las respuestas en la placa, el aviso es su propio pitido de "pensando" (que empieza al
@@ -475,38 +402,6 @@ class _AssistantScreenState extends State<AssistantScreen>
       RegExp(r'^[\s¡¿,.]*((oye|hey|oi|hoy)[\s,.!]*)?iris\b[\s,.:;!?¡¿]*', caseSensitive: false);
 
   static String _stripWakeWord(String text) => text.replaceFirst(_wakeWordPrefix, '').trim();
-
-  // ─── Cercania ("voy a chocar con algo?"), como el sensor de retroceso de un auto ───
-  // Sin voz: tiene que ser inmediato. En modo Celular pita y vibra; en modo Modulo la placa pita
-  // por su parlante y el celular solo vibra al mismo ritmo.
-  // APAGADO por ahora: con fotos reales el modelo de cercania da 30-60 % de avisos falsos con el
-  // camino libre y el celular pitaba sin motivo. El nivel igual llega a SensorContext (contexto
-  // silencioso para la IA). Poner en true para volver a pitar/vibrar (celular y CMD_PROXIMITY).
-  static const bool kProximityBeepsEnabled = false;
-  static const Duration _proximityNearPeriod = Duration(milliseconds: 800);
-  static const Duration _proximityVeryNearPeriod = Duration(milliseconds: 250);
-  Timer? _proximityTimer;
-  int _proximityAlertLevel = 0;
-
-  void _setProximityAlert(int level, {required bool fromPhone}) {
-    _sensorContext.onProximity(level);
-    if (!kProximityBeepsEnabled) return;
-    final active = fromPhone ? _hardwareMode == HardwareMode.standalone : _hardwareMode == HardwareMode.esp32;
-    if (!active) level = 0;
-    if (level == _proximityAlertLevel) return;
-    _proximityAlertLevel = level;
-    _proximityTimer?.cancel();
-    _proximityTimer = null;
-    if (level == 0 || !mounted) return;
-
-    void tick() {
-      if (fromPhone) _soundChannel.invokeMethod('proximity', {'level': level}).catchError((_) {});
-      Vibration.vibrate(duration: level >= 2 ? 80 : 40, amplitude: level >= 2 ? 255 : 160).catchError((_) {});
-    }
-
-    tick();
-    _proximityTimer = Timer.periodic(level >= 2 ? _proximityVeryNearPeriod : _proximityNearPeriod, (_) => tick());
-  }
 
   /// 'querySent' = doble pitido (consulta enviada); 'listening' = pitido agudo (Iris escucha).
   Future<void> _playCue(String cue) async {
@@ -660,7 +555,6 @@ class _AssistantScreenState extends State<AssistantScreen>
       },
       captureImageCallback: _captureImage,
       sensorContext: _sensorContext.describe(),
-      visionFallback: _sensorContext.lastSeen,
     ));
     if (desc != null && mounted) {
       setState(() {
@@ -798,7 +692,6 @@ class _AssistantScreenState extends State<AssistantScreen>
         },
         captureImageCallback: _captureImage,
         sensorContext: _sensorContext.describe(),
-        visionFallback: _sensorContext.lastSeen,
         // En modo Modulo la foto tarda unos segundos por Bluetooth: avisar que ya esta mirando.
         onVisionStart: _hardwareMode == HardwareMode.esp32
             ? () => _ttsService.speakStatus('Dejame mirar', esp32Service: _activeEsp32)
@@ -1335,10 +1228,8 @@ class _AssistantScreenState extends State<AssistantScreen>
   @override
   void dispose() {
     _continuousTimer?.cancel();
-    _proximityTimer?.cancel();
     _localThinkingTimer?.cancel();
     _autoHardwareRetry?.cancel();
-    _phoneVision.dispose();
     _phoneLight.dispose();
     _textReaderInstance?.dispose();
     _facesInstance?.dispose();
@@ -1470,11 +1361,6 @@ class _AssistantScreenState extends State<AssistantScreen>
         if (mounted) setState(() {});
       });
     }
-    // Los pitidos de cercania eran del otro modo.
-    _proximityTimer?.cancel();
-    _proximityTimer = null;
-    _proximityAlertLevel = 0;
-    _updatePhoneVision();
     if (automatic) {
       _hapticService.vibrateStart();
       _ttsService.speakStatus(
@@ -1563,9 +1449,6 @@ class _AssistantScreenState extends State<AssistantScreen>
 
   @override
   Widget build(BuildContext context) {
-    // Avisos de vision local: misma fuente de datos (_statusText), pero en su propia tarjeta.
-    final visionAlert = VisionAlert.tryParse(_statusText);
-
     final AssistantPhase phase;
     if (!_isInitialized) {
       phase = AssistantPhase.starting;
@@ -1591,12 +1474,10 @@ class _AssistantScreenState extends State<AssistantScreen>
             link: !isModule ? IrisLink.phone : (connected ? IrisLink.board : IrisLink.searching),
             onOpenSettings: _openSettings,
           ),
-          // Si hay aviso de vision, ese texto va en su tarjeta (con su propio liveRegion).
           status: StatusLine(
-            text: visionAlert != null ? '' : _statusText,
+            text: _statusText,
             active: _isBusy || _isTaskBusy,
           ),
-          alert: visionAlert == null ? null : VisionAlertBanner(alert: visionAlert),
           carousel: ModeCarousel(
             answer: _lastDescription.isEmpty
                 ? null

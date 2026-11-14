@@ -57,8 +57,7 @@ bool startCamera(CameraMode mode) {
   camera_config_t config = baseConfig();
 
   if (mode == CameraMode::Color) {
-    // Lo que miran los modelos locales: color y el campo de vision completo de la camara (4:3).
-    // Los modelos en grises reciben el cuadrado central reducido a 96x96 (captureGray96).
+    // Lo que miran los modelos locales (Retina): color y el campo de vision completo de la camara (4:3).
     config.pixel_format = PIXFORMAT_RGB565;
     config.frame_size = CAMERA_COLOR_FRAME_SIZE;
     config.jpeg_quality = 12; // Irrelevante en RGB565

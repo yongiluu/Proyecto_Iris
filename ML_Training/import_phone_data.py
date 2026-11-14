@@ -11,17 +11,18 @@ que el zip) y en cada corrida solo se descargan los archivos nuevos.
 
 Copia:
   audio/<clase>/*.wav   -> data/board/<clase>/         (lo usa audio/prepare_dataset.py)
-  vision/<clase>/*.bmp  -> data/vision_board/<clase>/  como PNG (lo usa vision/prepare_dataset.py)
   audio/oye_iris|no_wake/*.wav -> data/wakeword_board/<clase>/  (wake word "Oye Iris", no es clase del
                            modelo de audio de 5 clases)
-  vision/cercania/*     -> data/proximity_board/         BMP y JPEG a color tal cual (no es una clase del
-                           modelo de 5 clases; los JPEG se etiquetan con vision/depth_labels.py)
+  vision/<mision>/*.png|*.bmp -> data/scene_board/      fotos a color 160x120 de la camara de la placa, como
+                           PNG (la carpeta BOARD_IMAGES_DIR de Retina, scene/config.py). Las que no son a
+                           color 160x120 (ej. los BMP 96x96 en grises de versiones antiguas de la app) se
+                           saltan con un aviso.
 Los archivos ya importados se saltan, asi que se puede correr varias veces con exports nuevos.
 El ambiente (casa, calle, transporte...) queda en el nombre: <clase>__<ambiente>__<mision>__<fecha>.
 
 Despues:
     python audio/prepare_dataset.py && python audio/train.py --finetune && python audio/export_model.py
-    python vision/prepare_dataset.py && python vision/train.py --finetune && python vision/export_model.py
+    Fotos: las etiqueta el profesor de Retina (scene/label_teacher.py, fuente "board"; ver scene/README.md).
 """
 import argparse
 import importlib.util
@@ -37,13 +38,14 @@ import zipfile
 from collections import Counter
 from pathlib import Path
 
+import numpy as np
 from PIL import Image
 
 ML_DIR = Path(__file__).resolve().parent
-PROXIMITY_LABEL = "cercania"
 WAKEWORD_LABELS = {"oye_iris", "no_wake"}
 WAKEWORD_DIR = ML_DIR / "data" / "wakeword_board"
-PROXIMITY_DIR = ML_DIR / "data" / "proximity_board"
+PHOTO_SIZE = (160, 120)  # ancho x alto del frame a color de la camara de la placa (lo que ve Retina)
+PHOTO_SUFFIXES = (".png", ".bmp")
 SUPABASE_CACHE = ML_DIR / "data" / "supabase_cache"
 SUPABASE_BUCKET = "datos-entrenamiento"
 
@@ -83,39 +85,41 @@ def import_audio(source: Path, config, counts: Counter, skipped: Counter) -> Non
         counts[f"audio/{label}"] += 1
 
 
-def import_proximity(source: Path, counts: Counter, skipped: Counter) -> None:
-    """Mision "Acercarse a obstaculos": se copian los BMP 96x96 y, si hay, los JPEG a color."""
-    for file in sorted(source.glob(f"vision/{PROXIMITY_LABEL}/*")):
-        if file.suffix.lower() not in (".bmp", ".jpg"):
+def _color_photo(path: Path):
+    """(foto RGB 160x120, "") o (None, motivo) si no sirve para Retina."""
+    with Image.open(path) as image:
+        if image.size != PHOTO_SIZE:
+            return None, f"tamano {image.size[0]}x{image.size[1]}, se espera {PHOTO_SIZE[0]}x{PHOTO_SIZE[1]}"
+        if image.mode not in ("RGB", "RGBA", "P"):
+            return None, f"en grises (modo {image.mode})"
+        rgb = image.convert("RGB")
+    pixels = np.asarray(rgb)
+    if np.array_equal(pixels[..., 0], pixels[..., 1]) and np.array_equal(pixels[..., 1], pixels[..., 2]):
+        return None, "en grises (los 3 canales iguales)"
+    return rgb, ""
+
+
+def import_photos(source: Path, scene_config, counts: Counter, skipped: Counter) -> None:
+    """Fotos de las misiones (vision/<mision>/): a color 160x120 -> data/scene_board/ para Retina."""
+    board_dir = scene_config.BOARD_IMAGES_DIR
+    for file in sorted(source.glob("vision/*/*")):
+        label = file.parent.name
+        if file.suffix.lower() not in PHOTO_SUFFIXES:
+            skipped[f"vision/{label}/*{file.suffix.lower()} (formato no soportado)"] += 1
             continue
-        target = PROXIMITY_DIR / file.name
+        name = file.stem if file.stem.startswith(label) else f"{label}__{file.stem}"
+        target = board_dir / (name + ".png")
         if target.exists():
             skipped["ya importados"] += 1
             continue
-        target.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(file, target)
-        counts[f"{PROXIMITY_LABEL} ({file.suffix.lower()[1:]})"] += 1
-
-
-def import_photos(source: Path, config, counts: Counter, skipped: Counter) -> None:
-    for bmp in sorted(source.glob("vision/*/*.bmp")):
-        label = bmp.parent.name
-        if label == PROXIMITY_LABEL:
-            continue  # va a data/proximity_board/ (import_proximity)
-        if label not in config.CLASSES:
-            skipped[f"vision/{label} (clase desconocida)"] += 1
-            continue
-        target = config.BOARD_DIR / label / (bmp.stem + ".png")
-        if target.exists():
-            skipped["ya importados"] += 1
-            continue
-        image = Image.open(bmp).convert("L")
-        if image.size != (config.IMAGE_SIZE, config.IMAGE_SIZE):
-            skipped[f"{bmp.name} (tamano {image.size})"] += 1
+        image, reason = _color_photo(file)
+        if image is None:
+            print(f"  - se salta {file.name}: {reason} (no es una foto a color 160x120)")
+            skipped[f"vision/{label} (no es color 160x120)"] += 1
             continue
         target.parent.mkdir(parents=True, exist_ok=True)
         image.save(target)
-        counts[f"vision/{label}"] += 1
+        counts[f"fotos a color/{label}"] += 1
 
 
 def _supabase_get(url: str, key: str) -> bytes:
@@ -174,8 +178,7 @@ def download_supabase() -> list[Path]:
 
 def import_folder(source: Path, counts: Counter, skipped: Counter) -> None:
     import_audio(source, load_config("audio"), counts, skipped)
-    import_photos(source, load_config("vision"), counts, skipped)
-    import_proximity(source, counts, skipped)
+    import_photos(source, load_config("scene"), counts, skipped)
 
 
 def main() -> None:
@@ -213,7 +216,8 @@ def main() -> None:
     if not counts:
         print("No habia nada nuevo para importar.")
     else:
-        print("\nSiguiente paso: prepare_dataset.py + train.py --finetune + export_model.py (ver README)")
+        print("\nSiguiente paso: audio -> prepare_dataset.py + train.py --finetune + export_model.py;"
+              " fotos -> scene/label_teacher.py (ver scene/README.md)")
 
 
 if __name__ == "__main__":

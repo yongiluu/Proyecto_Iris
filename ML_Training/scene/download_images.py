@@ -48,6 +48,25 @@ IMAGE_LABELS = {"validation": "oidv7-val-annotations-human-imagelabels.csv",
                 "test": "oidv7-test-annotations-human-imagelabels.csv"}
 ROTATIONS = {"validation": "validation-images-with-rotation.csv", "test": "test-images-with-rotation.csv"}
 
+# --con-train: suma las 1,7 millones de fotos del conjunto "train" de Open Images (validation + test
+# son ~170 mil y los objetos raros, como escaleras o conos, se acaban rapido). Son CSV grandes
+# (~5,6 GB en total): pensado para Colab o Lambda, no para el PC.
+TRAIN_CSV_URLS = {
+    "oidv6-train-annotations-bbox.csv": "v6/oidv6-train-annotations-bbox.csv",
+    "oidv7-train-annotations-human-imagelabels.csv": "v7/oidv7-train-annotations-human-imagelabels.csv",
+    "train-images-boxable-with-rotation.csv": "2018_04/train/train-images-boxable-with-rotation.csv",
+}
+TRAIN_SPLIT = ("train", "oidv6-train-annotations-bbox.csv", "oidv7-train-annotations-human-imagelabels.csv",
+               "train-images-boxable-with-rotation.csv")
+
+# Lo que mas importa al caminar pesa mas al repartir las fotos (peligros, obstaculos y la calle).
+# 1 = cuota normal. Lo usa select_images.
+WALKING_BOOST = {
+    "escalera": 4.0, "cono": 3.0, "poste": 3.0, "grifo": 2.0, "banca": 2.0, "basurero": 3.0,
+    "bicicleta": 2.0, "moto": 2.0, "auto": 1.5, "bus": 1.5, "camion": 1.5, "semaforo": 2.0,
+    "senal": 2.0, "puerta": 2.0, "persona": 1.5, "perro": 1.5,
+}
+
 # Etiquetas de imagen de Open Images -> (lugar, interior)
 PLACE_LABELS = {
     "Kitchen": ("cocina", True), "Bathroom": ("bano", True), "Bedroom": ("habitacion", True),
@@ -91,12 +110,25 @@ def color_name(rgb: np.ndarray) -> str | None:
     return str(values[best]) if counts[best] / len(names) >= 0.4 and values[best] in COLOR_IDS else None
 
 
-def ensure_csvs() -> None:
+def ensure_csvs(with_train: bool = False) -> bool:
+    """Baja los CSV que falten. Devuelve False si se pidio train y no se pudo (se sigue sin train)."""
     config.OPENIMAGES_CSV_DIR.mkdir(parents=True, exist_ok=True)
     for name, path in CSV_URLS.items():
-        target = config.OPENIMAGES_CSV_DIR / name
-        if target.exists():
-            continue
+        _download_csv(name, path)
+    if not with_train:
+        return True
+    try:
+        for name, path in TRAIN_CSV_URLS.items():
+            _download_csv(name, path)
+        return True
+    except Exception as error:  # no rompe la corrida: sigue con validation + test
+        print(f"⚠ No se pudieron bajar los CSV de train ({error}); sigo solo con validation + test.")
+        return False
+
+
+def _download_csv(name: str, path: str) -> None:
+    target = config.OPENIMAGES_CSV_DIR / name
+    if not target.exists():
         print(f"Bajando {name}...")
         partial = target.with_suffix(".part")
         with requests.get("https://storage.googleapis.com/openimages/" + path, stream=True, timeout=60) as response:
@@ -107,13 +139,16 @@ def ensure_csvs() -> None:
         partial.rename(target)
 
 
-def load_annotations():
+def load_annotations(with_train: bool = False):
     names = pd.read_csv(config.OPENIMAGES_CSV_DIR / "oidv7-class-descriptions.csv")
     mid_to_name = dict(zip(names.iloc[:, 0], names.iloc[:, 1]))
     name_to_object = {oi: obj for obj, info in OBJECT_INFO.items() for oi in info["openimages"]}
 
     boxes, labels, rotations = [], [], {}
-    for folder, filename in SPLITS.items():
+    splits = [(folder, filename, IMAGE_LABELS[folder], ROTATIONS[folder]) for folder, filename in SPLITS.items()]
+    if with_train:
+        splits.append(TRAIN_SPLIT)
+    for folder, filename, labels_file, rotation_name in splits:
         b = pd.read_csv(config.OPENIMAGES_CSV_DIR / filename,
                         usecols=["ImageID", "LabelName", "XMin", "XMax", "YMin", "YMax", "IsGroupOf", "IsDepiction"])
         b["objeto"] = b["LabelName"].map(mid_to_name).map(name_to_object)
@@ -121,12 +156,12 @@ def load_annotations():
         b["folder"] = folder
         boxes.append(b)
 
-        l = pd.read_csv(config.OPENIMAGES_CSV_DIR / IMAGE_LABELS[folder], usecols=["ImageID", "LabelName", "Confidence"])
+        l = pd.read_csv(config.OPENIMAGES_CSV_DIR / labels_file, usecols=["ImageID", "LabelName", "Confidence"])
         l["name"] = l["LabelName"].map(mid_to_name)
         l = l[(l["Confidence"] == 1) & l["name"].isin(set(PLACE_LABELS) | INDOOR_HINTS | OUTDOOR_HINTS)]
         labels.append(l[["ImageID", "name"]])
 
-        rotation_file = config.OPENIMAGES_CSV_DIR / ROTATIONS[folder]
+        rotation_file = config.OPENIMAGES_CSV_DIR / rotation_name
         if rotation_file.exists():
             r = pd.read_csv(rotation_file, usecols=["ImageID", "Rotation"]).dropna()
             rotations.update(zip(r["ImageID"], r["Rotation"].astype(int)))
@@ -136,14 +171,17 @@ def load_annotations():
 
 
 def select_images(boxes: pd.DataFrame, count: int, rng: np.random.Generator) -> list[str]:
-    """Reparte la cuota entre objetos (los raros primero) para que todos aparezcan."""
+    """Reparte la cuota entre objetos (los raros primero) para que todos aparezcan; los de WALKING_BOOST
+    reciben mas."""
     useful = boxes[boxes["area"] >= 0.01]
     by_object = useful.groupby("objeto")["ImageID"].unique()
     order = sorted(by_object.index, key=lambda o: len(by_object[o]))
+    weight = {o: WALKING_BOOST.get(o, 1.0) for o in order}
     chosen, per_object = [], max(1, count // len(order))
     taken = set()
     for i, obj in enumerate(order):
-        quota = (count - len(chosen)) // (len(order) - i)
+        remaining_weight = sum(weight[o] for o in order[i:])
+        quota = int((count - len(chosen)) * weight[obj] / remaining_weight)
         candidates = [x for x in rng.permutation(by_object[obj]) if x not in taken][:max(quota, per_object // 2)]
         chosen += candidates
         taken.update(candidates)
@@ -214,11 +252,13 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--count", type=int, default=config.DEFAULT_IMAGE_COUNT)
     parser.add_argument("--workers", type=int, default=16)
+    parser.add_argument("--con-train", action="store_true",
+                        help="sumar el conjunto train de Open Images (1,7 M fotos; CSV de ~5,6 GB)")
     args = parser.parse_args()
 
-    ensure_csvs()
+    with_train = ensure_csvs(args.con_train) and args.con_train
     print("Leyendo anotaciones de Open Images...")
-    boxes, image_labels, rotations = load_annotations()
+    boxes, image_labels, rotations = load_annotations(with_train)
     labels_by_image = image_labels.groupby("ImageID")["name"].apply(set).to_dict()
     rng = np.random.default_rng(config.SEED)
     chosen = select_images(boxes, args.count, rng)

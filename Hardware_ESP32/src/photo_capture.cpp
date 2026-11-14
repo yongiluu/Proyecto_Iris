@@ -1,6 +1,5 @@
 // Firmware de CAPTURA DE FOTOS para entrenar: envia por USB los frames a color 160x120 (RGB565) que ve
-// la placa, para guardarlos con ML_Training/vision/capture_photos.py. El script guarda la foto a color
-// (descripcion de escenas) y su version 96x96 en grises (modelos de escenas y cercania).
+// la placa, para guardarlos con ML_Training/camara/capture_photos.py (fotos reales para entrenar Retina).
 // No usa BLE ni audio. Se compila solo en el entorno seeed_xiao_esp32s3_photo_capture de platformio.ini.
 #ifdef IRIS_PHOTO_CAPTURE
 

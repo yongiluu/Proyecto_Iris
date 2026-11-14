@@ -15,7 +15,6 @@ import 'package:iris_app/features/assistant/widgets/iris_logo.dart';
 import 'package:iris_app/features/assistant/widgets/mode_carousel.dart';
 import 'package:iris_app/features/assistant/widgets/settings_sheet.dart';
 import 'package:iris_app/features/assistant/widgets/streaming_answer.dart';
-import 'package:iris_app/features/assistant/widgets/vision_alert_banner.dart';
 import 'package:iris_app/services/ai/tts_service.dart';
 
 /// Pantalla de telefono chico (360x640 dp).
@@ -394,7 +393,6 @@ void main() {
               onOpenSettings: () {},
             ),
             status: const StatusLine(text: 'La placa no respondio. Leo con el celular...', active: false),
-            alert: const VisionAlertBanner(alert: VisionAlert(what: 'un cruce peatonal', confidence: 81)),
             carousel: ModeCarousel(
               answer: withAnswer
                   ? StreamingAnswer(
@@ -424,7 +422,7 @@ void main() {
       }
     }
 
-    testWidgets('pantalla con respuesta, aviso y todas las paginas', (tester) async {
+    testWidgets('pantalla con respuesta y todas las paginas', (tester) async {
       _phoneSize(tester);
       await pumpScreen(tester, withAnswer: true);
     });

@@ -11,9 +11,7 @@
 #include "ble_manager.h"
 #include "mic_driver.h"
 #include "photo_transfer.h"
-#include "proximity.h"
-#include "tflite_vision.h"
-#include "vision_task.h"
+#include "light_task.h"
 #include "light_meter.h"
 #include "model_store.h"
 #include "ocr_task.h"
@@ -25,9 +23,6 @@ constexpr uint32_t kDebounceMs = 50;
 constexpr uint32_t kStopFlushDelayMs = 80;
 
 volatile bool beepRequested = false;
-// Cercania (0 libre, 1 cerca, 2 muy cerca): la escribe la tarea de vision, el loop pita.
-volatile int proximityLevel = 0;
-uint32_t lastProximityBeepMs = 0;
 bool isTransmitting = false;
 bool sceneReady = false;        // la descripcion de escenas arranco (modelo "escena" en la particion)
 bool ocrReady = false;          // el lector de texto arranco (sus modelos estan en la particion)
@@ -108,7 +103,7 @@ void onCommandReceived(const char* command) {
   } else if (strcmp(command, "CMD_COLLECT_AUDIO_STOP") == 0) {
     collectingAudio = false;
   } else if (strcmp(command, "CMD_COLLECT_FRAME") == 0) {
-    requestGrayFrameCapture();
+    requestColorFrameCapture();
   } else if (strncmp(command, "CMD_VOLUME:", 11) == 0) {
     setVolumePercent(atoi(command + 11));
   } else if (strncmp(command, "CMD_AUDIO_BEGIN:", 16) == 0) {
@@ -150,7 +145,6 @@ void onAudioEvent(const char* label, int confidencePercent) {
   bleManager.sendCommand(command);
 }
 
-// Se ejecuta en la tarea de vision. Formato: CMD_VISION_EVENT:<clase>:<porcentaje>
 // Se ejecuta en la tarea de escenas. Formato: CMD_SCENE:<frase> (vacia si no pudo).
 // Modo en vivo: la escena cambio. Formato: CMD_SCENE_LIVE:<frase>.
 void onSceneLive(const char* sentence) {
@@ -174,44 +168,11 @@ void onTextRead(const char* text) {
 }
 #endif
 
-void onVisionEvent(const char* label, int confidencePercent) {
-  if (isIrisSpeaking()) return;  // no cortar la respuesta de Iris
-  char command[48];
-  snprintf(command, sizeof(command), "CMD_VISION_EVENT:%s:%d", label, confidencePercent);
-  bleManager.sendCommand(command);
-}
-
 // Contexto silencioso (cada AMBIENT_CONTEXT_PERIOD_MS). Formato: CMD_AUDIO_CONTEXT:<clase>:<%>
 void onAudioContext(const char* label, int percent) {
   char command[48];
   snprintf(command, sizeof(command), "CMD_AUDIO_CONTEXT:%s:%d", label, percent);
   bleManager.sendCommand(command);
-}
-
-// Formato: CMD_VISION_CONTEXT:<clase>:<%>
-void onVisionContext(const char* label, int percent) {
-  char command[48];
-  snprintf(command, sizeof(command), "CMD_VISION_CONTEXT:%s:%d", label, percent);
-  bleManager.sendCommand(command);
-}
-
-// Se ejecuta en la tarea de vision cuando cambia el nivel. Formato: CMD_PROXIMITY:<nivel>:<porcentaje>
-void onProximityChange(int level, int percent) {
-  proximityLevel = level;
-  char command[40];
-  snprintf(command, sizeof(command), "CMD_PROXIMITY:%d:%d", level, percent);
-  bleManager.sendCommand(command);
-  Serial.printf("[Cercania IA] Nivel %d (%d%%)\n", level, percent);
-}
-
-// Pitidos como el sensor de retroceso de un auto: mas rapidos y agudos mientras mas cerca.
-void handleProximityBeeps() {
-  const int level = proximityLevel;
-  if (!PROXIMITY_BEEPS_ENABLED || level == 0 || isTransmitting) return;
-  const uint32_t interval = level == 2 ? PROXIMITY_BEEP_VERY_NEAR_MS : PROXIMITY_BEEP_NEAR_MS;
-  if (millis() - lastProximityBeepMs < interval) return;
-  lastProximityBeepMs = millis();
-  playTone(level == 2 ? 1760.0f : 1175.0f, 70);
 }
 
 // Se ejecuta en la tarea de inferencia de audio: solo avisa al loop.
@@ -229,7 +190,7 @@ void startPushToTalk() {
   stopPlayback();  // si Iris estaba hablando, se calla para escuchar la pregunta nueva
   txCount = 0;  // con el boton no se manda el audio de antes
   isTransmitting = true;
-  setVisionPaused(true);
+  setLightPaused(true);
   setAudioEventsPaused(true);
   bleManager.sendCommand("CMD_PTT_START");
 }
@@ -239,7 +200,7 @@ void stopPushToTalk() {
   isTransmitting = false;
   wakeSession = false;
   flushTxQueue();
-  setVisionPaused(false);
+  setLightPaused(false);
   setAudioEventsPaused(false);
   delay(kStopFlushDelayMs); // deja vaciar la cola BLE de audio antes del STOP
   bleManager.sendCommand("CMD_PTT_STOP");
@@ -264,7 +225,7 @@ void startWakeSession(int percent) {
   wakeSession = true;
   heardSpeech = false;
   wakeStartMs = lastVoiceMs = millis();
-  setVisionPaused(true);
+  setLightPaused(true);
   setAudioEventsPaused(true);
   bleManager.sendCommand("CMD_PTT_START");
   playTone(1320.0f, 60);
@@ -292,7 +253,7 @@ void enterOtaMode(const char* reason) {
   if (isTransmitting) stopPushToTalk();
   collectingAudio = false;
   requestLightMeter(false);
-  setVisionPaused(true);
+  setLightPaused(true);
   setAudioEventsPaused(true);
   shutdownCamera();
   if (startOtaUpdate()) {
@@ -378,14 +339,12 @@ void setup() {
   if (!initAudioPlayer()) Serial.println("Error al inicializar el reproductor de audio");
   if (!initMic()) Serial.println("Error al inicializar el microfono");
 
-  if (!initVisionAI(onVisionEvent, onVisionContext)) Serial.println("Error al iniciar la vision local");
-  if (!initProximityAI(onProximityChange)) Serial.println("Error al iniciar la deteccion de cercania");
   if (!startAudioEvents(onAudioEvent, onAudioContext, onWakeWord)) Serial.println("Error al iniciar la deteccion de audio");
 
   bleManager.init(onAudioReceived, onCommandReceived);
 
   if (!startPhotoTask()) Serial.println("Error al crear la tarea de fotos");
-  if (!startVisionTask()) Serial.println("Error al crear la tarea de vision");
+  if (!startLightTask()) Serial.println("Error al crear la tarea del detector de luz");
   modelStoreBegin();  // modelos fuera del programa (lector de texto...); solo informa lo que hay
   sceneReady = startSceneTask(onSceneDescribed, onSceneLive);
   if (!sceneReady) Serial.println("Descripcion de escenas apagada (falta su modelo): la app describe con la nube");
@@ -422,8 +381,6 @@ void loop() {
     appPttStopRequested = false;
     if (isTransmitting) stopPushToTalk();
   }
-
-  handleProximityBeeps();
 
   if (beepRequested) {
     beepRequested = false;
@@ -467,7 +424,7 @@ void loop() {
   if (isTransmitting && !bleManager.isConnected()) {
     isTransmitting = false;
     wakeSession = false;
-    setVisionPaused(false);
+    setLightPaused(false);
     setAudioEventsPaused(false);
   }
   if (collectingAudio && !bleManager.isConnected()) collectingAudio = false;

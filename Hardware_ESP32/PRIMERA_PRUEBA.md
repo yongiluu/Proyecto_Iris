@@ -38,16 +38,15 @@ Iris ESP32 listo. Esperando conexion BLE...
 
 Si el wake word no carga, el resto sigue funcionando: la pregunta se hace con el botón. Para apagarlo, pon `WAKE_WORD_ENABLED 0` en `include/config.h`.
 
-Para ver los puntajes en vivo, pon `VISION_EVENTS_DEBUG 1` y/o `AUDIO_EVENTS_DEBUG 1` en `include/config.h` y vuelve a subir.
+Para ver los puntajes en vivo, pon `AUDIO_EVENTS_DEBUG 1` en `include/config.h` y vuelve a subir.
 
 ## 3. Probar con la app
 
 1. Instala el APK (desde `App_Flutter/`, con el celular conectado por USB y la depuración activada): `flutter install`.
 2. En la app, elige el modo **Placa ESP32**. Debe decir "Bluetooth conectado".
-3. Apunta la cámara a una puerta o escalera a 1–2 m: la app debería decir "Adelante hay una puerta". La placa no repite la misma clase antes de 8 s, y la app tampoco antes de 20 s.
-4. Pregúntale algo a Iris ("¿qué hay a mi alrededor?"): la respuesta usa el contexto de lo que oyó y vio la placa.
+3. Pregúntale "¿qué hay adelante?": contesta Retina, el modelo de escenas de la placa, sin internet (si sus modelos están grabados: `python tools/subir_modelos.py --usb`). "Describe en vivo" avisa solo cuando algo cambia.
+4. Pregúntale algo a Iris ("¿qué tiempo hace?"): la respuesta usa la nube y el contexto de lo que oyó la placa.
 5. **"Oye Iris"** sin tocar el botón. Debería sonar un tono corto y en el serial aparecer `[Wake word] Oye Iris (9x%)`. Después haz tu pregunta: la placa corta sola cuando dejas de hablar (`[Wake word] Fin de la pregunta`). Si no despierta, acércate o dilo más claro. Con `AUDIO_EVENTS_DEBUG 1` el serial muestra el puntaje (despierta con 0,90 o más). Anota cuántas veces de 10 despierta y si alguna vez despertó sin que lo dijeras: con eso se ajusta el umbral.
-6. Los pitidos de cercanía están **apagados** (`PROXIMITY_BEEPS_ENABLED 0`): con fotos reales daban muchos avisos falsos.
 
 ## 4. Datos reales (lo que más mejora los modelos)
 

@@ -68,12 +68,14 @@ class Esp32SpeechService {
   int _expectedPhotoSize = 0;
   Completer<Uint8List?>? _photoCompleter;
 
-  // Frame 96x96 en grises (modo recoleccion). Comparte la caracteristica de foto con el JPEG.
+  // Frame de recoleccion de datos: 160x120 a color RGB565 (la entrada del modelo de escenas de la
+  // placa) o, con firmware anterior, 96x96 en grises. Comparte la caracteristica de foto con el JPEG.
   final BytesBuilder _frameBuffer = BytesBuilder(copy: false);
   bool _isReceivingFrame = false;
   int _frameWidth = 0;
   int _frameHeight = 0;
-  Completer<GrayFrame?>? _frameCompleter;
+  bool _frameIsRgb565 = false;
+  Completer<CameraFrame?>? _frameCompleter;
 
   int _audioSession = 0;
   bool _isSendingAudio = false;
@@ -158,15 +160,8 @@ class Esp32SpeechService {
   /// Alerta de sonido detectada por el modelo de la placa (ej. 'sirena', 87).
   void Function(String label, int confidencePercent)? onAudioEvent;
 
-  /// Algo visto por la camara de la placa (ej. 'escalera', 84).
-  void Function(String label, int confidencePercent)? onVisionEvent;
-
-  /// Resumen silencioso cada ~10 s de lo que oye / ve la placa (clase mas frecuente y su %).
+  /// Resumen silencioso cada ~10 s de lo que oye la placa (clase mas frecuente y su %).
   void Function(String label, int percent)? onAudioContext;
-  void Function(String label, int percent)? onVisionContext;
-
-  /// Cercania de la placa (ella misma pita): 0 libre, 1 cerca, 2 muy cerca. Solo al cambiar.
-  void Function(int level, int percent)? onProximity;
 
   /// Detector de luz de la placa: true/false al encenderse/apagarse (tambien se apaga solo).
   final ValueNotifier<bool> lightMeterOn = ValueNotifier(false);
@@ -583,10 +578,6 @@ class Esp32SpeechService {
       // CMD_AUDIO_EVENT:<clase>:<porcentaje>
       final parts = command.split(':');
       if (parts.length >= 3) onAudioEvent?.call(parts[1], int.tryParse(parts[2]) ?? 0);
-    } else if (command.startsWith('CMD_VISION_EVENT:')) {
-      // CMD_VISION_EVENT:<clase>:<porcentaje>
-      final parts = command.split(':');
-      if (parts.length >= 3) onVisionEvent?.call(parts[1], int.tryParse(parts[2]) ?? 0);
     } else if (command.startsWith('CMD_WAKE_WORD:')) {
       onWakeWord?.call(int.tryParse(command.split(':')[1]) ?? 0);
     } else if (command.startsWith('CMD_SCENE_LIVE:')) {
@@ -609,21 +600,16 @@ class Esp32SpeechService {
       } else {
         lightLevel.value = int.tryParse(value);
       }
-    } else if (command.startsWith('CMD_PROXIMITY:')) {
-      // CMD_PROXIMITY:<nivel>:<porcentaje>
-      final parts = command.split(':');
-      if (parts.length >= 3) onProximity?.call(int.tryParse(parts[1]) ?? 0, int.tryParse(parts[2]) ?? 0);
     } else if (command.startsWith('CMD_AUDIO_CONTEXT:')) {
       final parts = command.split(':');
       if (parts.length >= 3) onAudioContext?.call(parts[1], int.tryParse(parts[2]) ?? 0);
-    } else if (command.startsWith('CMD_VISION_CONTEXT:')) {
-      final parts = command.split(':');
-      if (parts.length >= 3) onVisionContext?.call(parts[1], int.tryParse(parts[2]) ?? 0);
     } else if (command.startsWith('CMD_FRAME_START:')) {
-      // CMD_FRAME_START:<ancho>:<alto>
+      // CMD_FRAME_START:<ancho>:<alto>:rgb565 (color) o CMD_FRAME_START:<ancho>:<alto> (grises,
+      // firmware anterior).
       final parts = command.split(':');
       _frameWidth = parts.length >= 3 ? int.tryParse(parts[1]) ?? 0 : 0;
       _frameHeight = parts.length >= 3 ? int.tryParse(parts[2]) ?? 0 : 0;
+      _frameIsRgb565 = parts.length >= 4 && parts[3].trim().toLowerCase() == 'rgb565';
       _frameBuffer.clear();
       _isReceivingFrame = true;
     } else if (command == 'CMD_FRAME_END' || command == 'CMD_FRAME_ERROR') {
@@ -649,11 +635,16 @@ class Esp32SpeechService {
   void _finishFrame({required bool ok}) {
     _isReceivingFrame = false;
     final bytes = _frameBuffer.takeBytes();
-    final complete = ok && _frameWidth > 0 && bytes.length == _frameWidth * _frameHeight;
-    if (ok && !complete) debugPrint('Frame descartado: ${bytes.length} bytes de ${_frameWidth * _frameHeight}');
+    final expected = _frameWidth * _frameHeight * (_frameIsRgb565 ? 2 : 1);
+    final complete = ok && _frameWidth > 0 && bytes.length == expected;
+    if (ok && !complete) debugPrint('Frame descartado: ${bytes.length} bytes de $expected');
     final completer = _frameCompleter;
     if (completer != null && !completer.isCompleted) {
-      completer.complete(complete ? GrayFrame(_frameWidth, _frameHeight, bytes) : null);
+      completer.complete(!complete
+          ? null
+          : _frameIsRgb565
+              ? CameraFrame.fromRgb565(_frameWidth, _frameHeight, bytes)
+              : CameraFrame(_frameWidth, _frameHeight, bytes));
     }
   }
 
@@ -723,15 +714,17 @@ class Esp32SpeechService {
 
   // ───────────────────────── Recoleccion de datos ─────────────────────────
 
-  /// Pide el frame 96x96 en grises que ve el modelo de vision. null si falla o expira.
-  Future<GrayFrame?> captureGrayFrame() async {
+  /// Pide el frame de recoleccion: 160x120 a color (lo que ve el modelo de escenas de la placa) o,
+  /// con firmware anterior, 96x96 en grises. null si falla o expira.
+  Future<CameraFrame?> captureCollectFrame() async {
     final command = _commandCharacteristic;
     if (command == null || !isConnected) return null;
     if (_frameCompleter != null && !_frameCompleter!.isCompleted) return null;
 
-    final completer = Completer<GrayFrame?>();
+    final completer = Completer<CameraFrame?>();
     _frameCompleter = completer;
-    final timeout = Timer(const Duration(seconds: 5), () {
+    // El frame a color pesa ~38 KB (4 veces el de grises): mas margen por Bluetooth.
+    final timeout = Timer(const Duration(seconds: 10), () {
       _isReceivingFrame = false;
       if (!completer.isCompleted) completer.complete(null);
     });
@@ -1071,11 +1064,32 @@ class IrisBoard {
       (nickname != null && nickname.isNotEmpty) ? nickname : 'Iris · ${id.length > 5 ? id.substring(id.length - 5) : id}';
 }
 
-/// Imagen en grises (1 byte por pixel) tal como la entrega la camara de la placa.
-class GrayFrame {
+/// Imagen de la camara (placa o celular): en grises (1 byte por pixel) o a color RGB (3 bytes por
+/// pixel, en orden R, G, B), fila por fila desde arriba.
+class CameraFrame {
   final int width;
   final int height;
   final Uint8List pixels;
+  final int channels;
 
-  const GrayFrame(this.width, this.height, this.pixels);
+  const CameraFrame(this.width, this.height, this.pixels, {this.channels = 1});
+
+  bool get isColor => channels == 3;
+
+  /// Convierte RGB565 (2 bytes por pixel, el byte alto primero, como lo entrega esp_camera) a RGB
+  /// de 8 bits por canal. Los 5/6 bits se escalan repitiendo los bits altos: 31 -> 255, 63 -> 255.
+  factory CameraFrame.fromRgb565(int width, int height, Uint8List data) {
+    final count = width * height;
+    final rgb = Uint8List(count * 3);
+    for (int i = 0; i < count; i++) {
+      final v = (data[i * 2] << 8) | data[i * 2 + 1];
+      final r = (v >> 11) & 0x1F;
+      final g = (v >> 5) & 0x3F;
+      final b = v & 0x1F;
+      rgb[i * 3] = (r << 3) | (r >> 2);
+      rgb[i * 3 + 1] = (g << 2) | (g >> 4);
+      rgb[i * 3 + 2] = (b << 3) | (b >> 2);
+    }
+    return CameraFrame(width, height, rgb, channels: 3);
+  }
 }

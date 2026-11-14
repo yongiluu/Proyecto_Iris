@@ -3,6 +3,7 @@
 La entrada del alumno es EXACTAMENTE lo que ve la placa: la camara entrega color 160x120 RGB565
 (camera_driver.cpp, CAMERA_COLOR_FRAME_SIZE) y el modelo recibe ese frame completo en RGB888.
 """
+import os
 from pathlib import Path
 
 # ─── Rutas ───
@@ -11,10 +12,13 @@ ML_DIR = SCENE_DIR.parent
 REPO_DIR = ML_DIR.parent
 DATA_DIR = ML_DIR / "data" / "scene"
 IMAGES_DIR = DATA_DIR / "images"                  # <fuente>/<id>.jpg a color, lado corto TEACHER_SHORT_SIDE
-BOARD_IMAGES_DIR = ML_DIR / "data" / "scene_board"  # fotos reales 160x120 de la placa (vision/capture_photos.py)
-OPENIMAGES_CSV_DIR = ML_DIR / "data" / "raw" / "openimages"  # CSV que ya bajo vision/download_datasets.py
+BOARD_IMAGES_DIR = ML_DIR / "data" / "scene_board"  # fotos reales 160x120 de la placa (camara/capture_photos.py)
+OPENIMAGES_CSV_DIR = ML_DIR / "data" / "raw" / "openimages"  # CSV de Open Images (los baja scene/download_images.py)
 AUTO_LABELS = DATA_DIR / "labels_auto.jsonl"      # etiquetas automaticas (cajas de Open Images + colores)
-TEACHER_LABELS_GLOB = "labels_teacher_*.jsonl"    # etiquetas del modelo grande (label_teacher.py)
+# Etiquetas del modelo grande (label_teacher.py). Con varios profesores (ej. una prueba de 300 fotos de
+# otro), IRIS_PROFESOR=<nombre corto> elige uno solo para entrenar (ej. qwen3-vl-8b-instruct).
+TEACHER_LABELS_GLOB = (f"labels_teacher_{os.environ['IRIS_PROFESOR']}.jsonl" if os.environ.get("IRIS_PROFESOR")
+                       else "labels_teacher_*.jsonl")
 MODELS_DIR = ML_DIR / "models"
 FIRMWARE_INCLUDE = REPO_DIR / "Hardware_ESP32" / "include"
 FIRMWARE_SRC = REPO_DIR / "Hardware_ESP32" / "src"

@@ -202,7 +202,6 @@ RESPONDE EN ESPANOL, EN 2 A 4 FRASES CORTAS.
     Function(String status)? onStatusUpdate,
     String? sensorContext,
     void Function()? onVisionStart,
-    String? Function()? visionFallback,
   }) async {
     debugPrint('🧠 OccipitalAgentService: Thinking about prompt: $userPrompt');
     onStatusUpdate?.call('Pensando...');
@@ -215,7 +214,6 @@ RESPONDE EN ESPANOL, EN 2 A 4 FRASES CORTAS.
         onStatusUpdate: onStatusUpdate,
         sensorContext: sensorContext,
         onVisionStart: onVisionStart,
-        visionFallback: visionFallback,
       );
     }
 
@@ -235,7 +233,6 @@ RESPONDE EN ESPANOL, EN 2 A 4 FRASES CORTAS.
         onStatusUpdate: onStatusUpdate,
         sensorContext: sensorContext,
         onVisionStart: onVisionStart,
-        visionFallback: visionFallback,
       );
     }
 
@@ -279,8 +276,7 @@ RESPONDE EN ESPANOL, EN 2 A 4 FRASES CORTAS.
             onStatusUpdate: onStatusUpdate,
             sensorContext: sensorContext,
             onVisionStart: onVisionStart,
-            visionFallback: visionFallback,
-          );
+              );
         }
         toolCalls = [
           {
@@ -303,7 +299,7 @@ RESPONDE EN ESPANOL, EN 2 A 4 FRASES CORTAS.
           onStatusUpdate: onStatusUpdate,
         );
         // Si la camara fallo, responder al tiro en vez de hacer otra vuelta al modelo.
-        if (result.cameraFailed) return _cameraFailed(visionFallback);
+        if (result.cameraFailed) return cameraFailedMessage;
         messages.add({
           'role': 'tool',
           'tool_call_id': call['id'],
@@ -346,7 +342,6 @@ RESPONDE EN ESPANOL, EN 2 A 4 FRASES CORTAS.
     Function(String status)? onStatusUpdate,
     String? sensorContext,
     void Function()? onVisionStart,
-    String? Function()? visionFallback,
   }) async {
     final backend = BackendService.instance;
     // Ultima posicion conocida: es instantanea (no espera al GPS) y le sirve al clima/ubicacion.
@@ -360,7 +355,7 @@ RESPONDE EN ESPANOL, EN 2 A 4 FRASES CORTAS.
       final photo = captureImageCallback();
       onVisionStart?.call();
       final image = await photo;
-      if (image == null) return _cameraFailed(visionFallback);
+      if (image == null) return cameraFailedMessage;
       onStatusUpdate?.call('Analizando vision...');
       final reply = await backend.askAgent(
           text: userPrompt, image: image, sensorContext: sensorContext,
@@ -392,13 +387,12 @@ RESPONDE EN ESPANOL, EN 2 A 4 FRASES CORTAS.
     Function(String status)? onStatusUpdate,
     String? sensorContext,
     void Function()? onVisionStart,
-    String? Function()? visionFallback,
   }) async {
     onStatusUpdate?.call('Mirando...');
     final photo = captureImageCallback();
     onVisionStart?.call();
     final imageBytes = await photo;
-    if (imageBytes == null) return _cameraFailed(visionFallback);
+    if (imageBytes == null) return cameraFailedMessage;
 
     onStatusUpdate?.call('Analizando vision...');
     try {
@@ -428,14 +422,6 @@ RESPONDE EN ESPANOL, EN 2 A 4 FRASES CORTAS.
       debugPrint('Exception in OccipitalAgentService (vision): $e');
       return 'Hubo un problema de conexion. Intentalo de nuevo.';
     }
-  }
-
-  /// Respuesta rapida si la foto fallo, con lo ultimo que vio la vision local de respaldo.
-  String _cameraFailed(String? Function()? visionFallback) {
-    final seen = visionFallback?.call();
-    return seen == null
-        ? cameraFailedMessage
-        : '$cameraFailedMessage Lo ultimo que detecto la placa fue $seen.';
   }
 
   Future<({String text, Map<String, dynamic>? imageMessage, bool cameraFailed})> _runTool(

@@ -1,7 +1,8 @@
 """Referencia en Python de las conversiones de imagen del firmware (Hardware_ESP32/src/image_convert.cpp).
 
-La camara de la placa entrega color RGB565 160x120. Los modelos en grises reciben el cuadrado central
-reducido a 96x96 con la MISMA aritmetica entera que aca; tests/test_image_convert.py lo verifica.
+La camara de la placa entrega color RGB565 160x120. Retina (scene/) recibe el frame completo en RGB888
+(unpack_rgb565). El medidor de luz de la placa usa el cuadrado central reducido a 96x96 en grises
+(rgb_to_gray96) con la MISMA aritmetica entera que aca; tests/test_image_convert.py lo verifica.
 """
 import numpy as np
 

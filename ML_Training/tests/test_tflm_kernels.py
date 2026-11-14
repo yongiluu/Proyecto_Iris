@@ -1,11 +1,11 @@
 """Verifica en el PC la libreria TFLM del firmware con los kernels ESP-NN (lib/TensorFlowLite_ESP32).
 
-    python tests/test_tflm_kernels.py            # 300 ejemplos de test de cada modelo
+    python tests/test_tflm_kernels.py            # 300 ejemplos de test de cada modelo (audio y wake word)
     python tests/test_tflm_kernels.py --n 1000
 
 Compila la libreria con el compilador de `ziglang` (como test_frontend.py), usando la version en C de
 ESP-NN (la misma logica que el ensamblador del ESP32-S3, que solo corre en el chip) y los kernels
-"pegamento" esp_nn/*.cpp de TFLM que usa la placa. Corre los modelos de vision y audio sobre datos
+"pegamento" esp_nn/*.cpp de TFLM que usa la placa. Corre los modelos de audio y wake word sobre datos
 reales de test y compara la salida int8 con el interprete de TensorFlow (kernels de referencia).
 Asi se detecto que la capa FULLY_CONNECTED cuantizada por canal salia mal en la placa (ver export_model).
 
@@ -153,26 +153,11 @@ def main() -> None:
     rng = np.random.default_rng(0)
     ok = True
 
-    vision = np.load(ML_DIR / "data" / "vision_dataset.npz")
-    x = vision["x_test"]
-    x = x[rng.choice(len(x), min(args.n, len(x)), replace=False)]
-    ok &= check("vision", ML_DIR / "models" / "vision_scenes_int8.tflite",
-                x.astype(np.float32)[..., None] / 127.5 - 1.0,
-                declared_arena("vision_model_data.h", "kVisionTensorArenaSize"))
-
     audio = np.load(ML_DIR / "data" / "audio_dataset.npz")
     x = audio["x_test"]
     ok &= check("audio", ML_DIR / "models" / "audio_events_int8.tflite",
                 x[rng.choice(len(x), min(args.n, len(x)), replace=False)],
                 declared_arena("audio_model_data.h", "kAudioTensorArenaSize"))
-
-    proximity_file = ML_DIR / "data" / "proximity_dataset.npz"
-    if proximity_file.exists() and (ML_DIR / "models" / "proximity_int8.tflite").exists():
-        x = np.load(proximity_file)["x_test"]
-        x = x[rng.choice(len(x), min(args.n, len(x)), replace=False)]
-        ok &= check("cercania", ML_DIR / "models" / "proximity_int8.tflite",
-                    x.astype(np.float32)[..., None] / 127.5 - 1.0,
-                    declared_arena("proximity_model_data.h", "kProximityTensorArenaSize"))
 
     wake_file = ML_DIR / "data" / "wakeword_dataset.npz"
     if wake_file.exists() and (ML_DIR / "models" / "wakeword_int8.tflite").exists():

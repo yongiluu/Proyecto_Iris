@@ -378,14 +378,14 @@ class _MissionScreenState extends State<MissionScreen> {
         !_cancelRequested &&
         (_usePhone || widget.esp32.isConnected)) {
       final started = DateTime.now();
-      GrayFrame? frame;
+      CameraFrame? frame;
       Uint8List? colorJpeg;
       if (_usePhone && _mission.saveColorJpeg) {
-        final shot = await widget.phone.takeGrayAndColor();
-        frame = shot?.gray;
+        final shot = await widget.phone.takeFrameAndJpeg();
+        frame = shot?.frame;
         colorJpeg = shot?.colorJpeg;
       } else {
-        frame = _usePhone ? await widget.phone.takeGrayFrame() : await widget.esp32.captureGrayFrame();
+        frame = _usePhone ? await widget.phone.takeColorFrame() : await widget.esp32.captureCollectFrame();
       }
       if (frame == null) {
         if (++failures >= 5) {
@@ -399,7 +399,7 @@ class _MissionScreenState extends State<MissionScreen> {
       failures = 0;
       await widget.store.savePhoto(_mission, frame, take, _photosThisTake, colorJpeg: colorJpeg);
       _photosThisTake++;
-      final preview = encodeGrayBmp(frame);
+      final preview = encodeFrame(frame);
       if (mounted) setState(() => _preview = preview);
       final wait = Duration(milliseconds: _mission.photoIntervalMs) - DateTime.now().difference(started);
       if (wait > Duration.zero) await Future.delayed(wait);
@@ -446,14 +446,14 @@ class _MissionScreenState extends State<MissionScreen> {
     final uploaded = <File>[];
     for (final file in toDelete) {
       uploaded.add(file);
-      final color = File(file.path.replaceAll(RegExp(r'\.bmp$'), '.jpg'));
+      final color = File(file.path.replaceAll(RegExp(r'\.(png|bmp)$'), '.jpg'));
       if (color.path != file.path) uploaded.add(color);
     }
     unawaited(TrainingUploadQueue.instance.forget(uploaded));
     for (final file in toDelete) {
       await file.delete();
-      // El JPEG a color de las misiones de cercania va junto a su BMP.
-      final jpg = File(file.path.replaceAll(RegExp(r'\.bmp$'), '.jpg'));
+      // El JPEG de las misiones de cercania va junto a su foto (PNG o BMP).
+      final jpg = File(file.path.replaceAll(RegExp(r'\.(png|bmp)$'), '.jpg'));
       if (jpg.path != file.path && await jpg.exists()) await jpg.delete();
     }
     await _refresh();
@@ -570,7 +570,7 @@ class _MissionScreenState extends State<MissionScreen> {
             child: ConstrainedBox(
               constraints: const BoxConstraints(maxWidth: 320, maxHeight: 320),
               child: AspectRatio(
-                aspectRatio: 1,
+                aspectRatio: 4 / 3, // frame 160x120 de la camara
                 child: Image.memory(preview, fit: BoxFit.contain, gaplessPlayback: true, filterQuality: FilterQuality.none),
               ),
             ),
@@ -578,8 +578,8 @@ class _MissionScreenState extends State<MissionScreen> {
         const SizedBox(height: 8),
         Text(
           preview == null
-              ? 'Aqui veras lo que ve el modelo (96x96)'
-              : 'Lo que ve el modelo (96x96, ${_usePhone ? 'celular' : 'modulo'})',
+              ? 'Aqui veras lo que ve el modelo (160x120 a color)'
+              : 'Lo que ve el modelo (160x120, ${_usePhone ? 'celular' : 'modulo'})',
           textAlign: TextAlign.center,
         ),
         if (_busy) Text('$_photosThisTake/${_mission.photosPerTake}'),

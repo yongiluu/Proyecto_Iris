@@ -2,6 +2,7 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:archive/archive_io.dart';
+import 'package:image/image.dart' as img;
 import 'package:path_provider/path_provider.dart';
 
 import '../../services/hardware/esp32_speech_service.dart';
@@ -12,7 +13,8 @@ import 'training_upload_queue.dart';
 /// ML_Training/import_phone_data.py:
 /// ```text
 /// iris_dataset/audio/<clase>/<clase>__<ambiente>__<mision>__<origen>-<fecha>.wav
-/// iris_dataset/vision/<clase>/<clase>__<ambiente>__<mision>__<origen>-<fecha>_<n>.bmp
+/// iris_dataset/vision/<clase>/<clase>__<ambiente>__<mision>__<origen>-<fecha>_<n>.png
+///   (160x120 RGB, la entrada del modelo de escenas; .bmp 96x96 grises si la placa tiene firmware anterior)
 /// iris_dataset/vision/cercania/...<n>.jpg   (solo misiones de cercania en modo Celular)
 /// iris_dataset/registro.csv
 /// ```
@@ -37,8 +39,8 @@ class DatasetStore {
     return '${now.year}${two(now.month)}${two(now.day)}_${two(now.hour)}${two(now.minute)}${two(now.second)}';
   }
 
-  /// Archivos ya guardados de una mision (grabaciones o fotos BMP; los JPEG a color acompanan
-  /// a su BMP y no cuentan aparte).
+  /// Archivos ya guardados de una mision (grabaciones o fotos PNG/BMP; los JPEG de las misiones de
+  /// cercania acompanan a su foto y no cuentan aparte).
   Future<List<File>> files(Mission mission) async {
     final folder = _folder(mission);
     if (!await folder.exists()) return [];
@@ -82,12 +84,12 @@ class DatasetStore {
   }
 
   /// Guarda una tanda de fotos. `take` = marca de tiempo comun a la tanda.
-  Future<File> savePhoto(Mission mission, GrayFrame frame, String take, int index, {Uint8List? colorJpeg}) async {
+  Future<File> savePhoto(Mission mission, CameraFrame frame, String take, int index, {Uint8List? colorJpeg}) async {
     final folder = _folder(mission);
     await folder.create(recursive: true);
     final base = '${folder.path}/${_prefix(mission)}${take}_${index.toString().padLeft(3, '0')}';
-    final file = File('$base.bmp');
-    await file.writeAsBytes(encodeGrayBmp(frame));
+    final file = File('$base.${frameExtension(frame)}');
+    await file.writeAsBytes(encodeFrame(frame));
     final source = take.startsWith('placa') ? 'placa' : 'cel';
     await _upload(mission, file, source);
     if (colorJpeg != null) {
@@ -138,16 +140,31 @@ class DatasetStore {
     await for (final entity in root.list(recursive: true)) {
       if (entity is! File) continue;
       if (entity.path.endsWith('.wav')) audios++;
-      if (entity.path.endsWith('.bmp')) photos++;
+      if (entity.path.endsWith('.png') || entity.path.endsWith('.bmp')) photos++;
       bytes += await entity.length();
     }
     return (audios: audios, photos: photos, bytes: bytes);
   }
 }
 
+/// Extension del archivo de un frame: 'png' (color) o 'bmp' (grises, firmware anterior).
+String frameExtension(CameraFrame frame) => frame.isColor ? 'png' : 'bmp';
+
+/// Archivo del frame: PNG RGB si es a color, BMP de 8 bits si es en grises. Sirve tambien para la
+/// vista previa (Image.memory lee los dos).
+Uint8List encodeFrame(CameraFrame frame) => frame.isColor ? encodeRgbPng(frame) : encodeGrayBmp(frame);
+
+/// PNG RGB (sin canal alfa): lo leen Flutter y Python/PIL sin perdidas.
+Uint8List encodeRgbPng(CameraFrame frame) {
+  final image = img.Image.fromBytes(
+      width: frame.width, height: frame.height, bytes: frame.pixels.buffer,
+      bytesOffset: frame.pixels.offsetInBytes, numChannels: 3);
+  return img.encodePng(image);
+}
+
 /// BMP de 8 bits en grises (paleta de 256 tonos): lo lee Flutter para la vista previa y
 /// Python/PIL al importarlo en el PC, sin librerias extra.
-Uint8List encodeGrayBmp(GrayFrame frame) {
+Uint8List encodeGrayBmp(CameraFrame frame) {
   final rowSize = (frame.width + 3) & ~3;
   const headerSize = 14 + 40 + 256 * 4;
   final fileSize = headerSize + rowSize * frame.height;

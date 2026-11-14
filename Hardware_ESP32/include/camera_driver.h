@@ -15,8 +15,8 @@ const char* cameraSensorName();
 camera_fb_t* acquireColorFrame();
 void releaseColorFrame(camera_fb_t* frame);
 
-// Toma un frame a color y lo deja en out como 96x96 en grises (cuadrado central), la entrada de los
-// modelos en grises (escenas y cercania). out debe tener 96*96 bytes. false si no hubo frame.
+// Toma un frame a color y deja en out el brillo del cuadrado central reducido a 96x96. Solo lo usa el
+// detector de luz (ningun modelo ve grises). out debe tener 96*96 bytes. false si no hubo frame.
 bool captureGray96(uint8_t* out);
 
 // Foto 640x480 en grises para el lector de texto (OCR). Reconfigura la camara y la restaura en release.

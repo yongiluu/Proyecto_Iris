@@ -21,7 +21,7 @@ class Mission {
   final int secondsPerTake; // audio
   final int photosPerTake;  // fotos
   final int photoIntervalMs; // pausa entre fotos de una tanda
-  /// Ademas del BMP 96x96, guarda en modo Celular un JPEG a color de 320 px de lado corto
+  /// Ademas de la foto 160x120, guarda en modo Celular un JPEG a color de 320 px de lado corto
   /// (lo etiqueta en el PC un modelo de profundidad: ML_Training/vision/depth_labels.py).
   final bool saveColorJpeg;
   /// Titulo de seccion en la lista (null = sin seccion propia).

@@ -25,7 +25,22 @@ HEADER_BYTES = 32
 ENTRY_BYTES = 48
 NAME_BYTES = 24
 ALIGN = 16
-PARTITION_BYTES = 0x200000  # partitions_iris_8MB.csv: modelos
+PARTITIONS_CSV = Path(__file__).resolve().parents[2] / "Hardware_ESP32" / "partitions_iris_8MB.csv"
+
+
+def _partition_bytes(name: str = "modelos", default: int = 0x400000) -> int:
+    """Tamano de la particion "modelos" segun la tabla del firmware (asi no quedan desfasados)."""
+    try:
+        for line in PARTITIONS_CSV.read_text(encoding="utf-8").splitlines():
+            fields = [f.strip() for f in line.split(",")]
+            if fields and fields[0] == name and len(fields) >= 5:
+                return int(fields[4], 0)
+    except OSError:
+        pass
+    return default
+
+
+PARTITION_BYTES = _partition_bytes()
 
 
 def _load_manifest() -> dict:

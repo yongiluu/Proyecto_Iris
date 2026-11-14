@@ -1,5 +1,5 @@
 """Verifica que la conversion de imagen del firmware (color RGB565 -> grises 96x96 y -> RGB888) de
-EXACTAMENTE lo mismo que la referencia de Python (vision/board_image.py) que usa el entrenamiento.
+EXACTAMENTE lo mismo que la referencia de Python (camara/board_image.py).
 
     python tests/test_image_convert.py
 
@@ -12,7 +12,7 @@ from pathlib import Path
 import numpy as np
 
 ML_DIR = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ML_DIR / "vision"))
+sys.path.insert(0, str(ML_DIR / "camara"))
 from board_image import pack_rgb565, rgb565_to_gray96, unpack_rgb565  # noqa: E402
 
 REPO_DIR = ML_DIR.parent

@@ -3,12 +3,12 @@
 
 // Conversiones de los frames de la camara (RGB565, el formato nativo a color de la OV2640).
 // C++ puro (sin Arduino) para probarlo en el PC: ML_Training/tests/test_image_convert.py lo compara
-// con la implementacion de referencia de Python (ML_Training/vision/board_image.py).
+// con la implementacion de referencia de Python (ML_Training/camara/board_image.py).
 
 #include <stddef.h>
 #include <stdint.h>
 
-constexpr int kGrayModelSize = 96;  // entrada de los modelos en grises (escenas v1-v6 y cercania)
+constexpr int kGrayModelSize = 96;  // brillo para el detector de luz (los modelos en grises se retiraron)
 
 // RGB565 de la camara: 2 bytes por pixel, el byte alto primero (big-endian).
 // Recorta el cuadrado central (lado = min(ancho, alto)), lo reduce a 96x96 con interpolacion bilineal

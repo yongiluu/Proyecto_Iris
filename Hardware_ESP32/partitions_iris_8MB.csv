@@ -1,14 +1,16 @@
 # Particiones de Iris para la XIAO ESP32S3 (8 MB de flash).
-# - Dos ranuras de programa de 2,875 MB (actualizar por WiFi, ota_update.cpp). El programa con la
-#   vision y la cercania ocupa ~2,8 MB.
-# - "modelos": 2 MB para los modelos que NO van dentro del programa (lector de texto, descripcion de
-#   escenas, caras...). Se graban aparte: tools/subir_modelos.py (por WiFi o USB). Ver model_store.h.
-#   Es de tipo spiffs solo para que el actualizador de Arduino la sepa escribir; no tiene archivos.
-# OJO: cambiar la tabla de particiones exige grabar UNA VEZ por USB (por WiFi no se puede).
+# - Dos ranuras de programa de 1,875 MB (actualizar por WiFi, ota_update.cpp). Sin los modelos en grises
+#   (retirados en 2026-11) el programa ocupa ~1,5 MB.
+# - "modelos": 4 MB para los modelos que NO van dentro del programa: Retina (descripcion de escenas),
+#   el lector de texto y despues las caras. Se graban aparte: tools/subir_modelos.py (por WiFi o USB).
+#   Ver model_store.h. Es de tipo spiffs solo para que el actualizador de Arduino la sepa escribir; no
+#   tiene archivos. ML_Training/tools/pack_models.py lee el tamano de aqui.
+# OJO: cambiar la tabla de particiones exige grabar UNA VEZ por USB (por WiFi no se puede) y volver a
+# subir los modelos (la particion cambio de lugar).
 # Name,   Type, SubType, Offset,   Size,     Flags
 nvs,      data, nvs,     0x9000,   0x5000,
 otadata,  data, ota,     0xe000,   0x2000,
-app0,     app,  ota_0,   0x10000,  0x2E0000,
-app1,     app,  ota_1,   0x2F0000, 0x2E0000,
-modelos,  data, spiffs,  0x5D0000, 0x200000,
+app0,     app,  ota_0,   0x10000,  0x1E0000,
+app1,     app,  ota_1,   0x1F0000, 0x1E0000,
+modelos,  data, spiffs,  0x3D0000, 0x400000,
 coredump, data, coredump,0x7D0000, 0x10000,

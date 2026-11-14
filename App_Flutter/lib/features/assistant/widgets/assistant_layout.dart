@@ -6,7 +6,6 @@ import '../../../core/theme/app_theme.dart';
 ///
 ///   [topBar]   una linea: fase, indicador de conexion, configuracion
 ///   [status]   una o dos lineas de estado
-///   [alert]    aviso de vision (si hay)
 ///   [carousel] el iris del modo, la respuesta (si hay) y el dial de modos
 ///
 /// Separado de la pantalla para poder probarlo sin servicios (letra 2x en 360x640, etc.).
@@ -17,13 +16,11 @@ class AssistantLayout extends StatelessWidget {
     required this.topBar,
     required this.status,
     required this.carousel,
-    this.alert,
   });
 
   final Widget background;
   final Widget topBar;
   final Widget status;
-  final Widget? alert;
   final Widget carousel;
 
   @override
@@ -40,19 +37,11 @@ class AssistantLayout extends StatelessWidget {
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
                     topBar,
-                    // Estado y aviso: con letra muy grande no pueden comerse la pantalla (maximo un
+                    // Estado: con letra muy grande no pueden comerse la pantalla (maximo un
                     // cuarto del alto); si no caben, se desplazan.
                     ConstrainedBox(
                       constraints: BoxConstraints(maxHeight: constraints.maxHeight * 0.25),
-                      child: SingleChildScrollView(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.stretch,
-                          children: [
-                            status,
-                            if (alert != null) Padding(padding: const EdgeInsets.fromLTRB(16, 0, 16, 6), child: alert),
-                          ],
-                        ),
-                      ),
+                      child: SingleChildScrollView(child: status),
                     ),
                     Expanded(child: carousel),
                   ],

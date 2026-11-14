@@ -23,7 +23,7 @@
 #define AUDIO_SAMPLE_RATE 16000
 
 // ==========================================
-// Foto (JPEG hacia GPT) y vision local (Edge AI)
+// Foto (JPEG hacia la nube) y camara a color de los modelos locales
 // ==========================================
 #define PHOTO_FRAME_SIZE        FRAMESIZE_VGA // 640x480
 #define CAMERA_COLOR_FRAME_SIZE FRAMESIZE_QQVGA // 160x120 RGB565: lo que miran los modelos locales
@@ -39,7 +39,6 @@
 #define PHOTO_JPEG_QUALITY      12            // 0-63, menor = mejor calidad
 #define PHOTO_SETTLE_FRAMES     3             // Frames descartados para que la autoexposicion se estabilice
 #define PHOTO_CHUNK_DELAY_MS    20            // Backpressure entre notificaciones de foto
-#define VISION_INTERVAL_MS      500   // con ESP-NN una inferencia de vision toma ~50-100 ms (sin ESP-NN ~2,3 s)
 
 // ==========================================
 // Eventos de audio (Edge AI, modelo de ML_Training/audio)
@@ -65,24 +64,15 @@
 #define OTA_TIMEOUT_MS           600000  // 10 min sin recibir firmware: vuelve al modo normal
 
 // ==========================================
-// Vision local (Edge AI, modelo de ML_Training/vision)
+// Firmware de captura de fotos a color para entrenar Retina (entorno *_photo_capture)
 // ==========================================
-// El umbral de aviso viene del entrenamiento: kVisionAlertThreshold en vision_model_data.h
-#define VISION_EVENT_COOLDOWN_MS   8000   // no repetir el mismo aviso antes de esto
-#define VISION_EVENTS_DEBUG        0      // 1 = imprime los puntajes de cada frame por serial
 #define VISION_CAPTURE_BAUD        921600 // firmware de captura de fotos (entorno *_photo_capture)
 #define VISION_CAPTURE_INTERVAL_MS 200    // ~5 frames por segundo hacia el PC
 
-// Contexto silencioso para la IA de la app: cada cuanto la placa resume lo que oye y ve
-// (CMD_AUDIO_CONTEXT / CMD_VISION_CONTEXT). No genera avisos hablados.
+// Contexto silencioso para la IA de la app: cada cuanto la placa resume lo que oye
+// (CMD_AUDIO_CONTEXT). No genera avisos hablados.
 #define AMBIENT_CONTEXT_PERIOD_MS  10000
 
-// Cercania con vision: pitidos de la placa. Apagados por ahora: con fotos reales el modelo da muchos
-// avisos falsos con el camino libre. El nivel igual se manda a la app (CMD_PROXIMITY, contexto silencioso).
-#define PROXIMITY_BEEPS_ENABLED      0
-// Intervalo entre pitidos segun el nivel (proximity.h)
-#define PROXIMITY_BEEP_NEAR_MS       800   // "cerca" (< ~1,5 m)
-#define PROXIMITY_BEEP_VERY_NEAR_MS  250   // "muy cerca" (< ~0,7 m)
 
 #ifdef IRIS_XIAO
 // ==========================================

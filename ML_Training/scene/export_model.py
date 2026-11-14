@@ -1,11 +1,13 @@
 """Cuantiza el alumno a int8 (lo que corre en la placa) y lo evalua.
 
-    python scene/export_model.py
+    python scene/export_model.py                 # calibra un umbral por objeto (calibrate.py) y cuantiza
+    python scene/export_model.py --sin-calibrar  # umbral 0,5 igual para todos (como antes)
 
-Escribe models/scene_student_int8.tflite y models/scene_report_int8.txt. Revisa que solo use operaciones
+Escribe models/scene_student_int8.tflite, models/scene_report_int8.txt y models/scene_thresholds.json. Revisa que solo use operaciones
 del TFLite Micro de la placa y estima tamaño y memoria. (La integracion en el firmware viene despues:
 ver "Proximos pasos" en scene/README.md.)
 """
+import argparse
 import os
 import sys
 
@@ -25,9 +27,16 @@ SUPPORTED_OPS = {"CONV_2D", "DEPTHWISE_CONV_2D", "ADD", "PAD", "AVERAGE_POOL_2D"
                  "SOFTMAX", "LOGISTIC", "QUANTIZE", "DEQUANTIZE", "MUL", "RELU6", "RELU"}
 
 
-def convert(rows: list[dict]) -> bytes:
+def convert(rows: list[dict], val_rows: list[dict] | None = None) -> bytes:
     trained = tf.keras.models.load_model(KERAS_MODEL, compile=False)
     meta = load_meta()
+    if val_rows:
+        # Cada objeto con su propio umbral (calibrate.py), metido en el sesgo de la ultima capa.
+        import calibrate
+        from train import keras_predictor
+        thresholds = calibrate.calibrate(keras_predictor(trained), val_rows)
+        calibrate.apply_thresholds(trained, thresholds)
+        calibrate.save(thresholds)
     # Misma red con batch fijo en 1 (con batch variable, Reshape/Flatten generan ops que TFLM no tiene).
     model = build_model(meta.get("alpha", config.BACKBONE_ALPHA), batch_size=1, pretrained=False)
     model.set_weights(trained.get_weights())
@@ -74,11 +83,16 @@ def int8_predictor(tflite_model: bytes):
 
 
 def main() -> None:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--sin-calibrar", action="store_true", help="umbral 0,5 igual para todos los objetos")
+    args = parser.parse_args()
+
     rows = load_rows("mix")
     train = [r for r in rows if split_of(r["image"]) == "train"]
+    val = [r for r in rows if split_of(r["image"]) == "val"]
     test = [r for r in rows if split_of(r["image"]) == "test"]
 
-    tflite_model = convert(train)
+    tflite_model = convert(train, None if args.sin_calibrar else val)
     TFLITE_MODEL.write_bytes(tflite_model)
     predict, interpreter = int8_predictor(tflite_model)
 

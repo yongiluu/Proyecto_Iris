@@ -7,7 +7,7 @@ requests
 pyserial             # capture_from_board.py
 sounddevice          # live_demo.py (microfono del PC)
 ziglang              # compilador C++ para tests/test_frontend.py
-pandas               # vision: anotaciones de Open Images
-pillow               # vision: imagenes y aumentacion
-opencv-python        # vision/live_demo.py (webcam) y vista previa de capture_photos.py
+pandas               # scene: anotaciones de Open Images
+pillow               # scene y camara: imagenes
+opencv-python        # vista previa de camara/capture_photos.py
 pyarrow             # audio/download_datasets.py --urbansound (espejo en parquet de Hugging Face)
