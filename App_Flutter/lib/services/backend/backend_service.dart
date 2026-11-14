@@ -192,6 +192,10 @@ class BackendService {
       return null;
     } on PostgrestException catch (e) {
       return e.message.contains('propio') ? 'Ese codigo es tuyo.' : 'Codigo invalido o vencido.';
+    } catch (e) {
+      // Sin red no llega una PostgrestException: sin esto el boton no hacia nada ni avisaba.
+      debugPrint('Vincular acompañante: $e');
+      return 'No se pudo conectar. Revisa tu conexion.';
     }
   }
 

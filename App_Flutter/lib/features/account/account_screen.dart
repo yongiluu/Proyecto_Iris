@@ -50,6 +50,17 @@ class _AccountScreenState extends State<AccountScreen> {
     await _backend.savePreferences({key: value});
   }
 
+  /// Cambio que va al servidor: si falla (sin red), se dice en vez de quedar en silencio.
+  Future<void> _guarded(Future<void> Function() action, String failure) async {
+    try {
+      await action();
+    } catch (e) {
+      debugPrint('Cuenta: $e');
+      if (mounted) _announce(failure);
+    }
+    if (mounted) _load();
+  }
+
   void _announce(String message) {
     SemanticsService.sendAnnouncement(View.of(context), message, TextDirection.ltr);
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
@@ -252,27 +263,21 @@ class _AccountScreenState extends State<AccountScreen> {
                       trailing: IconButton(
                         tooltip: 'Quitar a ${c.name}',
                         icon: const Icon(Icons.link_off),
-                        onPressed: () async {
-                          await _backend.removeCompanion(c.linkId);
-                          _load();
-                        },
+                        onPressed: () => _guarded(() => _backend.removeCompanion(c.linkId),
+                            'No se pudo quitar a ${c.name}. Revisa tu conexión.'),
                       ),
                     ),
                     SwitchListTile(
                       title: Text('${c.name} ve mis alertas'),
                       value: c.canSeeAlerts,
-                      onChanged: (v) async {
-                        await _backend.setCompanionPermissions(c.linkId, alerts: v);
-                        _load();
-                      },
+                      onChanged: (v) => _guarded(() => _backend.setCompanionPermissions(c.linkId, alerts: v),
+                          'No se pudo guardar el cambio. Revisa tu conexión.'),
                     ),
                     SwitchListTile(
                       title: Text('${c.name} ve mi ubicación'),
                       value: c.canSeeLocation,
-                      onChanged: (v) async {
-                        await _backend.setCompanionPermissions(c.linkId, location: v);
-                        _load();
-                      },
+                      onChanged: (v) => _guarded(() => _backend.setCompanionPermissions(c.linkId, location: v),
+                          'No se pudo guardar el cambio. Revisa tu conexión.'),
                     ),
                   ],
                   for (final c in assisting)
@@ -323,7 +328,13 @@ class _AccountScreenState extends State<AccountScreen> {
                   icon: const Icon(Icons.logout),
                   label: const Text('Cerrar sesión', style: TextStyle(fontSize: 18)),
                   onPressed: () async {
-                    await _backend.signOut();
+                    try {
+                      await _backend.signOut();
+                    } catch (e) {
+                      debugPrint('Cerrar sesion: $e');
+                      if (context.mounted) _announce('No se pudo cerrar la sesión. Revisa tu conexión.');
+                      return;
+                    }
                     if (context.mounted) Navigator.of(context).popUntil((r) => r.isFirst);
                   },
                 ),
