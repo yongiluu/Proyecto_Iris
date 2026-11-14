@@ -13,7 +13,12 @@ class SpeechService {
     final status = await Permission.microphone.request();
     if (status.isGranted) {
       _isInitialized = await _speech.initialize(
-        onError: (error) => debugPrint('⚠️ STT Error: $error'),
+        onError: (error) {
+          debugPrint('⚠️ STT Error: $error');
+          // Algunos errores (sin voz, sin red) no llegan con el estado "done": avisar igual, o la
+          // pantalla queda "escuchando" hasta que alguien toque algo.
+          if (error.permanent) onSpeechDone?.call();
+        },
         onStatus: (status) {
           debugPrint('🎙️ STT Status: $status');
           if (status == 'done' && onSpeechDone != null) {
@@ -25,6 +30,9 @@ class SpeechService {
       debugPrint('⚠️ Microphone permission denied.');
     }
   }
+
+  /// false si no hay permiso de microfono o el celular no tiene reconocimiento de voz.
+  bool get isAvailable => _isInitialized;
 
   Future<void> startListening() async {
     if (!_isInitialized) return;

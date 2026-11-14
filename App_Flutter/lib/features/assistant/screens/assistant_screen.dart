@@ -356,6 +356,13 @@ class _AssistantScreenState extends State<AssistantScreen>
 
   bool _isNativeMicActive = false;
 
+  /// Sube con cada grabacion nueva. Una respuesta que llega para un turno anterior (la persona volvio
+  /// a hablar mientras Iris pensaba) se descarta: ni se dice ni toca el estado de la pregunta nueva.
+  int _turn = 0;
+  bool _stale(int turn) => !mounted || turn != _turn;
+  Timer? _nativeListenWatchdog;
+  static const Duration _nativeListenLimit = Duration(seconds: 30);
+
   // ─── Alertas de sonido detectadas por la placa (Edge AI) ───
   static const Map<String, String> _audioAlertPhrases = {
     'bocina': 'una bocina',
@@ -438,8 +445,21 @@ class _AssistantScreenState extends State<AssistantScreen>
 
   // ─── Native Standalone Triggers ───
   void _startNativeListening() async {
+    if (!_nativeSpeechService.isAvailable) {
+      // Sin permiso de microfono (o sin reconocimiento de voz en el celular) nunca llegaria el aviso
+      // de "termino de hablar" y la app quedaria escuchando para siempre.
+      if (mounted) setState(() => _statusText = 'Sin microfono del celular');
+      await _ttsService.speakStatus('No puedo usar el microfono del celular. Revisa el permiso de microfono.',
+          esp32Service: _activeEsp32);
+      return;
+    }
     _isNativeMicActive = true;
     _onRecordingStarted();
+    // Red de seguridad: si el reconocimiento de voz nunca avisa que termino, cerrar igual.
+    _nativeListenWatchdog?.cancel();
+    _nativeListenWatchdog = Timer(_nativeListenLimit, () {
+      if (mounted && _isListening && _isNativeMicActive) _processAudio();
+    });
     await _nativeSpeechService.startListening();
   }
 
@@ -450,8 +470,13 @@ class _AssistantScreenState extends State<AssistantScreen>
   }
 
   void _onRecordingStarted() async {
+    if (!mounted) return;
+    // Pregunta nueva: lo que estuviera pensando para la anterior ya no vale.
+    _turn++;
+    _stopThinking();
     setState(() {
       _isListening = true;
+      _isProcessing = false;
       _statusText = _isNativeMicActive
           ? 'Escuchando celular...'
           : 'Escuchando placa...';
@@ -490,6 +515,8 @@ class _AssistantScreenState extends State<AssistantScreen>
     if (_continuousMode) {
       _consecutiveCount = 0;
       await _ttsService.speak('Modo continuo activado', esp32Service: _activeEsp32);
+      // Si salio de la pagina mientras sonaba el aviso, ya esta apagado: no empezar a describir.
+      if (!mounted || !_continuousMode) return;
       _startContinuousMode();
     } else {
       _continuousTimer?.cancel();
@@ -525,6 +552,10 @@ class _AssistantScreenState extends State<AssistantScreen>
     }
 
     _continuousTimer = Timer.periodic(const Duration(seconds: 20), (timer) async {
+      if (!mounted || !_continuousMode) {
+        timer.cancel();
+        return;
+      }
       if (_consecutiveCount >= 3) {
         _pauseContinuousMode();
         return;
@@ -547,6 +578,9 @@ class _AssistantScreenState extends State<AssistantScreen>
   }
 
   Future<void> _captureAndDescribeContinuous() async {
+    // Nunca encima de una pregunta ni de otra tarea, y solo mientras el modo siga encendido.
+    if (!mounted || !_continuousMode || _continuousOnBoard || _isBusy || _isTaskBusy) return;
+    final turn = _turn;
     await _playQuerySentCue();
     final String? desc = await _withBoardScene('Describe la vista actual.', await _agentService.processWithAgenticReasoning(
       userPrompt: "Describe la vista actual.",
@@ -556,19 +590,24 @@ class _AssistantScreenState extends State<AssistantScreen>
       captureImageCallback: _captureImage,
       sensorContext: _sensorContext.describe(),
     ));
-    if (desc != null && mounted) {
+    // Mientras se describia, la persona hizo una pregunta o apago el modo: esta descripcion sobra.
+    // (Antes ademas borraba el estado "escuchando" y la pregunta se perdia.)
+    if (_stale(turn) || !_continuousMode || _isBusy) return;
+    setState(() => _statusText = _idleStatus);
+    if (desc != null) {
       setState(() {
         _answerTitle = 'Descripcion';
         _lastDescription = TtsService.displayText(desc);
       });
       await _ttsService.speak(desc, esp32Service: _activeEsp32);
     }
-    _resetState(null);
   }
 
   // ─── Procesamiento de Audio STT ───
   Future<void> _processAudio() async {
     if (!_isListening) return;
+    final turn = _turn;
+    _nativeListenWatchdog?.cancel();
 
     _pulseController.stop();
     _pulseController.reset();
@@ -606,6 +645,9 @@ class _AssistantScreenState extends State<AssistantScreen>
     } else {
        prompt = await _nativeSpeechService.stopListening();
     }
+
+    // La persona volvio a hablar mientras se transcribia: manda la pregunta nueva.
+    if (_stale(turn)) return;
 
     prompt = _stripWakeWord(prompt);
     if (prompt.isEmpty) {
@@ -657,10 +699,12 @@ class _AssistantScreenState extends State<AssistantScreen>
   /// (sin placa, sin modelo o no respondio): entonces pregunta la nube.
   Future<bool> _answerFromBoard() async {
     if (!_moduleConnected || _esp32SpeechService.boardHas('escena') != true) return false;
+    final turn = _turn;
     _stopThinking();
     if (mounted) setState(() => _statusText = 'La placa esta mirando...');
     final local = await _esp32SpeechService.describeSceneOnBoard();
-    if (!mounted || local == null || local.isEmpty) return false;
+    if (_stale(turn)) return true; // hay una pregunta nueva en curso: esta ya no se contesta
+    if (local == null || local.isEmpty) return false;
     _resetState(null);
     var sentence = local;
     if (!_detailHintGiven) {
@@ -675,6 +719,7 @@ class _AssistantScreenState extends State<AssistantScreen>
 
   /// Pregunta al agente en la nube (con foto si hace falta) y dice la respuesta.
   Future<void> _askAgent(String prompt) async {
+    final turn = _turn;
     setState(() {
       _isProcessing = true;
       _statusText = 'Analizando con Occipital...';
@@ -698,6 +743,9 @@ class _AssistantScreenState extends State<AssistantScreen>
             : null,
       ));
 
+      // Llego tarde: la persona ya esta haciendo otra pregunta (el sonido de "pensando" de esta ya
+      // se corto al empezar la nueva).
+      if (_stale(turn)) return;
       if (_hardwareMode == HardwareMode.esp32) _stopThinking();
 
       _resetState(null);
@@ -711,6 +759,7 @@ class _AssistantScreenState extends State<AssistantScreen>
       }
     } catch (e) {
       debugPrint('⚠️ Error del servicio AI: $e');
+      if (_stale(turn)) return;
       if (_hardwareMode == HardwareMode.esp32) _stopThinking();
       _resetState('Error de servicio AI.');
       await _ttsService.speak('Hubo un error, por favor intenta de nuevo.', esp32Service: _activeEsp32);
@@ -809,9 +858,15 @@ class _AssistantScreenState extends State<AssistantScreen>
   /// "Callate": corta la voz y lo que este en curso (descripcion continua, luz, guardar una cara).
   Future<void> _stopEverything() async {
     await _ttsService.stop();
-    if (_continuousMode) {
+    if (_continuousMode || _continuousOnBoard) {
       _continuousTimer?.cancel();
-      setState(() => _continuousMode = false);
+      // El modo en vivo de la placa sigue describiendo hasta que se le avisa.
+      if (_continuousOnBoard) await _esp32SpeechService.setSceneLive(false);
+      if (!mounted) return;
+      setState(() {
+        _continuousMode = false;
+        _continuousOnBoard = false;
+      });
     }
     if (_peopleBusy && _enrollStatus != null) _enrollGeneration++;
     if (_lightIsOn) await _setLight(false, speak: false);
@@ -1009,8 +1064,8 @@ class _AssistantScreenState extends State<AssistantScreen>
     _readTextTimeout?.cancel();
     _readTextTimeout = null;
     if (!mounted) return;
-    // Llego tarde y el celular ya esta leyendo: manda el celular.
-    if (!waiting && _readingText) return;
+    // Llego tarde (el celular ya esta leyendo o ya leyo) o nadie la pidio: no repetir la respuesta.
+    if (!waiting) return;
     setState(() => _readingText = false);
     await _deliverReadText(text);
   }
@@ -1031,7 +1086,8 @@ class _AssistantScreenState extends State<AssistantScreen>
         return;
       }
       setState(() => _statusText = 'Detector de luz encendido');
-      if (_moduleConnected) {
+      // Una placa que dice no tener detector de luz nunca contestaria: se usa el del celular.
+      if (_moduleConnected && _esp32SpeechService.boardHas('luz') != false) {
         await _esp32SpeechService.setLightMeter(true);
         if (speak) await _ttsService.speakStatus('Detector de luz. Mas agudo, mas luz.', esp32Service: _activeEsp32);
       } else {
@@ -1227,6 +1283,8 @@ class _AssistantScreenState extends State<AssistantScreen>
 
   @override
   void dispose() {
+    _volumeChannel.setMethodCallHandler(null);
+    _nativeListenWatchdog?.cancel();
     _continuousTimer?.cancel();
     _localThinkingTimer?.cancel();
     _autoHardwareRetry?.cancel();
