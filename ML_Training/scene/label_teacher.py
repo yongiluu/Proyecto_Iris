@@ -62,6 +62,9 @@ def ask_teacher(url: str, model: str, api_key: str, prompt: str, image_file: Pat
                                    "json_schema": {"name": "escena", "schema": json_schema(), "strict": True}}
     headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
     for attempt in range(4):
+        # Con temperatura 0 un reintento repite la misma salida rota (ej. Qwen3 a veces se queda escribiendo
+        # lineas en blanco y el JSON sale cortado): desde el 2.o intento se agrega un poco de azar.
+        body["temperature"] = 0 if attempt == 0 else 0.3 * attempt
         try:
             response = requests.post(f"{url.rstrip('/')}/chat/completions", json=body, headers=headers, timeout=180)
             response.raise_for_status()
