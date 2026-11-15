@@ -483,7 +483,10 @@ class Esp32SpeechService {
   void _onDisconnected() {
     final wasConnected = isConnected;
     final wasRecording = _isRecording;
+    // Lo grabado hasta el corte se transcribe igual (antes se borraba y la app decia "no escuche").
+    final recorded = wasRecording ? _micBuffer.takeBytes() : null;
     _resetConnectionState();
+    if (recorded != null) _micBuffer.add(recorded);
     if (wasConnected) {
       debugPrint('Iris desconectado.');
       boardFeatures.value = null;
@@ -531,6 +534,9 @@ class Esp32SpeechService {
     _pttStopTimer?.cancel();
     _pttSafetyTimer?.cancel();
     _completePhoto(null);
+    // Quien esperaba la descripcion de la placa no debe esperar 8 s a una placa que ya no esta.
+    final sceneCompleter = _sceneCompleter;
+    if (sceneCompleter != null && !sceneCompleter.isCompleted) sceneCompleter.complete(null);
   }
 
   // ───────────────────────── Recepcion desde la placa ─────────────────────────
@@ -884,12 +890,16 @@ class Esp32SpeechService {
     final wav = _buildWav(pcm);
     // Diagnostico: la ultima pregunta queda en el celular para revisarla desde el PC
     // (adb exec-out run-as com.iris.visual.iris_app cat files/ultima_pregunta.wav > ultima.wav).
-    try {
-      File('/data/data/com.iris.visual.iris_app/files/ultima_pregunta.wav')
-        ..createSync(recursive: true)
-        ..writeAsBytesSync(wav);
-    } catch (e) {
-      debugPrint('No se pudo guardar ultima_pregunta.wav: $e');
+    // Solo en la version de desarrollo: run-as no funciona en la version final, y ahi la voz de la
+    // persona no debe quedar guardada en un archivo.
+    if (kDebugMode) {
+      try {
+        File('/data/data/com.iris.visual.iris_app/files/ultima_pregunta.wav')
+          ..createSync(recursive: true)
+          ..writeAsBytesSync(wav);
+      } catch (e) {
+        debugPrint('No se pudo guardar ultima_pregunta.wav: $e');
+      }
     }
     // Con cuenta: transcribe el servidor (las llaves no estan en el celular).
     if (BackendService.instance.useServer) return BackendService.instance.transcribe(wav);

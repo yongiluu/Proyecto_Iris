@@ -63,10 +63,20 @@ class _IrisLogoState extends State<IrisLogo> with TickerProviderStateMixin {
   Duration _lastTick = Duration.zero;
   bool _reduceMotion = false;
 
+  /// Tiempo acumulado que todavia no se dibuja (ver [_onTick]).
+  double _pending = 0;
+  static const double _idleFrame = 1 / 15;
+
   void _onTick(Duration elapsed) {
     final dt = (elapsed - _lastTick).inMicroseconds / 1e6;
     _lastTick = elapsed;
-    _time.value += dt.clamp(0, 0.1);
+    _pending += dt.clamp(0, 0.1);
+    // En reposo solo respira (muy lento): con 15 cuadros por segundo se ve igual y no se repinta
+    // 60 veces por segundo todo el tiempo que la app esta abierta (bateria).
+    final idle = _think.value == 0 && _listen.value == 0 && _speak.value == 0;
+    if (idle && _pending < _idleFrame) return;
+    _time.value += _pending;
+    _pending = 0;
   }
 
   @override

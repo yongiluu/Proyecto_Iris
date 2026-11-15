@@ -104,9 +104,20 @@ class VoiceIntents {
     r'(esta|estan) (prendida|encendida|prendidas|encendidas) (la|las)? ?luz|modo luz|la luz esta)',
   );
 
+  // "¿Quien es?" solo si la frase termina ahi o apunta a alguien presente: "¿quien es el presidente
+  // de Chile?" es una pregunta para el agente, no para la camara.
   static final RegExp _whoIsHere = RegExp(
-    r'(quien (esta|es|hay)|quienes (estan|son)|hay alguien( conocido)?|reconoce(s)?( a)?( la)? (persona|cara)|'
+    r'(^(quien|quienes) (esta|estan|es|son|hay)'
+    r'( (aqui|aca|ahi|alla|adelante|delante|al frente|en frente|enfrente|conmigo|cerca|el|ella|ellos|ellas|'
+    r'este|esta|ese|esa|esta persona|esa persona))*( por favor| porfa| iris)*$|'
+    r'quien (esta|hay) (aqui|aca|ahi|adelante|delante|al frente|en frente|enfrente|conmigo|cerca)|'
+    r'hay alguien( conocido)?|reconoce(s)?( a)?( la)? (persona|cara)|'
     r'conozco a (esta|alguien)|a quien tengo)',
+  );
+
+  /// Palabras que indican que "con detalle" habla de lo que hay adelante.
+  static final RegExp _sceneWords = RegExp(
+    r'(describ|que hay|que ves|lo que (ves|hay)|adelante|delante|frente|alrededor|entorno|escena|imagen|foto)',
   );
 
   // "recuerda a raul", "recuerda la cara de raul", "esta es ana", "este es raul", "guarda a raul"
@@ -178,7 +189,11 @@ class VoiceIntents {
     }
     if (_liveOff.hasMatch(text)) return const IrisIntent(IrisIntentType.liveOff);
     if (_liveOn.hasMatch(text)) return const IrisIntent(IrisIntentType.liveOn);
-    if (_moreDetail.hasMatch(text)) return const IrisIntent(IrisIntentType.moreDetail);
+    // "Mas detalle" a secas, o hablando de la escena. "Explicame con detalle como se toma la insulina"
+    // es una pregunta: va al agente tal cual.
+    if (_moreDetail.hasMatch(text) && (text.split(' ').length <= 4 || _sceneWords.hasMatch(text))) {
+      return const IrisIntent(IrisIntentType.moreDetail);
+    }
     // "Apaga la luz" antes que "luz": si no, prenderia el detector.
     if (_lightOff.hasMatch(text)) return const IrisIntent(IrisIntentType.lightOff);
     if (_lightOn.hasMatch(text)) return const IrisIntent(IrisIntentType.lightOn);

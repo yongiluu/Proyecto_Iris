@@ -57,6 +57,20 @@ void main() {
       expectIntent('¿qué hay adelante?', IrisIntentType.none); // lo contesta la placa (o la nube)
     });
 
+    test('preguntas para el agente que se parecen a un comando', () {
+      // "¿Quien es...?" sobre alguien que no esta presente no es reconocer caras.
+      expectIntent('¿Quién es el presidente de Chile?', IrisIntentType.none);
+      expectIntent('¿Quién está de cumpleaños hoy?', IrisIntentType.none);
+      expectIntent('¿Quién es?', IrisIntentType.whoIsHere);
+      expectIntent('¿Quién es ella?', IrisIntentType.whoIsHere);
+      expectIntent('¿quién está adelante?', IrisIntentType.whoIsHere);
+      expectIntent('Oye, ¿quién está aquí conmigo?', IrisIntentType.whoIsHere);
+      // "Con detalle" dentro de otra pregunta no es "describe con mas detalle".
+      expectIntent('Explícame con detalle cómo se toma la insulina', IrisIntentType.none);
+      expectIntent('con más detalle', IrisIntentType.moreDetail);
+      expectIntent('dime con detalle qué hay al frente', IrisIntentType.moreDetail);
+    });
+
     test('comandos rapidos', () {
       expectIntent('Repite', IrisIntentType.repeat);
       expectIntent('¿Qué dijiste?', IrisIntentType.repeat);

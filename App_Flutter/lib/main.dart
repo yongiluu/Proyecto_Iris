@@ -29,7 +29,12 @@ Future<void> main() async {
   await EnvConfig.init();
 
   // Cuentas y agente en el servidor (si el .env tiene SUPABASE_URL; si no, la app funciona sin cuentas).
-  await BackendService.instance.init();
+  // Con tope: sin red, restaurar la sesion no debe dejar la app en blanco antes de abrir.
+  try {
+    await BackendService.instance.init().timeout(const Duration(seconds: 10));
+  } catch (e) {
+    debugPrint('El servidor de Iris no respondio al arrancar: $e');
+  }
   // Retoma en segundo plano las subidas de Misiones de datos que quedaron pendientes.
   unawaited(TrainingUploadQueue.instance.init());
 
@@ -56,8 +61,9 @@ Future<void> main() async {
   // Get available cameras
   try {
     cameras = await availableCameras();
-  } on CameraException catch (e) {
-    debugPrint('Error getting cameras: ${e.code} - ${e.description}');
+  } catch (e) {
+    // Cualquier fallo (no solo CameraException): sin lista de camaras la app igual debe abrir.
+    debugPrint('Error getting cameras: $e');
     cameras = [];
   }
 
