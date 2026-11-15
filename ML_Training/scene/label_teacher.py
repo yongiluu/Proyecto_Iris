@@ -94,7 +94,11 @@ def main() -> None:
     done = set()
     if out_file.exists():
         with open(out_file, encoding="utf-8") as file:
-            done = {json.loads(line)["image"] for line in file}
+            for line in file:
+                try:
+                    done.add(json.loads(line)["image"])
+                except (json.JSONDecodeError, KeyError):
+                    pass  # ultima linea a medio escribir (la maquina se apago): esa foto se rehace
 
     images = [i for i in list_images(args.sources.split(",")) if i not in done]
     if args.limit:
@@ -111,13 +115,16 @@ def main() -> None:
     errors, streak, examples = 0, 0, []
     with open(out_file, "a", encoding="utf-8") as out, ThreadPoolExecutor(args.workers) as pool:
         futures = {pool.submit(work, name): name for name in images}
-        for future in tqdm(as_completed(futures), total=len(futures), desc="Profesor"):
+        # Avance cada 60 s (no cada foto): con 100 mil fotos, una barra que se redibuja sin parar llena la
+        # salida de Colab y la pagina se pone lenta o se desconecta.
+        for future in tqdm(as_completed(futures), total=len(futures), desc="Profesor", mininterval=60):
             try:
                 row = future.result()
             except Exception as e:
                 errors += 1
                 streak += 1
-                tqdm.write(f"  error con {futures[future]}: {e}")
+                if errors <= 20:  # algunas fotos fallan siempre (JSON cortado): se saltan sin llenar la salida
+                    tqdm.write(f"  error con {futures[future]}: {e}" + ("  (no se muestran mas)" if errors == 20 else ""))
                 if streak >= args.max_errors_in_a_row:
                     # El servidor se cayo: parar en vez de gastar todas las fotos en errores (se retoma luego).
                     for f in futures:
@@ -135,7 +142,7 @@ def main() -> None:
         print(f"\n{row['image']}\n  -> {describe(scene_from_labels(row['labels']))}"
               + (f"\n  detalle: {row['labels']['detalle']}" if row['labels'].get('detalle') else "")
               + (f"\n  problemas: {row['problems']}" if row['problems'] else ""))
-    print(f"\n✔ Listo ({errors} errores). Siguiente: python scene/train.py")
+    print(f"\n✔ Listo ({errors} errores; esas fotos se saltan). Siguiente: python scene/train.py")
 
 
 if __name__ == "__main__":

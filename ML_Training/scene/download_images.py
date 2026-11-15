@@ -283,7 +283,7 @@ def main() -> None:
     failed = 0
     with open(config.AUTO_LABELS, "a", encoding="utf-8") as out, ThreadPoolExecutor(args.workers) as pool:
         futures = [pool.submit(work, i) for i in pending]
-        for future in tqdm(as_completed(futures), total=len(futures), desc="Fotos a color"):
+        for future in tqdm(as_completed(futures), total=len(futures), desc="Fotos a color", mininterval=30):
             row = future.result()
             if row is None:
                 failed += 1

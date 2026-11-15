@@ -34,6 +34,13 @@ md(r"""
 **Antes de empezar:** *Entorno de ejecución → Cambiar tipo de entorno de ejecución* → **GPU A100** (o L4, más
 lenta pero gasta menos unidades). La T4 **no sirve**.
 
+**IMPORTANTE para dejarlo toda la noche (Colab Pro apaga la máquina si la pestaña se "duerme"):**
+1. En Chrome: *Configuración → Rendimiento → Ahorro de memoria → Mantener siempre activos estos sitios →
+   Agregar* `colab.research.google.com`. Sin esto, al cambiar de ventana Chrome congela la pestaña (se ve gris)
+   y Google recupera la máquina.
+2. Deja esta pestaña en **su propia ventana** de Chrome (puede quedar detrás de otras, pero no la cierres).
+3. Windows: *Configuración → Sistema → Inicio/apagado → Suspender: Nunca* (enchufado).
+
 **Si Colab se desconecta:** recarga la página y *Ejecutar todo*. Lo importante vive en tu Google Drive
 (carpeta `Iris_escenas`) y cada paso salta lo que ya estaba hecho.
 
@@ -119,7 +126,12 @@ if FOTOS_TAR.exists() and not (DATA / 'images' / 'openimages').exists():
 def limpiar(nombre):
     ruta = DRIVE / nombre
     filas = [l for l in ruta.read_text(encoding='utf-8').splitlines() if l.strip()]
-    buenas = [l for l in filas if (DATA / 'images' / json.loads(l)['image']).exists()]
+    def foto_existe(linea):
+        try:
+            return (DATA / 'images' / json.loads(linea)['image']).exists()
+        except (json.JSONDecodeError, KeyError):
+            return False  # linea a medio escribir cuando se apago la maquina: se descarta
+    buenas = [l for l in filas if foto_existe(l)]
     if len(buenas) != len(filas):
         ruta.write_text(''.join(l + '\n' for l in buenas), encoding='utf-8')
     return len(buenas), len(filas) - len(buenas)
