@@ -166,6 +166,10 @@ class _AssistantScreenState extends State<AssistantScreen>
       _esp32SpeechService.onRecordingStarted = () async {
         if (mounted && _hardwareMode == HardwareMode.esp32) {
           _isNativeMicActive = false;
+          // El aviso "va a la nube" llega justo antes de la grabacion: vale solo para esta.
+          final announced = _cloudNextAt;
+          _cloudNextAt = null;
+          _cloudThisTurn = announced != null && DateTime.now().difference(announced) < const Duration(seconds: 3);
           _onRecordingStarted();
         }
       };
@@ -202,7 +206,8 @@ class _AssistantScreenState extends State<AssistantScreen>
           setState(() {
             _statusText = connected ? 'Modulo conectado (Bluetooth)' : 'Buscando el modulo por Bluetooth...';
           });
-          if (connected) {
+          // Si la placa solo estaba durmiendo y desperto con su boton, viene una respuesta: no taparla.
+          if (connected && !_esp32SpeechService.wokeFromSleep) {
             _hapticService.vibrateStart();
             _ttsService.speakStatus('Bluetooth conectado');
           }
@@ -214,6 +219,9 @@ class _AssistantScreenState extends State<AssistantScreen>
       _esp32SpeechService.onAudioEvent = _onAudioEvent;
       _esp32SpeechService.onTextRead = _onTextRead;
       _esp32SpeechService.onSceneLive = _onSceneLive;
+      _esp32SpeechService.onBoardSay = _onBoardSay;
+      _esp32SpeechService.onCloudNext = () => _cloudNextAt = DateTime.now();
+      _esp32SpeechService.onCloudDescribe = _onCloudDescribe;
       _esp32SpeechService.onAudioContext = _sensorContext.onAudioContext;
       _esp32SpeechService.onChooseBoard = (_) {
         if (mounted && _hardwareMode == HardwareMode.esp32 && !_boardSheetOpen) _showBoardPicker();
@@ -649,11 +657,20 @@ class _AssistantScreenState extends State<AssistantScreen>
     // La persona volvio a hablar mientras se transcribia: manda la pregunta nueva.
     if (_stale(turn)) return;
 
+    // Toque + mantener en la placa: esta pregunta va directo a la nube.
+    final cloudOnly = _cloudThisTurn && !_isNativeMicActive;
+    _cloudThisTurn = false;
+
     prompt = _stripWakeWord(prompt);
     if (prompt.isEmpty) {
       _stopThinking();
       _resetState('No entendi o hubo ruido, por favor intenta de nuevo');
       await _ttsService.speak('No escuche claramente, puedes repetir?', esp32Service: _activeEsp32);
+      return;
+    }
+
+    if (cloudOnly) {
+      await _askAgent(prompt);
       return;
     }
 
@@ -716,6 +733,24 @@ class _AssistantScreenState extends State<AssistantScreen>
   }
 
   bool _detailHintGiven = false;
+
+  /// La placa aviso (toque + mantener) que la pregunta que viene va a la nube sin probar lo local.
+  DateTime? _cloudNextAt;
+  bool _cloudThisTurn = false;
+
+  /// La placa contesto por su cuenta a un toque de su boton (describir o leer), o da un aviso.
+  Future<void> _onBoardSay(String sentence) async {
+    if (!mounted || _isListening) return;
+    await _hapticService.vibrateTick();
+    await _showResult(sentence, status: 'La placa', title: 'La placa');
+  }
+
+  /// Dos toques en la placa: la descripcion detallada de la nube (igual que decir "mas detalle").
+  Future<void> _onCloudDescribe() async {
+    if (!mounted || _isBusy || _isTaskBusy) return;
+    _goToMode(IrisMode.assistant);
+    await _askAgent('Describe con detalle lo que hay adelante.');
+  }
 
   /// Pregunta al agente en la nube (con foto si hace falta) y dice la respuesta.
   Future<void> _askAgent(String prompt) async {
@@ -1419,6 +1454,13 @@ class _AssistantScreenState extends State<AssistantScreen>
         if (mounted) setState(() {});
       });
     }
+    // La placa duerme para cuidar la pila y despierta con su boton: ni dormirse ni despertar se
+    // anuncian (pasa muchas veces al dia y al despertar viene una respuesta).
+    if (automatic && mode == HardwareMode.standalone && _esp32SpeechService.boardAsleep) {
+      setState(() => _statusText = 'La placa descansa. Toca su boton para usarla.');
+      return;
+    }
+    if (automatic && mode == HardwareMode.esp32 && _esp32SpeechService.wokeFromSleep) return;
     if (automatic) {
       _hapticService.vibrateStart();
       _ttsService.speakStatus(

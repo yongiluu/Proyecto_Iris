@@ -40,6 +40,10 @@ void requestLightMeter(bool on) {
   requested = on ? 1 : 0;
 }
 
+bool lightMeterActive() {
+  return enabled;
+}
+
 bool lightMeterUpdate() {
   const int pending = requested;
   if (pending >= 0) {

@@ -140,6 +140,27 @@ class Esp32SpeechService {
     await _sendCommand('CMD_VOLUME:$clamped');
   }
 
+  // ─── Boton de la placa y energia (Hardware_ESP32/ENERGIA.md) ───
+
+  /// La placa dice algo por su cuenta (CMD_SAY:<frase>): la respuesta a un toque de su boton
+  /// (describir, leer) o un aviso ("queda poca bateria").
+  void Function(String sentence)? onBoardSay;
+
+  /// Toque + mantener en la placa (CMD_CLOUD_NEXT): la pregunta que viene va directo a la nube.
+  void Function()? onCloudNext;
+
+  /// Dos toques en la placa (CMD_CLOUD_DESCRIBE): pedir a la nube la descripcion detallada.
+  void Function()? onCloudDescribe;
+
+  /// La placa aviso que se iba a dormir (CMD_SLEEP): la desconexion que sigue no es una falla.
+  bool boardAsleep = false;
+
+  /// Esta conexion es de una placa que estaba dormida y desperto con su boton.
+  bool wokeFromSleep = false;
+
+  /// Carga de la pila de la placa (0-100), si la placa la mide (CMD_BATTERY:<mV>:<%>).
+  final ValueNotifier<int?> boardBattery = ValueNotifier(null);
+
   /// La placa oyo "Oye Iris" (CMD_WAKE_WORD:<%>).
   void Function(int percent)? onWakeWord;
 
@@ -448,6 +469,8 @@ class Esp32SpeechService {
     }
     _publishBoards(boardsFound.value);
     problem.value = null;
+    wokeFromSleep = boardAsleep;
+    boardAsleep = false;
     onConnectionChanged?.call(true);
   }
 
@@ -584,6 +607,19 @@ class Esp32SpeechService {
       // CMD_AUDIO_EVENT:<clase>:<porcentaje>
       final parts = command.split(':');
       if (parts.length >= 3) onAudioEvent?.call(parts[1], int.tryParse(parts[2]) ?? 0);
+    } else if (command.startsWith('CMD_SAY:')) {
+      final sentence = command.substring('CMD_SAY:'.length).trim();
+      if (sentence.isNotEmpty) onBoardSay?.call(sentence);
+    } else if (command == 'CMD_CLOUD_NEXT') {
+      onCloudNext?.call();
+    } else if (command == 'CMD_CLOUD_DESCRIBE') {
+      onCloudDescribe?.call();
+    } else if (command == 'CMD_SLEEP') {
+      boardAsleep = true;
+    } else if (command.startsWith('CMD_BATTERY:')) {
+      // CMD_BATTERY:<milivoltios>:<porcentaje>
+      final parts = command.split(':');
+      if (parts.length >= 3) boardBattery.value = int.tryParse(parts[2]);
     } else if (command.startsWith('CMD_WAKE_WORD:')) {
       onWakeWord?.call(int.tryParse(command.split(':')[1]) ?? 0);
     } else if (command.startsWith('CMD_SCENE_LIVE:')) {

@@ -74,6 +74,27 @@
 #define AMBIENT_CONTEXT_PERIOD_MS  10000
 
 
+// ==========================================
+// Energia (power_manager.h, ENERGIA.md)
+// ==========================================
+// La placa duerme (deep sleep) cuando nadie la usa y la despierta el boton. Solo en la XIAO: el devkit
+// es para desarrollar y queda siempre encendido.
+#ifdef IRIS_XIAO
+#define POWER_SLEEP_ENABLED      1
+#else
+#define POWER_SLEEP_ENABLED      0
+#endif
+#define POWER_IDLE_SLEEP_MS      45000   // sin uso este tiempo: a dormir
+#define LIVE_MAX_MS              300000  // el modo en vivo se apaga solo a los 5 minutos (gasta como siempre encendida)
+#define SAY_HOLD_MS              20000   // cuanto se guarda una respuesta esperando que la app se conecte
+// Medicion de la pila: la XIAO S3 NO lleva el voltaje de la pila a ningun pin. Hace falta un divisor
+// (BAT+ - 220k - pin - 220k - GND, 100 nF del pin a GND). Mientras no este soldado, dejar en 0.
+#define BATTERY_SENSE_ENABLED    0
+#define BATTERY_ADC_PIN          5       // D4 de la XIAO (GPIO5, ADC1)
+#define BATTERY_LOW_MV           3550    // "queda poca bateria"
+#define BATTERY_CRITICAL_MV      3350    // se duerme sola antes de que el regulador corte
+#define BATTERY_CHECK_MS         30000
+
 #ifdef IRIS_XIAO
 // ==========================================
 // PINES XIAO ESP32S3 SENSE (PROTOTIPO 2)

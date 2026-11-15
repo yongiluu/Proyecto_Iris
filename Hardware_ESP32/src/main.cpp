@@ -17,9 +17,14 @@
 #include "ocr_task.h"
 #include "scene_task.h"
 #include "ota_update.h"
+#include "button_gestures.h"
+#include "power_manager.h"
+#include <freertos/FreeRTOS.h>
+#include <freertos/queue.h>
+#include <freertos/task.h>
 
 namespace {
-constexpr uint32_t kDebounceMs = 50;
+constexpr uint32_t kDebounceMs = 30;
 constexpr uint32_t kStopFlushDelayMs = 80;
 
 volatile bool beepRequested = false;
@@ -90,10 +95,12 @@ float rmsOf(const int16_t* samples, size_t count) {
 
 // Se ejecuta en el hilo BLE: solo encolar, nunca bloquear.
 void onAudioReceived(const uint8_t* data, size_t length) {
+  powerActivity();
   playAudioBuffer(data, length);
 }
 
 void onCommandReceived(const char* command) {
+  powerActivity();  // la app la esta usando: no dormirse
   if (strcmp(command, "CMD_TAKE_PHOTO") == 0) {
     requestPhotoCapture();
   } else if (strcmp(command, "CMD_BEEP_THINKING") == 0) {
@@ -153,7 +160,29 @@ void onSceneLive(const char* sentence) {
   bleManager.sendCommand(command);
 }
 
+// ─── Respuestas que la placa da por su cuenta (pedidas con el boton, sin que la app pregunte) ───
+// Formato: CMD_SAY:<frase>. La app la muestra y la dice. Si la app todavia no se conecto (la placa
+// acaba de despertar), la frase espera hasta SAY_HOLD_MS.
+char pendingSay[440];
+volatile bool sayPending = false;
+volatile uint32_t sayQueuedMs = 0;
+volatile bool buttonDescribe = false;  // la descripcion en curso la pidio el boton
+volatile bool buttonRead = false;      // la lectura en curso la pidio el boton
+
+void queueSay(const char* text) {
+  sayPending = false;
+  snprintf(pendingSay, sizeof(pendingSay), "CMD_SAY:%s", text);
+  sayQueuedMs = millis();
+  sayPending = true;
+  powerActivity();
+}
+
 void onSceneDescribed(const char* sentence) {
+  if (buttonDescribe) {
+    buttonDescribe = false;
+    queueSay(sentence[0] ? sentence : "No pude ver bien. Intenta de nuevo.");
+    return;
+  }
   static char command[440];
   snprintf(command, sizeof(command), "CMD_SCENE:%s", sentence);
   bleManager.sendCommand(command);
@@ -162,6 +191,17 @@ void onSceneDescribed(const char* sentence) {
 #ifdef IRIS_OCR
 // Se ejecuta en la tarea del lector de texto. Formato: CMD_TEXT:<texto> (vacio si no encontro texto).
 void onTextRead(const char* text) {
+  if (buttonRead) {
+    buttonRead = false;
+    static char sentence[430];
+    if (text[0]) {
+      snprintf(sentence, sizeof(sentence), "Dice: %s", text);
+      queueSay(sentence);
+    } else {
+      queueSay("No encontré texto. Acerca un poco el letrero.");
+    }
+    return;
+  }
   static char command[440];
   snprintf(command, sizeof(command), "CMD_TEXT:%s", text);
   bleManager.sendCommand(command);
@@ -181,14 +221,16 @@ void onWakeWord(int confidencePercent) {
   wakePercent = confidencePercent > 0 ? confidencePercent : 1;
 }
 
-void startPushToTalk() {
+// [keepPreroll]: mandar tambien el audio de justo antes (lo que se dijo en los ~0,35 s que tarda en
+// reconocerse que el boton se esta manteniendo).
+void startPushToTalk(bool keepPreroll = false) {
   if (isTransmitting) {  // ya se estaba mandando por "Oye Iris": desde ahora manda el boton
     wakeSession = false;
     return;
   }
   Serial.println("Boton Presionado -> CMD_PTT_START");
   stopPlayback();  // si Iris estaba hablando, se calla para escuchar la pregunta nueva
-  txCount = 0;  // con el boton no se manda el audio de antes
+  if (!keepPreroll) txCount = 0;
   isTransmitting = true;
   setLightPaused(true);
   setAudioEventsPaused(true);
@@ -289,50 +331,219 @@ void handleSerialCommands() {
   }
 }
 
-void handleButton() {
-  static bool stableState = HIGH;
-  static bool lastReading = HIGH;
-  static uint32_t lastChangeMs = 0;
-  static uint32_t pressedSinceMs = 0;
+// ─── Boton: gestos (button_gestures.h) ───
+// Una tarea propia mira el boton cada 5 ms desde el primer instante: asi no se pierden toques
+// mientras setup() enciende la camara y carga los modelos (la placa acaba de despertar).
+ButtonGestures gestures;
+QueueHandle_t buttonEvents = nullptr;
+volatile bool gestureBusy = false;
+volatile bool buttonDown = false;
 
+bool readButtonPressed() {
   bool reading = digitalRead(BUTTON_PIN);
 #ifdef BUTTON_PIN_BOOT
   reading = reading && digitalRead(BUTTON_PIN_BOOT);  // apretado (LOW) si cualquiera de los dos lo esta
 #endif
-  if (reading != lastReading) {
-    lastReading = reading;
-    lastChangeMs = millis();
-  }
+  return reading == LOW;
+}
 
-  if (reading != stableState && millis() - lastChangeMs >= kDebounceMs) {
-    stableState = reading;
-    if (stableState == LOW) {
-      pressedSinceMs = millis();
-      startPushToTalk();
-    } else {
-      stopPushToTalk();
+void buttonTask(void*) {
+  bool stable = readButtonPressed();
+  bool last = stable;
+  uint32_t lastChangeMs = millis();
+  // El apreton que desperto a la placa es el primero del gesto.
+  if (powerWokeByButton()) gestures.beginFromWake(stable, millis());
+  for (;;) {
+    const uint32_t now = millis();
+    const bool reading = readButtonPressed();
+    if (reading != last) {
+      last = reading;
+      lastChangeMs = now;
     }
+    if (reading != stable && now - lastChangeMs >= kDebounceMs) stable = reading;
+    const ButtonEvent event = gestures.update(stable, now);
+    if (event != ButtonEvent::None) xQueueSend(buttonEvents, &event, 0);
+    buttonDown = stable;
+    gestureBusy = gestures.busy();
+    if (gestureBusy) powerActivity();
+    vTaskDelay(pdMS_TO_TICKS(5));
   }
+}
+
+bool talkActive = false;    // se esta manteniendo el boton para hablar
+bool talkOffline = false;   // ...pero sin la app conectada: al soltar responde el modelo de la placa
+uint32_t talkStartMs = 0;
+
+// Un toque: la placa describe lo que ve con su propio modelo, sin celular ni internet.
+void describeLocally() {
+  playTone(1320.0f, 50);
+  if (!sceneReady) {
+    queueSay("Esta placa no tiene instalado el modelo para describir.");
+    return;
+  }
+  buttonDescribe = true;
+  requestDescribeScene();
+}
+
+// Tres toques: leer el texto de adelante.
+void readLocally() {
+  for (int i = 0; i < 3; i++) playTone(1320.0f, 40);
+#ifdef IRIS_OCR
+  if (ocrReady) {
+    queueSay("Déjame leerlo.");
+    buttonRead = true;
+    requestReadText();
+    return;
+  }
+#endif
+  queueSay("Esta placa no tiene instalado el lector de texto.");
+}
+
+void handleButtonEvent(ButtonEvent event) {
+  powerActivity();
+  switch (event) {
+    case ButtonEvent::TalkStart:
+    case ButtonEvent::CloudTalkStart:
+      talkActive = true;
+      talkStartMs = millis();
+      if (bleManager.commandsReady()) {
+        talkOffline = false;
+        // Toque + mantener: esta pregunta va directo a la nube (la app no prueba primero lo local).
+        if (event == ButtonEvent::CloudTalkStart) bleManager.sendCommand("CMD_CLOUD_NEXT");
+        startPushToTalk(/*keepPreroll=*/true);
+      } else {
+        // Sin celular nadie puede entender la pregunta: al soltar responde el modelo de la placa.
+        talkOffline = true;
+        playTone(880.0f, 60);
+      }
+      break;
+    case ButtonEvent::TalkStop:
+      talkActive = false;
+      if (talkOffline) {
+        talkOffline = false;
+        describeLocally();
+      } else if (isTransmitting) {
+        stopPushToTalk();
+      }
+      break;
+    case ButtonEvent::Tap1:
+      describeLocally();
+      break;
+    case ButtonEvent::Tap2:
+      // Dos toques: descripcion detallada de la nube (la pide la app). Sin app, la local.
+      if (bleManager.commandsReady()) {
+        playTone(1320.0f, 40);
+        playTone(1320.0f, 40);
+        bleManager.sendCommand("CMD_CLOUD_DESCRIBE");
+      } else {
+        describeLocally();
+      }
+      break;
+    case ButtonEvent::Tap3:
+      readLocally();
+      break;
+    case ButtonEvent::None:
+      break;
+  }
+}
+
+// Apaga todo y duerme la placa hasta el proximo toque del boton.
+void enterSleep(const char* reason) {
+  Serial.printf("[Energia] Durmiendo (%s)\n", reason);
+  if (isTransmitting) stopPushToTalk();
+  collectingAudio = false;
+  requestLightMeter(false);
+  setSceneLive(false);
+  bleManager.sendCommand("CMD_SLEEP");  // la app sabe que no es una desconexion por error
+  delay(200);
+  setLightPaused(true);
+  setAudioEventsPaused(true);
+  shutdownCamera();
+  bleManager.shutdown();
+  powerDeepSleep();
+}
+
+// Modo en vivo: gasta como la placa siempre encendida, asi que se apaga solo a los LIVE_MAX_MS.
+void handleLiveLimit() {
+  static bool wasOn = false;
+  static uint32_t sinceMs = 0;
+  const bool on = sceneLiveActive();
+  if (on && !wasOn) sinceMs = millis();
+  wasOn = on;
+  if (on && millis() - sinceMs >= LIVE_MAX_MS) {
+    setSceneLive(false);
+    wasOn = false;
+    bleManager.sendCommand("CMD_LIVE:OFF");
+    queueSay("Apagué el modo en vivo para cuidar la batería.");
+  }
+}
+
+// Bateria (solo con el divisor de voltaje puesto: BATTERY_SENSE_ENABLED).
+void handleBattery(bool justConnected) {
+  if (!BATTERY_SENSE_ENABLED) return;
+  static uint32_t lastCheckMs = 0;
+  static bool lowAnnounced = false;
+  static int lastMv = 0;
+  const uint32_t now = millis();
+  const bool due = lastCheckMs == 0 || now - lastCheckMs >= BATTERY_CHECK_MS;
+  if (due) {
+    lastCheckMs = now;
+    lastMv = batteryMillivolts();
+  }
+  if ((due || justConnected) && bleManager.commandsReady()) {
+    char command[40];
+    snprintf(command, sizeof(command), "CMD_BATTERY:%d:%d", lastMv, batteryPercent(lastMv));
+    bleManager.sendCommand(command);
+  }
+  if (!due) return;
+  const BatteryLevel level = batteryLevel(lastMv);
+  if (level == BatteryLevel::Critical) {
+    // Tres tonos bajando: se acabo la pila. Dormida gasta casi nada hasta que la carguen.
+    playTone(660.0f, 120);
+    playTone(440.0f, 120);
+    playTone(330.0f, 250);
+    delay(700);
+    enterSleep("bateria agotada");
+  } else if (level == BatteryLevel::Low && !lowAnnounced) {
+    lowAnnounced = true;
+    playTone(440.0f, 120);
+    playTone(330.0f, 200);
+    queueSay("Queda poca batería. Carga la placa pronto.");
+  }
+}
+
+void handleButton() {
+  ButtonEvent event;
+  while (xQueueReceive(buttonEvents, &event, 0) == pdTRUE) handleButtonEvent(event);
+
   // Mantenerlo apretado OTA_BUTTON_HOLD_MS (nadie habla tanto con el boton): actualizar por WiFi.
-  static uint32_t holdHandledFor = 0;  // una sola vez por cada vez que se aprieta
-  if (stableState == LOW && millis() - pressedSinceMs >= OTA_BUTTON_HOLD_MS && holdHandledFor != pressedSinceMs) {
-    holdHandledFor = pressedSinceMs;
+  static uint32_t holdHandledFor = 0;  // una sola vez por cada vez que se mantiene
+  if (talkActive && buttonDown && millis() - talkStartMs >= OTA_BUTTON_HOLD_MS && holdHandledFor != talkStartMs) {
+    holdHandledFor = talkStartMs;
+    talkActive = false;
+    talkOffline = false;
     enterOtaMode("boton mantenido");
   }
 }
 }
 
 void setup() {
+  powerBegin();
+  pinMode(BUTTON_PIN, INPUT_PULLUP);
+#ifdef BUTTON_PIN_BOOT
+  pinMode(BUTTON_PIN_BOOT, INPUT_PULLUP);
+#endif
+  // Lo primero: mirar el boton (el toque que desperto a la placa puede ser el inicio de un gesto).
+  buttonEvents = xQueueCreate(8, sizeof(ButtonEvent));
+  xTaskCreatePinnedToCore(buttonTask, "boton", 3072, nullptr, 4, nullptr, 1);
+
   Serial.begin(115200);
   txQueue = (int16_t*)heap_caps_malloc(kTxQueueSamples * sizeof(int16_t), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
 #if ARDUINO_USB_CDC_ON_BOOT
   // Con USB nativo (XIAO) lo que se imprime antes de abrir el monitor se pierde: espera un poco al PC
-  // para que se vean los autotests. Sin cable sigue a los 2,5 s.
-  while (!Serial && millis() < 2500) delay(10);
-#endif
-  pinMode(BUTTON_PIN, INPUT_PULLUP);
-#ifdef BUTTON_PIN_BOOT
-  pinMode(BUTTON_PIN_BOOT, INPUT_PULLUP);
+  // para que se vean los autotests. Sin cable sigue a los 2,5 s. Al despertar con el boton no se
+  // espera: la persona esta esperando su respuesta.
+  while (!powerWokeByButton() && !Serial && millis() < 2500) delay(10);
 #endif
 
   if (!initCamera()) Serial.println("Error al inicializar la camara");
@@ -357,7 +568,9 @@ void setup() {
                 (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
                 (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL),
                 (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM));
-  Serial.println("Iris ESP32 listo. Esperando conexion BLE...");
+  Serial.printf("Iris ESP32 listo en %lu ms%s. Esperando conexion BLE...\n", (unsigned long)millis(),
+                powerWokeByButton() ? " (desperto con el boton)" : "");
+  powerActivity();
 }
 
 void loop() {
@@ -373,6 +586,26 @@ void loop() {
   }
 
   handleButton();
+  handleLiveLimit();
+
+  // Respuesta pendiente de la placa: sale apenas la app escucha; si no llega nadie, se descarta.
+  if (sayPending) {
+    if (bleManager.commandsReady()) {
+      sayPending = false;
+      bleManager.sendCommand(pendingSay);
+    } else if (millis() - sayQueuedMs >= SAY_HOLD_MS) {
+      sayPending = false;
+      Serial.println("[Boton] Nadie conectado: la respuesta se descarto");
+    }
+  }
+
+  // Mientras alguien la usa, la placa sigue despierta; despues de POWER_IDLE_SLEEP_MS quieta, duerme.
+  if (isTransmitting || collectingAudio || gestureBusy || sayPending || buttonDescribe || buttonRead ||
+      isIrisSpeaking() || sceneLiveActive() || lightMeterActive()) {
+    powerActivity();
+  }
+  if (powerShouldSleep()) enterSleep("sin uso");
+
   if (appPttStartRequested) {
     appPttStartRequested = false;
     startPushToTalk();
@@ -399,7 +632,9 @@ void loop() {
   if (connectedNow && !wasConnected) {
     connectedSinceMs = millis();
     helloSent = false;
+    powerActivity();
   }
+  handleBattery(connectedNow && !wasConnected);
   if (connectedNow && !helloSent && millis() - connectedSinceMs > 3000) {  // la app ya se suscribio
     helloSent = true;
     static const char* const kReasons[] = {"?", "encendido", "externo", "software", "panic",

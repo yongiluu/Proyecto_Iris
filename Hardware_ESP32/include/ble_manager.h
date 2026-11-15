@@ -29,6 +29,10 @@ public:
     // (el loop dejaria de leer el microfono y se perderian pedazos de la voz).
     bool canSendNow() const;
 
+    // true cuando la app ya se suscribio a los comandos (recien conectada todavia no escucha: lo que
+    // se mande antes se pierde).
+    bool commandsReady() const;
+
     // Apaga el Bluetooth (modo actualizacion por WiFi). Desde aqui send*() devuelve false: las otras
     // tareas (vision, detector de luz, fotos) pueden seguir llamandolas sin tocar memoria ya liberada.
     void shutdown();
@@ -43,6 +47,8 @@ private:
     NimBLECharacteristic* pCmdCharacteristic;   // Comandos
     NimBLECharacteristic* pPhotoCharacteristic; // Foto
     volatile bool deviceConnected;
+    volatile bool commandsSubscribed = false;
+    volatile uint32_t subscribedAtMs = 0;
     volatile uint16_t negotiatedMtu;
     AudioReceiveCallback onAudioReceived;
     CommandReceiveCallback onCommandReceived;
