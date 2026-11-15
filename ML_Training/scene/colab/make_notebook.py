@@ -52,7 +52,7 @@ FOTOS = 100000  #@param {type:"integer"}
 CON_TRAIN = True  #@param {type:"boolean"}
 # True: elige entre las 1,7 millones de fotos de Open Images (mas escaleras, conos, postes...). Baja ~5,6 GB de CSV.
 PROFESOR = "Qwen/Qwen3-VL-8B-Instruct"  #@param ["Qwen/Qwen3-VL-8B-Instruct", "Qwen/Qwen2.5-VL-7B-Instruct", "Qwen/Qwen2.5-VL-32B-Instruct-AWQ"]
-COMPARAR_PROFESORES = True  #@param {type:"boolean"}
+COMPARAR_PROFESORES = False  #@param {type:"boolean"}
 # True: antes de etiquetar todo, prueba cada candidato con 300 fotos y usa el que mejor coincide con lo
 # que marcaron personas en Open Images (reemplaza a PROFESOR).
 CANDIDATOS = ["Qwen/Qwen3-VL-8B-Instruct", "Qwen/Qwen2.5-VL-7B-Instruct", "Qwen/Qwen2.5-VL-32B-Instruct-AWQ"]
