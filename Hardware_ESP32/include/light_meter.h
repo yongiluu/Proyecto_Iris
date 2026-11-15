@@ -12,6 +12,9 @@
 // Pide encenderlo/apagarlo. No bloquea (se puede llamar desde el hilo BLE): lo aplica la tarea de luz.
 void requestLightMeter(bool enabled);
 
+// true mientras el detector esta encendido (la placa no se duerme mientras tanto).
+bool lightMeterActive();
+
 // Lo llama la tarea de luz en cada vuelta: aplica lo pedido y el apagado automatico.
 // Devuelve true si el detector esta encendido.
 bool lightMeterUpdate();

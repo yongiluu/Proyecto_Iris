@@ -65,6 +65,9 @@ jobs:
       - name: Retina dice un objeto solo con su umbral calibrado (sin cambiar la placa)
         working-directory: ML_Training
         run: python tests/test_scene_calibrate.py
+      - name: Gestos del boton de la placa (un toque, dos, tres, mantener)
+        working-directory: ML_Training
+        run: python tests/test_button_gestures.py
       - name: Las tablas generadas para el firmware estan al dia
         run: git diff --exit-code -- Hardware_ESP32/include/scene_vocab.h Hardware_ESP32/src/scene_vocab.cpp Hardware_ESP32/include/ocr_config.h Hardware_ESP32/src/ocr_config.cpp
 

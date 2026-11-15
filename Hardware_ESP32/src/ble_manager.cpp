@@ -17,6 +17,7 @@ class ServerCallbacks : public NimBLEServerCallbacks {
 
     void onDisconnect(NimBLEServer* pServer) override {
         bleManager.deviceConnected = false;
+        bleManager.commandsSubscribed = false;
         bleManager.negotiatedMtu = BLE_DEFAULT_MTU;
         NimBLEDevice::startAdvertising();
     }
@@ -43,6 +44,11 @@ class CmdRxCallbacks : public NimBLECharacteristicCallbacks {
         if (!value.empty() && bleManager.onCommandReceived) {
             bleManager.onCommandReceived(value.c_str());
         }
+    }
+
+    void onSubscribe(NimBLECharacteristic* pCharacteristic, ble_gap_conn_desc* desc, uint16_t subValue) override {
+        bleManager.commandsSubscribed = subValue != 0;
+        bleManager.subscribedAtMs = millis();
     }
 };
 
@@ -119,6 +125,10 @@ bool waitForBleBuffers(volatile bool& connected) {
     return true;
 }
 }  // namespace
+
+bool BleManager::commandsReady() const {
+    return deviceConnected && commandsSubscribed && millis() - subscribedAtMs >= 200;
+}
 
 bool BleManager::canSendNow() const {
     return deviceConnected && os_msys_num_free() >= kMinFreeBuffers;
