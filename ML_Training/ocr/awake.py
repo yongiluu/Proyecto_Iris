@@ -1,7 +1,7 @@
 """Evita que Windows suspenda el PC mientras entrena (la pantalla si puede apagarse).
 
 Sin esto, un entrenamiento de noche se congela cuando el PC se duerme y amanece en la misma epoca.
-En Linux/Mac (Lambda) no hace nada.
+En Linux/Mac (Colab, Lambda) no hace nada: no hay nada que llamar.
 """
 import sys
 

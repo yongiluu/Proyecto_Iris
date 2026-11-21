@@ -21,15 +21,21 @@ def code(text):
 
 
 md(r"""
-# Retina: el modelo de escenas de la placa de Iris (Google Colab)
+# Iris en la noche: Retina 3 + lector de texto (Google Colab)
 
 **Iris ve, Retina entiende al instante (en la placa), Occipital piensa en profundidad (en la nube).**
 
-1. Baja fotos a color de Open Images, con más peso a lo que importa al caminar (escaleras, conos, postes...).
-2. (Opcional) Compara varios **profesores** con 300 fotos y se queda con el mejor.
-3. El profesor mira cada foto y llena la ficha: objetos, dónde están, distancia, colores, personas, **peligros**.
-4. Entrena al **alumno** (Retina), el modelo chico que corre en la placa XIAO.
-5. Le pone un umbral propio a cada objeto (dice menos cosas, pero seguras) y lo exporta a int8.
+Todo de corrido, sin tocar nada:
+1. Más fotos de Open Images (hasta 160 mil), ahora con más **casas reales**: dormitorios, livings, cocinas.
+2. El profesor (Qwen3-VL-8B) llena la ficha de las fotos nuevas. **Mientras tanto**, el procesador genera el
+   texto de práctica del lector (con desenfoque, poco contraste y ruido como la cámara de los lentes).
+3. Entrena **Retina 3**; umbral por objeto y ahora también por **lugar** (dice "estás en un baño" solo si
+   acierta ≥85 %).
+4. Entrena el **lector de texto** (detector + lector) y lo exporta para la placa.
+5. Deja todo en tu Drive: `Iris_escenas/resultado/` (Retina) y `iris_ocr/salida/` (lector).
+
+**Una sola vez antes:** sube `ML_Training/data/ocr/iris_ocr_colab.zip` (de tu PC, 287 MB) a tu Drive en
+`Mi unidad/iris_ocr/` (crea la carpeta). Sin ese archivo el notebook salta el lector y hace solo Retina.
 
 **Antes de empezar:** *Entorno de ejecución → Cambiar tipo de entorno de ejecución* → **GPU A100** (o L4, más
 lenta pero gasta menos unidades). La T4 **no sirve**.
@@ -55,7 +61,7 @@ print('  wc -l /content/drive/MyDrive/Iris_escenas/*.jsonl; nvidia-smi --query-g
 
 code(r"""
 #@title 1. Ajustes { display-mode: "form" }
-FOTOS = 100000  #@param {type:"integer"}
+FOTOS = 160000  #@param {type:"integer"}
 CON_TRAIN = True  #@param {type:"boolean"}
 # True: elige entre las 1,7 millones de fotos de Open Images (mas escaleras, conos, postes...). Baja ~5,6 GB de CSV.
 PROFESOR = "Qwen/Qwen3-VL-8B-Instruct"  #@param ["Qwen/Qwen3-VL-8B-Instruct", "Qwen/Qwen2.5-VL-7B-Instruct", "Qwen/Qwen2.5-VL-32B-Instruct-AWQ"]
@@ -65,7 +71,11 @@ COMPARAR_PROFESORES = False  #@param {type:"boolean"}
 CANDIDATOS = ["Qwen/Qwen3-VL-8B-Instruct", "Qwen/Qwen2.5-VL-7B-Instruct", "Qwen/Qwen2.5-VL-32B-Instruct-AWQ"]
 ALPHA = 0.5  #@param [0.35, 0.5]
 # 0.35: Retina 1 (1,1 MB). 0.5: mas capaz (~2 MB); necesita el firmware con la particion de modelos de 4 MB.
-EPOCAS = 40  #@param {type:"integer"}
+EPOCAS = 50  #@param {type:"integer"}
+ENTRENAR_RETINA = True  #@param {type:"boolean"}
+ENTRENAR_LECTOR = True  #@param {type:"boolean"}
+EPOCAS_LECTOR = 40  #@param {type:"integer"}
+EPOCAS_DETECTOR = 40  #@param {type:"integer"}
 RAMA = "main"  #@param {type:"string"}
 """)
 
@@ -158,6 +168,29 @@ print('Fotos listas:', sum(1 for _ in (DATA / 'images' / 'openimages').glob('*.j
 """)
 
 code(r"""
+#@title 4b. Lector de texto: generar sus datos de practica EN SEGUNDO PLANO (usa el procesador, no la GPU)
+OCR_DRIVE = pathlib.Path('/content/drive/MyDrive/iris_ocr')
+OCR_ZIP = OCR_DRIVE / 'iris_ocr_colab.zip'
+os.environ.update({'PYTHONIOENCODING': 'utf-8', 'TF_CPP_MIN_LOG_LEVEL': '2',
+                   'IRIS_OCR_DATA_DIR': '/content/ocr_data',               # disco local (rapido)
+                   'IRIS_OCR_WORK_DIR': str(OCR_DRIVE / 'trabajo')})       # Drive: respaldos y modelos
+sintesis = None
+if ENTRENAR_LECTOR and not OCR_ZIP.exists():
+    print(f'⚠ No esta {OCR_ZIP}: se salta el lector (solo Retina). Subelo y vuelve a correr para entrenarlo.')
+    ENTRENAR_LECTOR = False
+if ENTRENAR_LECTOR:
+    (OCR_DRIVE / 'trabajo').mkdir(parents=True, exist_ok=True)
+    !mkdir -p /content/ocr_data && unzip -q -n "{OCR_ZIP}" -d /content/ocr_data
+    !python ocr/fonts.py
+    # 6 nucleos: el resto queda para el profesor. Se puede cortar: retoma por tandas.
+    sintesis = subprocess.Popen(
+        ['bash', '-c', 'python ocr/synth.py --train 400000 --val 8000 --workers 6 && '
+                       'python ocr/detector.py synth --escenas 40000 --val 2000 --workers 6'],
+        stdout=open(OCR_DRIVE / 'sintesis.log', 'a'), stderr=subprocess.STDOUT, start_new_session=True)
+    print('Generando datos del lector en segundo plano (log: Mi unidad/iris_ocr/sintesis.log)')
+""")
+
+code(r"""
 #@title 5. Servidor del profesor (vLLM): corre aparte del notebook y se reinicia solo si se cae
 VENV = pathlib.Path('/content/venv_profesor')
 if not (VENV / 'bin' / 'vllm').exists():
@@ -241,36 +274,63 @@ print('Profesor elegido:', PROFESOR)
 
 code(r"""
 #@title 7. El profesor etiqueta todas las fotos (se puede cortar y retomar)
-etiquetar(PROFESOR)
-apagar_servidor()
-print('Profesor terminado; la GPU queda libre para el alumno.')
+if ENTRENAR_RETINA:
+    etiquetar(PROFESOR)
+    apagar_servidor()
+    print('Profesor terminado; la GPU queda libre para el alumno.')
 """)
 
 code(r"""
 #@title 8. Retina (el alumno): entrenar con las etiquetas del profesor elegido
 os.environ['IRIS_PROFESOR'] = nombre_corto(PROFESOR)
-!pip -q install pandas pillow tqdm
-!python scene/train.py --labels mix --epochs {EPOCAS} --batch-size 128 --alpha {ALPHA}
-!cp models/scene_student.keras models/scene_report.txt "{DRIVE}/resultado/" 2>/dev/null; true
+if ENTRENAR_RETINA:
+    !pip -q install pandas pillow tqdm
+    !python scene/train.py --labels mix --epochs {EPOCAS} --batch-size 128 --alpha {ALPHA}
+    !cp models/scene_student.keras models/scene_report.txt "{DRIVE}/resultado/" 2>/dev/null; true
 """)
 
 code(r"""
-#@title 9. Umbral por objeto + int8 para la placa + demo, y guardar todo en Drive
+#@title 9. Umbral por objeto y lugar + int8 para la placa + demo, y guardar todo en Drive
 os.environ['IRIS_PROFESOR'] = nombre_corto(PROFESOR)
-!python scene/export_model.py
-!python scene/demo.py --int8 --n 120
-!cp models/scene_student_int8.tflite models/scene_report_int8.txt models/scene_thresholds.json models/scene_student.keras models/scene_report.txt models/scene_student.json models/firmware_models.json "{DRIVE}/resultado/"
-!cp data/scene/demo_alumno.html "{DRIVE}/resultado/" 2>/dev/null; true
-ETIQ_PROFESOR = f'labels_teacher_{nombre_corto(PROFESOR)}.jsonl'
-!cp "{DRIVE}/{ETIQ_PROFESOR}" "{DRIVE}/resultado/"
-print(open('models/scene_report_int8.txt', encoding='utf-8').read()[:3000])
-print()
-print('LISTO. Baja de Mi unidad/Iris_escenas/resultado/ a tu PC:')
-print('  scene_student_int8.tflite, scene_report_int8.txt, scene_thresholds.json, scene_student.keras,')
-print('  scene_student.json, scene_report.txt  -> ML_Training/models/')
-print(f'  {ETIQ_PROFESOR} -> ML_Training/data/scene/   (las etiquetas del profesor valen oro: guárdalas)')
-print('  demo_alumno.html -> ábrelo en el navegador para ver qué dice Retina de cada foto')
-print('Y desconecta el entorno (Entorno de ejecución -> Desconectar y borrar) para no gastar unidades.')
+if ENTRENAR_RETINA:
+    !python scene/export_model.py
+    !python scene/demo.py --int8 --n 120
+    !cp models/scene_student_int8.tflite models/scene_report_int8.txt models/scene_thresholds.json models/scene_student.keras models/scene_report.txt models/scene_student.json models/firmware_models.json "{DRIVE}/resultado/"
+    !cp data/scene/demo_alumno.html "{DRIVE}/resultado/" 2>/dev/null; true
+    ETIQ_PROFESOR = f'labels_teacher_{nombre_corto(PROFESOR)}.jsonl'
+    !cp "{DRIVE}/{ETIQ_PROFESOR}" "{DRIVE}/resultado/"
+    print(open('models/scene_report_int8.txt', encoding='utf-8').read()[:3000])
+    print()
+    print('LISTO. Baja de Mi unidad/Iris_escenas/resultado/ a tu PC:')
+    print('  scene_student_int8.tflite, scene_report_int8.txt, scene_thresholds.json, scene_student.keras,')
+    print('  scene_student.json, scene_report.txt  -> ML_Training/models/')
+    print(f'  {ETIQ_PROFESOR} -> ML_Training/data/scene/   (las etiquetas del profesor valen oro: guárdalas)')
+    print('  demo_alumno.html -> ábrelo en el navegador para ver qué dice Retina de cada foto')
+    print('Y desconecta el entorno (Entorno de ejecución -> Desconectar y borrar) para no gastar unidades.')
+""")
+
+code(r"""
+#@title 10. Lector de texto: entrenar (detector + lector), exportar para la placa y guardar en Drive
+if ENTRENAR_LECTOR:
+    if sintesis is not None and sintesis.poll() is None:
+        print('Esperando que terminen los datos del lector...')
+        sintesis.wait()
+    # Si la maquina se reinicio, se regeneran (mismas semillas) y se salta lo ya hecho.
+    !python ocr/synth.py --train 400000 --val 8000 --workers 12
+    !python ocr/detector.py synth --escenas 40000 --val 2000 --workers 12
+    # Retoma solo desde Mi unidad/iris_ocr/trabajo si se corto (siempre con las mismas epocas).
+    !python ocr/train.py --epochs {EPOCAS_LECTOR} --batch-size 256 --lr 3e-3 --ram --workers 6
+    !python ocr/detector.py train --epochs {EPOCAS_DETECTOR} --batch-size 64 --lr 2e-3 --ram --workers 4
+    !python ocr/export_model.py
+    salida = OCR_DRIVE / 'salida'
+    salida.mkdir(exist_ok=True)
+    !cp models/ocr_reader_int8.tflite models/ocr_detector_int8.tflite models/ocr_report_int8.txt models/ocr_detector_report.txt models/firmware_models.json ../Hardware_ESP32/include/ocr_config.h ../Hardware_ESP32/src/ocr_config.cpp "{salida}/" 2>/dev/null; true
+    !cp "{OCR_DRIVE}"/trabajo/*.txt "{salida}/" 2>/dev/null; true
+    !cp models/firmware_models.json "{DRIVE}/resultado/" 2>/dev/null; true
+    !python tools/pack_models.py
+    print(open('models/ocr_report_int8.txt', encoding='utf-8').read()[:2500])
+    print('LISTO el lector. Baja Mi unidad/iris_ocr/salida/ a tu PC (o avisale a Claude).')
+print('Y desconecta el entorno (Entorno de ejecucion -> Desconectar y borrar) para no gastar unidades.')
 """)
 
 nb = {"cells": cells, "metadata": {"accelerator": "GPU", "colab": {"provenance": [], "gpuType": "A100"},

@@ -65,6 +65,10 @@ WALKING_BOOST = {
     "escalera": 4.0, "cono": 3.0, "poste": 3.0, "grifo": 2.0, "banca": 2.0, "basurero": 3.0,
     "bicicleta": 2.0, "moto": 2.0, "auto": 1.5, "bus": 1.5, "camion": 1.5, "semaforo": 2.0,
     "senal": 2.0, "puerta": 2.0, "persona": 1.5, "perro": 1.5,
+    # Retina 3: mas casas reales (con Retina 2 una pieza de paredes blancas salia "bano" y no veia la cama).
+    "cama": 3.0, "sofa": 2.5, "lampara": 2.0, "cortina": 2.0, "cuadro": 2.0, "estante": 2.0,
+    "televisor": 2.0, "mesa": 1.5, "silla": 1.5, "ventana": 1.5, "computador": 1.5, "mochila": 2.0,
+    "inodoro": 0.6, "lavamanos": 0.6,  # menos banos: estaban sobrerrepresentados
 }
 
 # Etiquetas de imagen de Open Images -> (lugar, interior)

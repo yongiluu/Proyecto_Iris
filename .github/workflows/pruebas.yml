@@ -68,6 +68,9 @@ jobs:
       - name: Gestos del boton de la placa (un toque, dos, tres, mantener)
         working-directory: ML_Training
         run: python tests/test_button_gestures.py
+      - name: Datos de practica del lector (fuentes, camara de los lentes, retomar)
+        working-directory: ML_Training
+        run: python tests/test_ocr_synth.py
       - name: Retina en el TFLM de la placa = TensorFlow (y cabe en su arena)
         working-directory: ML_Training
         run: python tests/test_scene_tflm.py

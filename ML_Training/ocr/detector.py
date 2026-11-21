@@ -1,39 +1,60 @@
 """Detector de DONDE hay texto en la foto (el lector lee lineas ya recortadas; este las encuentra).
 
-    python ocr/detector.py synth            # escenas sinteticas: fotos reales + texto pegado (~10 min)
-    python ocr/detector.py train            # entrena (~1 h en CPU)
-    python ocr/detector.py export           # int8 + chequeo de ops + models/ocr_detector_int8.tflite
-    python ocr/detector.py preview          # data/ocr/detector_preview.png con lo que detecta
+    python ocr/detector.py synth            # escenas sinteticas: fotos reales + texto pegado
+    python ocr/detector.py synth --escenas 40000 --val 2000 --workers 12     # en Colab
+    python ocr/detector.py train            # entrena (~1 h en CPU); se puede cortar y retomar
+    python ocr/detector.py train --nuevo    # borra el respaldo y empieza de cero
+    python ocr/detector.py preview          # <datos>/detector_preview.png con una escena y su mapa
+    (la exportacion a int8 la hace ocr/export_model.py junto con el lector)
 
 Entrada: foto en grises 320x240 (la placa la saca de un frame VGA en grises). Salida: mapa de 40x30
 celdas (cada una de 8x8 px) con la probabilidad de que haya texto. En la placa, las celdas marcadas
 se juntan en lineas (componentes conexas), se recortan del frame VGA y van al lector.
 Solo convoluciones (sin decodificador con upsampling): pocas ops y poca memoria para TFLM.
+
+Las escenas se arman en el frame VGA (640x480), se ensucian como la camara (ocr/camera.py) y se reducen
+a 320x240 con la MISMA funcion de la placa (pipeline.downsample2x). El entrenamiento guarda un respaldo
+por epoca en <IRIS_OCR_WORK_DIR>/ocr_detector_respaldo: si se corta, al volver a correrlo sigue.
 """
 import argparse
 import os
 import random
-import sys
-from multiprocessing import Pool
+import shutil
 
 os.environ.setdefault("TF_CPP_MIN_LOG_LEVEL", "2")
 
 import numpy as np
-from PIL import Image, ImageDraw, ImageFilter, ImageFont
+from PIL import Image, ImageDraw
 
+import camera
 import config
-from synth import load_fonts, load_sentences, random_text
+import pipeline
+from synth import build_resumable, font_at, load_fonts, load_sentences, random_text
 
 W, H = config.DET_WIDTH, config.DET_HEIGHT
+VW, VH = pipeline.VGA_W, pipeline.VGA_H     # las escenas se arman en el frame de la camara
 S = config.DET_STRIDE
 MW, MH = W // S, H // S
 DET_SCENES = 24_000
 DET_VAL = 1_500
-KERAS_MODEL = config.MODELS_DIR / "ocr_detector.keras"
+KERAS_MODEL = config.WORK_DIR / "ocr_detector.keras"
+BACKUP_DIR = config.WORK_DIR / "ocr_detector_respaldo"
 TFLITE_MODEL = config.MODELS_DIR / "ocr_detector_int8.tflite"
 
 
 # ───────────────────────── Escenas sinteticas ─────────────────────────
+
+def clean_photos() -> list:
+    """Fotos sin texto real (ocr/backgrounds.py): si el fondo tuviera texto sin marcar, aprenderia a ignorarlo."""
+    clean = config.DATA_DIR / "fondos_sin_texto.txt"
+    if not clean.exists():
+        raise SystemExit(f"Falta {clean}: corre python ocr/backgrounds.py (o usa el paquete de paquete_colab.py)")
+    available = {p.stem for p in config.BACKGROUNDS_DIR.glob("*.jpg")} if config.BACKGROUNDS_DIR.exists() else set()
+    photos = [config.BACKGROUNDS_DIR / f"{i}.jpg" for i in clean.read_text(encoding="utf-8").split() if i in available]
+    if not photos:
+        raise SystemExit(f"No hay fotos de fondo sin texto en {config.BACKGROUNDS_DIR} (IRIS_BACKGROUNDS_DIR)")
+    return photos
+
 
 class SceneMaker:
     def __init__(self, seed: int):
@@ -41,31 +62,30 @@ class SceneMaker:
         self.np_rng = np.random.default_rng(seed)
         self.fonts = load_fonts()
         self.sentences = load_sentences()
-        # Solo fondos sin texto real (ocr/backgrounds.py): si no, aprende a ignorar el texto de verdad.
-        clean = config.DATA_DIR / "fondos_sin_texto.txt"
-        if not clean.exists():
-            raise SystemExit("Falta data/ocr/fondos_sin_texto.txt: corre python ocr/backgrounds.py")
-        self.photos = [config.BACKGROUNDS_DIR / f"{i}.jpg" for i in clean.read_text(encoding="utf-8").split()]
+        self.photos = clean_photos()
 
     def photo(self) -> Image.Image:
         image = Image.open(self.rng.choice(self.photos)).convert("L")
-        scale = max(W / image.width, H / image.height) * self.rng.uniform(1.0, 1.6)
+        scale = max(VW / image.width, VH / image.height) * self.rng.uniform(1.0, 1.6)
         image = image.resize((int(image.width * scale) + 1, int(image.height * scale) + 1), Image.BILINEAR)
-        x, y = self.rng.randint(0, image.width - W), self.rng.randint(0, image.height - H)
-        return image.crop((x, y, x + W, y + H))
+        x, y = self.rng.randint(0, image.width - VW), self.rng.randint(0, image.height - VH)
+        return image.crop((x, y, x + VW, y + VH))
 
     def scene(self):
-        rng = self.rng
+        """-> (foto 320x240 uint8 como la recibe el detector, mapa 30x40 de celdas con texto)."""
+        rng, cam = self.rng, config.CAMERA
         image = self.photo()
-        mask = Image.new("L", (W, H), 0)          # 1 = pixel dentro de la caja de una linea de texto
+        mask = Image.new("L", (VW, VH), 0)          # 255 = pixel dentro de la caja de una linea de texto
         draw_img, draw_mask = ImageDraw.Draw(image), ImageDraw.Draw(mask)
+        clean = rng.random() < cam["clean_fraction"]
         if rng.random() < 0.15:                    # algunas escenas sin texto (aprender a no inventar)
-            return self.degrade(image), np.zeros((MH, MW), np.float32)
+            return self.finish(image, mask, clean, camera.random_geometry(VW, VH, rng))
 
-        for _ in range(rng.randint(1, 4)):        # bloques de texto (letreros, etiquetas)
-            lines = rng.randint(1, 3)
-            size = rng.randint(9, 40)              # alto del texto en la foto de 320x240
-            font = ImageFont.truetype(rng.choice(self.fonts), size)
+        for _ in range(rng.randint(1, 5)):        # bloques de texto (letreros, etiquetas, cajas)
+            small = not clean and camera.chance(rng, "det_small_text_prob")
+            size = int(rng.uniform(*cam["det_small_text_px" if small else "det_text_px"]))  # alto en VGA
+            lines = rng.randint(1, 6) if small else rng.randint(1, 3)
+            font = font_at(rng.choice(self.fonts), size)
             texts = [t for t in (random_text(rng, self.sentences) for _ in range(lines)) if t]
             if not texts:
                 continue
@@ -73,67 +93,64 @@ class SceneMaker:
             block_w = max(b[2] - b[0] for b in boxes)
             line_h = int(size * rng.uniform(1.15, 1.6))
             block_h = line_h * len(texts)
-            if block_w >= W - 8 or block_h >= H - 8:
+            if block_w >= VW - 16 or block_h >= VH - 16:
                 continue
-            x0, y0 = rng.randint(4, W - block_w - 4), rng.randint(4, H - block_h - 4)
+            x0, y0 = rng.randint(8, VW - block_w - 8), rng.randint(8, VH - block_h - 8)
             region = np.asarray(image.crop((x0, y0, x0 + block_w, y0 + block_h)), np.float32)
-            if rng.random() < 0.6:                 # letrero: placa lisa detras del texto
-                plate = rng.uniform(0, 255)
-                pad = int(size * 0.4)
+            if rng.random() < 0.6:                 # letrero/etiqueta: placa lisa detras del texto
+                plate = rng.uniform(190, 250) if camera.chance(rng, "bright_paper_prob") else rng.uniform(0, 255)
+                pad = int(size * rng.uniform(0.3, 1.0))
                 draw_img.rectangle((x0 - pad, y0 - pad, x0 + block_w + pad, y0 + block_h + pad), fill=int(plate))
+                # La placa tapa el texto de bloques anteriores: ya no se ve, no se marca
+                draw_mask.rectangle((x0 - pad, y0 - pad, x0 + block_w + pad, y0 + block_h + pad), fill=0)
                 background = plate
             else:
+                if np.asarray(mask.crop((x0, y0, x0 + block_w, y0 + block_h))).any():
+                    continue   # texto sobre texto sin placa: ninguno se leeria
                 background = float(region.mean())
-            ink = int(np.clip(background - rng.uniform(90, 200) if background > 127 else background + rng.uniform(90, 200), 0, 255))
+            ink = int(round(camera.ink_level(rng, background)))
             for i, (text, box) in enumerate(zip(texts, boxes)):
                 x, y = x0, y0 + i * line_h
                 draw_img.text((x - box[0], y - box[1]), text, font=font, fill=ink)
-                draw_mask.rectangle((x, y, x + box[2] - box[0], y + box[3] - box[1]), fill=255)
+                # Caja de al menos una celda de alto (16 px en VGA): una linea chica igual marca su fila
+                top, bottom = y, y + box[3] - box[1]
+                if bottom - top < 2 * S:
+                    middle = (top + bottom) / 2
+                    top, bottom = middle - S, middle + S
+                draw_mask.rectangle((x, top, x + box[2] - box[0], bottom), fill=255)
 
-        if rng.random() < 0.5:                     # camara algo girada respecto del letrero
-            angle = rng.uniform(-7, 7)
-            image = image.rotate(angle, resample=Image.BILINEAR, fillcolor=int(np.asarray(image).mean()))
-            mask = mask.rotate(angle, resample=Image.BILINEAR)
+        return self.finish(image, mask, clean, camera.random_geometry(VW, VH, rng))
+
+    def finish(self, image, mask, clean, ops):
+        """Misma geometria a foto y mascara, camara, y reduccion 2x como la placa."""
+        if ops:
+            image = camera.apply_geometry(image, ops, fill=int(np.asarray(image).mean()))
+            mask = camera.apply_geometry(mask, ops, fill=0)
+        frame = camera.degrade(np.asarray(image, np.float32), self.rng, self.np_rng, clean=clean)
         target = np.asarray(mask.resize((MW, MH), Image.BOX), np.float32) / 255.0
-        return self.degrade(image), (target >= 0.3).astype(np.float32)
-
-    def degrade(self, image: Image.Image) -> np.ndarray:
-        rng = self.rng
-        if rng.random() < 0.5:
-            image = image.filter(ImageFilter.GaussianBlur(rng.uniform(0.3, 1.2)))
-        x = np.asarray(image, np.float32)
-        x = (x - x.mean()) * rng.uniform(0.6, 1.2) + x.mean() * rng.uniform(0.5, 1.3)
-        x += self.np_rng.normal(0, rng.uniform(0, 8), x.shape)
-        return np.clip(np.round(x), 0, 255).astype(np.uint8)
+        return pipeline.downsample2x(frame), (target >= 0.3).astype(np.float32)
 
 
 def _chunk(args):
-    seed, count = args
+    index, seed, count = args
     maker = SceneMaker(seed)
     images = np.empty((count, H, W), np.uint8)
     targets = np.empty((count, MH, MW), np.uint8)
     for i in range(count):
         image, target = maker.scene()
         images[i], targets[i] = image, target.astype(np.uint8)
-    return images, targets
+    return index, images, {"targets": targets}
 
 
-def synth(workers: int) -> None:
-    for name, total, seed in (("val", DET_VAL, 2), ("train", DET_SCENES, 1)):
-        chunk = 500
-        jobs = [(seed * 100_000 + i, min(chunk, total - i * chunk)) for i in range((total + chunk - 1) // chunk)]
-        images = np.lib.format.open_memmap(config.DATA_DIR / f"det_{name}_images.npy", mode="w+", dtype=np.uint8, shape=(total, H, W))
-        targets = np.empty((total, MH, MW), np.uint8)
-        position = 0
-        with Pool(workers) as pool:
-            for part_images, part_targets in pool.imap(_chunk, jobs):
-                n = len(part_images)
-                images[position:position + n], targets[position:position + n] = part_images, part_targets
-                position += n
-                print(f"\r  {name}: {position}/{total}", end="", flush=True)
-        print()
-        images.flush()
-        np.save(config.DATA_DIR / f"det_{name}_targets.npy", targets)
+def synth(workers: int, scenes: int = DET_SCENES, val: int = DET_VAL) -> None:
+    load_fonts()          # descarga las fuentes libres (si hace falta) antes de abrir los procesos
+    print(f"Fotos de fondo sin texto: {len(clean_photos())} | camara x{config.CAMERA_STRENGTH} "
+          f"| datos en {config.DATA_DIR}")
+    for name, total, seed in (("val", val, 2), ("train", scenes, 1)):
+        def finish(parts, name=name):
+            np.save(config.DATA_DIR / f"det_{name}_targets.npy", np.concatenate([p["targets"] for p in parts]))
+        build_resumable(f"det_{name}", total, seed, 250, (H, W), _chunk, workers, finish)
+    print(f"✔ {config.DATA_DIR}")
 
 
 # ───────────────────────── Modelo ─────────────────────────
@@ -176,16 +193,17 @@ def bce_dice(y_true, y_pred):
     return bce + tf.reduce_mean(dice)
 
 
-def train(epochs: int, batch_size: int) -> None:
+def train(epochs: int, batch_size: int, lr: float = 2e-3, in_ram: bool = False, workers: int = 2) -> None:
     import tensorflow as tf
-    images = np.load(config.DATA_DIR / "det_train_images.npy", mmap_mode="r")
+    images = np.load(config.DATA_DIR / "det_train_images.npy", mmap_mode=None if in_ram else "r")
     targets = np.load(config.DATA_DIR / "det_train_targets.npy")
     val_images = np.load(config.DATA_DIR / "det_val_images.npy")
     val_targets = np.load(config.DATA_DIR / "det_val_targets.npy")
+    print(f"Escenas: train={len(images)}, val={len(val_images)} | {'en RAM' if in_ram else 'desde disco'}")
 
     class Batches(tf.keras.utils.PyDataset):
         def __init__(self):
-            super().__init__(workers=2)
+            super().__init__(workers=workers)
             self.order = np.arange(len(images))
 
         def __len__(self):
@@ -204,13 +222,16 @@ def train(epochs: int, batch_size: int) -> None:
 
     model = build_model()
     model.summary(line_length=100)
-    steps = len(images) // batch_size * epochs
-    model.compile(optimizer=tf.keras.optimizers.Adam(tf.keras.optimizers.schedules.CosineDecay(2e-3, steps, alpha=0.02)),
-                  loss=bce_dice)
+    steps_per_epoch = len(images) // batch_size
+    schedule = tf.keras.optimizers.schedules.CosineDecay(lr / 10, steps_per_epoch * epochs, alpha=0.02,
+                                                         warmup_target=lr, warmup_steps=steps_per_epoch)
+    model.compile(optimizer=tf.keras.optimizers.Adam(schedule), loss=bce_dice)
+    config.WORK_DIR.mkdir(parents=True, exist_ok=True)
+    if BACKUP_DIR.exists():
+        print(f"Hay respaldo en {BACKUP_DIR}: sigue desde la ultima epoca terminada (--nuevo para empezar de cero)")
     model.fit(Batches(), validation_data=(val_images[..., np.newaxis].astype(np.float32), val_targets[..., np.newaxis].astype(np.float32)),
               epochs=epochs, verbose=2,
-              callbacks=[tf.keras.callbacks.BackupAndRestore(str(config.MODELS_DIR / "ocr_detector_respaldo"),
-                                                             delete_checkpoint=False),  # se puede cortar y seguir
+              callbacks=[tf.keras.callbacks.BackupAndRestore(str(BACKUP_DIR), delete_checkpoint=False),  # se puede cortar y seguir
                          tf.keras.callbacks.ModelCheckpoint(KERAS_MODEL, monitor="val_loss", save_best_only=True)])
     model = tf.keras.models.load_model(KERAS_MODEL, compile=False)
     pred = model.predict(val_images[..., np.newaxis].astype(np.float32), batch_size=64, verbose=0)[..., 0] >= 0.5
@@ -221,7 +242,7 @@ def train(epochs: int, batch_size: int) -> None:
     report = (f"Detector (validacion, {len(val_images)} escenas): celdas con texto encontradas {tp / max(1, tp + fn):.1%}, "
               f"celdas marcadas que si eran texto {tp / max(1, tp + fp):.1%}, escenas sin texto con alguna marca {false_scene:.1%}")
     print(report)
-    (config.MODELS_DIR / "ocr_detector_report.txt").write_text(report, encoding="utf-8")
+    config.save_report("ocr_detector_report.txt", report)
 
 
 def main() -> None:
@@ -229,15 +250,22 @@ def main() -> None:
     parser.add_argument("step", choices=["synth", "train", "export", "preview"])
     parser.add_argument("--epochs", type=int, default=15)
     parser.add_argument("--batch-size", type=int, default=32)
-    parser.add_argument("--workers", type=int, default=4)
+    parser.add_argument("--lr", type=float, default=2e-3)
+    parser.add_argument("--workers", type=int, default=None, help="procesos (synth) o hilos de lotes (train)")
+    parser.add_argument("--escenas", type=int, default=DET_SCENES, dest="scenes")
+    parser.add_argument("--val", type=int, default=DET_VAL)
+    parser.add_argument("--ram", action="store_true", help="cargar todas las escenas en RAM (Colab)")
+    parser.add_argument("--nuevo", action="store_true", help="borrar el respaldo y entrenar de cero")
     args = parser.parse_args()
     config.DATA_DIR.mkdir(parents=True, exist_ok=True)
     if args.step == "synth":
-        synth(args.workers)
+        synth(args.workers or config.default_workers(), args.scenes, args.val)
     elif args.step == "train":
         from awake import keep_awake
         keep_awake()
-        train(args.epochs, args.batch_size)
+        if args.nuevo:
+            shutil.rmtree(BACKUP_DIR, ignore_errors=True)
+        train(args.epochs, args.batch_size, args.lr, args.ram, args.workers or 2)
     elif args.step == "preview":
         image, target = SceneMaker(11).scene()
         preview = Image.fromarray(image).convert("RGB")
@@ -246,7 +274,7 @@ def main() -> None:
         preview.resize((W * 2, H * 2), Image.NEAREST).save(config.DATA_DIR / "detector_preview.png")
         print(config.DATA_DIR / "detector_preview.png")
     else:
-        sys.exit("export: pendiente (se escribe junto con la integracion en el firmware)")
+        raise SystemExit("export: usa python ocr/export_model.py (exporta el lector y el detector juntos)")
 
 
 if __name__ == "__main__":

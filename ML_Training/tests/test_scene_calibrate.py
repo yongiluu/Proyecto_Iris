@@ -17,7 +17,7 @@ import tensorflow as tf
 import calibrate
 from describe import HAZARD_MAYBE, OBJECT_THRESHOLD
 from model import build_model
-from vocab import HAZARD_IDS, OBJECT_IDS
+from vocab import HAZARD_IDS, OBJECT_IDS, PLACES
 
 
 def main() -> None:
@@ -34,7 +34,8 @@ def main() -> None:
 
     rng = np.random.default_rng(3)
     thresholds = {"objects": {n: float(rng.choice([0.2, 0.5, 0.75, 0.9, 0.99])) for n in OBJECT_IDS},
-                  "hazards": {n: float(rng.choice([0.1, 0.3, 0.6])) for n in HAZARD_IDS}}
+                  "hazards": {n: float(rng.choice([0.1, 0.3, 0.6])) for n in HAZARD_IDS},
+                  "place": {"bias": [float(x) for x in rng.normal(0, 0.5, len(PLACES))], "temperature": 0.7}}
     calibrate.apply_thresholds(model, thresholds)
     after = model.predict(images, verbose=0)
 
@@ -47,7 +48,12 @@ def main() -> None:
     p, q = before["hazards"], after["hazards"]
     clear = np.abs(p - t_haz) > margin
     assert ((q >= HAZARD_MAYBE) == (p >= t_haz))[clear].all(), "peligros: el umbral no quedo en HAZARD_MAYBE"
-    for head in ("position", "distance", "color", "people", "place", "interior", "quality"):
+    # Lugar: softmax(T * (logits + b)), calculado desde las probabilidades de antes.
+    b = np.array(thresholds["place"]["bias"])
+    expected_place = calibrate._softmax(0.7 * (np.log(before["place"]) + b))
+    assert np.allclose(after["place"], expected_place, atol=1e-4), "lugar: temperatura y sesgo mal aplicados"
+    print("  ok   lugar: temperatura y sesgo por lugar quedan dentro del modelo")
+    for head in ("position", "distance", "color", "people", "interior", "quality"):
         assert np.allclose(before[head], after[head]), f"{head} cambio y no debia"
     named_before = (before["presence"] >= OBJECT_THRESHOLD).mean()
     named_after = (after["presence"] >= OBJECT_THRESHOLD).mean()
@@ -67,6 +73,21 @@ def main() -> None:
     assert chosen[OBJECT_IDS[0]] <= 0.7, chosen[OBJECT_IDS[0]]
     assert chosen[OBJECT_IDS[1]] == calibrate.UMBRAL_CALLAR, chosen[OBJECT_IDS[1]]
     print("  ok   un objeto que el modelo distingue se nombra; uno al azar se calla")
+
+    # Un lugar que el modelo dice de mas (como "bano" en piezas blancas) pierde peso.
+    n, c = 600, len(PLACES)
+    truth = np.random.default_rng(5).integers(0, c, n)
+    target = np.eye(c)[truth]
+    probs = np.full((n, c), 0.02)
+    probs[np.arange(n), truth] = 0.9
+    bano = PLACES.index("bano")
+    wrong = np.random.default_rng(6).random(n) < 0.3
+    probs[wrong] = 0.02
+    probs[wrong, bano] = 0.9                                    # 30 % de las fotos: dice bano y no es
+    probs /= probs.sum(1, keepdims=True)
+    place, _ = calibrate.place_calibration(probs, target)
+    assert place["bias"][bano] < 0, place
+    print(f"  ok   un lugar que se dice mal pierde peso (bano {place['bias'][bano]:+.2f})")
     print("Umbral por objeto: OK")
 
 

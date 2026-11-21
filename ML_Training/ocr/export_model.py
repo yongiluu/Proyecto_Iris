@@ -2,6 +2,10 @@
 
     python ocr/export_model.py               # con los modelos entrenados
     python ocr/export_model.py --untrained   # modelos sin entrenar del mismo tamaño (para medir la flash)
+    python ocr/export_model.py --sin-anotar  # cuantiza y evalua, pero deja los .tflite en IRIS_OCR_WORK_DIR
+                                             # sin tocar models/ ni el firmware (pruebas)
+
+Lee ocr_reader.keras y ocr_detector.keras de IRIS_OCR_WORK_DIR (def. models/) y los datos de IRIS_OCR_DATA_DIR.
 
 Escribe models/ocr_reader_int8.tflite, models/ocr_detector_int8.tflite, models/ocr_report_int8.txt,
 anota ambos en models/firmware_models.json (van a la particion "modelos" de la placa con
@@ -24,7 +28,6 @@ from train import KERAS_MODEL, evaluate
 
 READER_TFLITE = config.MODELS_DIR / "ocr_reader_int8.tflite"
 DETECTOR_TFLITE = config.MODELS_DIR / "ocr_detector_int8.tflite"
-REPORT = config.MODELS_DIR / "ocr_report_int8.txt"
 SUPPORTED_OPS = {"CONV_2D", "DEPTHWISE_CONV_2D", "MAX_POOL_2D", "ADD", "RESHAPE", "SOFTMAX", "MUL",
                  "LOGISTIC", "QUANTIZE", "DEQUANTIZE"}
 
@@ -74,11 +77,17 @@ def register_models(reader: bytes, reader_arena: int, det: bytes, det_arena: int
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--untrained", action="store_true", help="modelos sin entrenar (solo para medir tamaño)")
+    parser.add_argument("--sin-anotar", action="store_true", dest="no_register",
+                        help="no escribir en models/ ni regenerar el firmware (los .tflite quedan en IRIS_OCR_WORK_DIR)")
     args = parser.parse_args()
+    if not args.untrained:
+        for path in (KERAS_MODEL, detector.KERAS_MODEL):
+            if not path.exists():
+                raise SystemExit(f"Falta {path}: entrena primero (ocr/train.py y ocr/detector.py train)")
     rng = np.random.default_rng(config.SEED)
 
     lines = np.load(config.DATA_DIR / "lines_train_images.npy", mmap_mode="r")
-    line_samples = [lines[i] for i in rng.choice(len(lines), 300, replace=False)]
+    line_samples = [lines[i] for i in rng.choice(len(lines), min(300, len(lines)), replace=False)]
     reader = build_model(batch_size=1)   # batch fijo: sin ops dinamicas que TFLM no tiene
     if not args.untrained:
         reader.set_weights(tf.keras.models.load_model(KERAS_MODEL, compile=False).get_weights())
@@ -86,7 +95,7 @@ def main() -> None:
 
     scenes_path = config.DATA_DIR / "det_train_images.npy"
     scenes = np.load(scenes_path, mmap_mode="r") if scenes_path.exists() else None
-    scene_samples = ([scenes[i] for i in rng.choice(len(scenes), 200, replace=False)] if scenes is not None
+    scene_samples = ([scenes[i] for i in rng.choice(len(scenes), min(200, len(scenes)), replace=False)] if scenes is not None
                      else [rng.integers(0, 256, (config.DET_HEIGHT, config.DET_WIDTH)).astype(np.uint8) for _ in range(20)])
     det = detector.build_model(batch_size=1)
     if not args.untrained:
@@ -104,7 +113,13 @@ def main() -> None:
     if args.untrained:
         print("Sin entrenar: no se anotan para la placa (solo se mide el tamaño).")
         return
-    register_models(reader_tflite, reader_arena, det_tflite, det_arena)
+    if args.no_register:
+        config.WORK_DIR.mkdir(parents=True, exist_ok=True)
+        (config.WORK_DIR / READER_TFLITE.name).write_bytes(reader_tflite)
+        (config.WORK_DIR / DETECTOR_TFLITE.name).write_bytes(det_tflite)
+        print(f"Sin anotar: .tflite en {config.WORK_DIR} (models/ y el firmware no se tocaron)")
+    else:
+        register_models(reader_tflite, reader_arena, det_tflite, det_arena)
     interpreter = interpreter_for(reader_tflite)
     inp, out = interpreter.get_input_details()[0], interpreter.get_output_details()[0]
 
@@ -122,7 +137,10 @@ def main() -> None:
     val_texts = np.load(config.DATA_DIR / "lines_val_meta.npz")["texts"]
     report = summary + "\n\n" + evaluate(predict, val_images[:3000], val_texts[:3000], "Lector int8 (validacion)")
     print(report)
-    REPORT.write_text(report, encoding="utf-8")
+    if args.no_register:
+        config.save_report("ocr_report_int8.txt", report)
+        return
+    config.save_report("ocr_report_int8.txt", report, to_models=True)
     print("Listo: modelos anotados en models/firmware_models.json. Subirlos a la placa con "
           "Hardware_ESP32/tools/subir_modelos.py")
 
