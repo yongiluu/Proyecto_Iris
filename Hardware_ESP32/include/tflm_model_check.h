@@ -7,6 +7,12 @@
 #include "tensorflow/lite/c/common.h"
 #include "tensorflow/lite/schema/schema_generated.h"
 
+// En esta version de la libreria la constante vive en micro_interpreter.h: sin esto el encabezado solo
+// compilaba si alguien lo incluia antes (fragil). Es la version 3 del schema de TFLite.
+#ifndef TFLITE_SCHEMA_VERSION
+#define TFLITE_SCHEMA_VERSION (3)
+#endif
+
 // Revisiones de un modelo .tflite ANTES de usarlo. Los de la particion "modelos" llegan por WiFi y se
 // entrenan aparte: un paquete equivocado o a medio escribir no debe hacer que la placa lea fuera del
 // modelo o divida por cero; la funcion queda apagada y la app usa la nube.
