@@ -22,27 +22,44 @@ void sendPhoto() {
     return;
   }
 
+  // El envio por BLE tarda segundos: se copia el JPEG a PSRAM y se libera la camara antes (si no, la
+  // descripcion de escenas, el lector y el detector de luz se quedan sin camara todo ese rato). Si no
+  // hay memoria para la copia, se envia desde el frame como antes (con la camara tomada).
+  const size_t jpegLength = frame->len;
+  uint8_t* copy = (uint8_t*)heap_caps_malloc(jpegLength, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+  const uint8_t* jpeg = frame->buf;
+  if (copy != nullptr) {
+    memcpy(copy, frame->buf, jpegLength);
+    releaseJpegFrame(frame);
+    frame = nullptr;
+    jpeg = copy;
+  }
+
   char header[40];
-  snprintf(header, sizeof(header), "CMD_PHOTO_START:%u", (unsigned)frame->len);
+  snprintf(header, sizeof(header), "CMD_PHOTO_START:%u", (unsigned)jpegLength);
   bool ok = bleManager.sendCommand(header);
 
   const size_t chunkSize = bleManager.payloadSize();
-  for (size_t offset = 0; ok && offset < frame->len; offset += chunkSize) {
-    size_t length = frame->len - offset;
+  for (size_t offset = 0; ok && offset < jpegLength; offset += chunkSize) {
+    size_t length = jpegLength - offset;
     if (length > chunkSize) length = chunkSize;
 
-    ok = bleManager.sendPhotoChunk(frame->buf + offset, length);
+    ok = bleManager.sendPhotoChunk(jpeg + offset, length);
     delay(PHOTO_CHUNK_DELAY_MS); // backpressure: evita saturar la cola de NimBLE y corromper el JPEG
   }
 
-  Serial.printf("[Foto] %u bytes, %s\n", (unsigned)frame->len, ok ? "enviada" : "fallo el envio");
-  releaseJpegFrame(frame);
+  Serial.printf("[Foto] %u bytes, %s\n", (unsigned)jpegLength, ok ? "enviada" : "fallo el envio");
+  if (frame != nullptr) releaseJpegFrame(frame);
+  if (copy != nullptr) heap_caps_free(copy);
   bleManager.sendCommand(ok ? "CMD_PHOTO_END" : "CMD_PHOTO_ERROR");
 }
 
 constexpr uint32_t kRequestJpeg = 1 << 0;
 constexpr uint32_t kRequestFrame = 1 << 1;
-uint8_t* frameCopy = nullptr;  // 160x120 RGB565 (37,5 KB, en PSRAM)
+// 160x120 RGB565 (37,5 KB, en PSRAM). Tamano fijo: se reserva una vez con el maximo y cada frame se
+// valida contra eso (antes se reservaba con el tamano del primero y uno mayor despues se salia).
+constexpr size_t kFrameCopyBytes = (size_t)160 * 120 * 2u;
+uint8_t* frameCopy = nullptr;
 
 // Frame a color 160x120 RGB565, exactamente lo que ve el modelo de escenas (Retina), para juntar fotos
 // reales de la placa desde la app (pantalla Misiones). Se copia y se libera la camara antes de enviar.
@@ -57,9 +74,9 @@ void sendColorFrame() {
     height = frame->height;
     length = (size_t)width * height * 2u;
     if (frameCopy == nullptr) {
-      frameCopy = (uint8_t*)heap_caps_malloc(length, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+      frameCopy = (uint8_t*)heap_caps_malloc(kFrameCopyBytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
     }
-    ok = frameCopy != nullptr && length <= (size_t)160 * 120 * 2u;
+    ok = frameCopy != nullptr && length <= kFrameCopyBytes;
     if (ok) memcpy(frameCopy, frame->buf, length);
   }
   if (frame != nullptr) releaseColorFrame(frame);
