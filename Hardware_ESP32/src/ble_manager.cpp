@@ -61,6 +61,11 @@ BleManager::BleManager()
 void BleManager::init(AudioReceiveCallback audioCallback, CommandReceiveCallback commandCallback) {
     onAudioReceived = audioCallback;
     onCommandReceived = commandCallback;
+    if (sendMutex == nullptr) sendMutex = xSemaphoreCreateMutex();
+    if (sendMutex == nullptr) {
+        Serial.println("[BLE] Sin memoria para el candado de envio: Bluetooth apagado");
+        return;
+    }
 
     NimBLEDevice::init(BLE_DEVICE_NAME);
     NimBLEDevice::setMTU(BLE_REQUESTED_MTU);
@@ -95,6 +100,7 @@ void BleManager::init(AudioReceiveCallback audioCallback, CommandReceiveCallback
     pAdvertising->setScanResponse(true);
     pAdvertising->setMinPreferred(0x06);
     pAdvertising->setMaxPreferred(0x12);
+    stackAlive = true;
     NimBLEDevice::startAdvertising();
 }
 
@@ -118,11 +124,12 @@ constexpr uint32_t kBufferWaitMs = 3000;
 
 bool waitForBleBuffers(volatile bool& connected) {
     const uint32_t start = millis();
-    while (os_msys_num_free() < kMinFreeBuffers) {
-        if (!connected || millis() - start > kBufferWaitMs) return false;
+    // connected primero: despues de shutdown() los buffers de NimBLE ya no existen.
+    while (connected && os_msys_num_free() < kMinFreeBuffers) {
+        if (millis() - start > kBufferWaitMs) return false;
         delay(2);
     }
-    return true;
+    return connected;
 }
 }  // namespace
 
@@ -145,8 +152,15 @@ bool BleManager::notifyInChunks(NimBLECharacteristic* characteristic, const uint
         size_t chunk = length - offset;
         if (chunk > maxPayload) chunk = maxPayload;
         if (waitForBuffers && !waitForBleBuffers(deviceConnected)) return false;
-        if (!deviceConnected) return false;  // se desconecto o se apago el BLE a mitad del envio
-        characteristic->notify(data + offset, chunk);
+        // El candado se toma por paquete (no durante toda la foto): la espera de buffers de arriba no
+        // frena a las demas tareas. Con tiempo limite: este envio puede venir del propio hilo BLE (un
+        // comando que responde) mientras shutdown() espera a que ese hilo termine.
+        if (sendMutex == nullptr || xSemaphoreTake(sendMutex, pdMS_TO_TICKS(200)) != pdTRUE) return false;
+        // Con el candado, stackAlive garantiza que la caracteristica todavia existe.
+        const bool sendable = stackAlive && deviceConnected;
+        if (sendable) characteristic->notify(data + offset, chunk);
+        xSemaphoreGive(sendMutex);
+        if (!sendable) return false;  // se desconecto o se apago el BLE a mitad del envio
         offset += chunk;
     }
     return true;
@@ -155,14 +169,18 @@ bool BleManager::notifyInChunks(NimBLECharacteristic* characteristic, const uint
 void BleManager::shutdown() {
     // NimBLEDevice::deinit(true) borra el servidor y sus caracteristicas: los punteros de aqui quedarian
     // colgando y deviceConnected en true (el aviso de desconexion ya no llega). Primero se corta el paso
-    // a las demas tareas y se les da tiempo de terminar un envio en curso.
+    // a las demas tareas y se espera (con el candado de envio) a que termine un notify en curso.
     deviceConnected = false;
-    delay(100);
+    const bool locked = sendMutex != nullptr && xSemaphoreTake(sendMutex, pdMS_TO_TICKS(1000)) == pdTRUE;
+    stackAlive = false;
     pTxCharacteristic = nullptr;
     pRxCharacteristic = nullptr;
     pCmdCharacteristic = nullptr;
     pPhotoCharacteristic = nullptr;
     pServer = nullptr;
+    if (locked) xSemaphoreGive(sendMutex);
+    // Sin el candado (alguien quedo pegado mas de 1 s) igual se apaga: stackAlive ya en false impide
+    // nuevos notify, y un notify no tarda 1 s.
     NimBLEDevice::deinit(true);
 }
 

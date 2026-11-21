@@ -3,6 +3,8 @@
 
 #include <Arduino.h>
 #include <NimBLEDevice.h>
+#include <freertos/FreeRTOS.h>
+#include <freertos/semphr.h>
 #include "config.h"
 
 // Audio TTS recibido desde el telefono (PCM 16-bit mono)
@@ -50,6 +52,10 @@ private:
     volatile bool commandsSubscribed = false;
     volatile uint32_t subscribedAtMs = 0;
     volatile uint16_t negotiatedMtu;
+    // Cada notify() se hace con este candado tomado y shutdown() lo toma antes de borrar la pila BLE:
+    // asi ninguna tarea queda a mitad de un notify sobre caracteristicas ya liberadas.
+    SemaphoreHandle_t sendMutex = nullptr;
+    volatile bool stackAlive = false;  // false despues de shutdown(): ya no hay caracteristicas
     AudioReceiveCallback onAudioReceived;
     CommandReceiveCallback onCommandReceived;
 
