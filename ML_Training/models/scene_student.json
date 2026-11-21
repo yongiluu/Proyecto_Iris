@@ -1,10 +1,10 @@
 {
   "labels": "mix",
   "sources": {
-    "qwen3-vl-8b-instruct": 123680,
-    "auto_openimages": 2
+    "qwen3-vl-8b-instruct": 180098,
+    "auto_openimages": 5
   },
   "hazards_trained": true,
   "alpha": 0.5,
-  "train_images": 103827
+  "train_images": 151280
 }

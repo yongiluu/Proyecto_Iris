@@ -1,20 +1,20 @@
-== Validacion (float32) (6000 lineas) ==
-Error por caracter (CER): 2.2% | lineas perfectas: 88.6%
-Lineas con CER <= 10%: 93.1%
+== Validacion (float32) (8000 lineas) ==
+Error por caracter (CER): 7.1% | lineas perfectas: 73.3%
+Lineas con CER <= 10%: 81.3%
 
 Ejemplos (leido | real):
-  ✔ 'Días'                           | 'Días'
-  ✔ 'nacional'                       | 'nacional'
-  ✔ 'NO'                             | 'NO'
-  ✔ 'Estoy Muy Ocupada Con'          | 'Estoy Muy Ocupada Con'
-  ✔ 'COLO COLO 226'                  | 'COLO COLO 226'
-  ✔ 'ME LLEGÓ'                       | 'ME LLEGÓ'
-  ✔ 'JUGO $1.000'                    | 'JUGO $1.000'
-  ✔ 'ABIERTO'                        | 'ABIERTO'
-  ✔ 'Creo que'                       | 'Creo que'
-  ✔ 'la cabeza de que'               | 'la cabeza de que'
-  ✔ 'Bus 84'                         | 'Bus 84'
-  ✔ '5/12/2029'                      | '5/12/2029'
-  ✔ 'Y ESTAMOS'                      | 'Y ESTAMOS'
-  ✔ 'la'                             | 'la'
-  ✔ 'Línea 29B'                      | 'Línea 29B'
+  ✗ 'Lavoe'                          | 'favor'
+  ✔ '¿HAY'                           | '¿HAY'
+  ✔ 'dejar de ser contadora'         | 'dejar de ser contadora'
+  ✗ 'habiado muy bien de'            | 'hablado muy bien de'
+  ✔ 'DEN UNO?'                       | 'DEN UNO?'
+  ✔ 'LOTE C1753'                     | 'LOTE C1753'
+  ✗ 'su dispositivo esta api'        | 'su dispositivo esta apli'
+  ✔ '$2.590'                         | '$2.590'
+  ✔ 'Pasaje Maipú 3752'              | 'Pasaje Maipú 3752'
+  ✔ 'Distribuido por'                | 'Distribuido por'
+  ✗ 'sbiarrerre Jugio vesmionch'     | 'solamente jugó veintioch'
+  ✔ 'padres pero no'                 | 'padres pero no'
+  ✗ 'la plarmeción'                  | 'la plantación'
+  ✔ '$13.890'                        | '$13.890'
+  ✔ 'LOTE C33389'                    | 'LOTE C33389'

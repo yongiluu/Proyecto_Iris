@@ -1,58 +1,58 @@
 Modelo int8: 1451 KB de flash; activaciones del peor paso ~281 KB (arena estimada ~382 KB, va en PSRAM)
 
-== Test (int8, lo que correria en la placa) (9938 fotos) ==
-Objetos: precision 78.8%, recall 42.9%, F1 55.5% (umbral 0,5)
-  peores: cono 0% (n=108), cuadro 0% (n=542), mochila 0% (n=328), televisor 1% (n=337), columna 5% (n=1073), basurero 9% (n=331)
-  mejores: perro 63% (n=531), bus 65% (n=367), auto 74% (n=1823), arbol 77% (n=2804), edificio 81% (n=3560), persona 82% (n=3680)
-Posicion (objetos presentes con etiqueta): 60.2% de acierto (n=35341)
-Distancia (objetos presentes con etiqueta): 66.5% de acierto (n=35341)
-Color (objetos presentes con etiqueta): 56.7% de acierto (n=20492)
-Personas: 80.6% de acierto (n=9938)
-Lugar: 68.6% de acierto (n=9938)
-Calidad: 85.9% de acierto (n=9938)
-Peligro escalera_baja: avisa 49% de las veces (umbral 0,3), falsas alarmas 2.2%
-Peligro escalera_sube: avisa 72% de las veces (umbral 0,3), falsas alarmas 1.9%
-Peligro escalon: avisa 20% de las veces (umbral 0,3), falsas alarmas 0.7%
-Peligro obstaculo_suelo: avisa 26% de las veces (umbral 0,3), falsas alarmas 2.0%
-Peligro obstaculo_alto: avisa 25% de las veces (umbral 0,3), falsas alarmas 2.2%
-Peligro vehiculo_cerca: avisa 55% de las veces (umbral 0,3), falsas alarmas 2.4%
-Peligro borde_calle: avisa 39% de las veces (umbral 0,3), falsas alarmas 2.0%
-Peligro puerta_vidrio: avisa 48% de las veces (umbral 0,3), falsas alarmas 1.2%
+== Test (int8, lo que correria en la placa) (14368 fotos) ==
+Objetos: precision 79.0%, recall 43.3%, F1 55.9% (umbral 0,5)
+  peores: cono 0% (n=150), mochila 0% (n=511), semaforo 0% (n=276), televisor 0% (n=508), basurero 3% (n=409), columna 4% (n=1567)
+  mejores: mesa 64% (n=2804), bus 67% (n=531), auto 71% (n=2468), arbol 77% (n=3793), edificio 81% (n=5074), persona 83% (n=5590)
+Posicion (objetos presentes con etiqueta): 61.3% de acierto (n=51912)
+Distancia (objetos presentes con etiqueta): 66.9% de acierto (n=51912)
+Color (objetos presentes con etiqueta): 57.1% de acierto (n=30248)
+Personas: 80.7% de acierto (n=14368)
+Lugar: 68.3% de acierto (n=14368)
+Calidad: 86.0% de acierto (n=14368)
+Peligro escalera_baja: avisa 57% de las veces (umbral 0,3), falsas alarmas 2.1%
+Peligro escalera_sube: avisa 66% de las veces (umbral 0,3), falsas alarmas 1.9%
+Peligro escalon: avisa 22% de las veces (umbral 0,3), falsas alarmas 0.7%
+Peligro obstaculo_suelo: avisa 27% de las veces (umbral 0,3), falsas alarmas 1.6%
+Peligro obstaculo_alto: avisa 23% de las veces (umbral 0,3), falsas alarmas 2.0%
+Peligro vehiculo_cerca: avisa 52% de las veces (umbral 0,3), falsas alarmas 1.8%
+Peligro borde_calle: avisa 44% de las veces (umbral 0,3), falsas alarmas 2.5%
+Peligro puerta_vidrio: avisa 48% de las veces (umbral 0,3), falsas alarmas 1.7%
 Peligro hoyo: avisa 0% de las veces (umbral 0,3), falsas alarmas 0.0%
 
 Frases de ejemplo (alumno | etiquetas):
 - openimages/bf9c1ddbe87e34a0.jpg
-    alumno:    Cuidado: algo a la altura de la cabeza. Parece que estás en la calle. A tu izquierda hay un semáforo.
+    alumno:    Atención: podría haber algo a la altura de la cabeza. Parece que estás en la calle. A tu izquierda hay un poste de luz.
     etiquetas: Cuidado: algo a la altura de la cabeza. Parece que estás en la calle. Adelante hay una señal de tránsito. A tu izquierda hay un semáforo. Al fondo hay un árbol.
 - openimages/dde9828bc53087c2.jpg
-    alumno:    Parece que estás en la calle. No reconozco objetos claros adelante. No detecto peligros.
+    alumno:    No reconozco objetos claros adelante. No detecto peligros.
     etiquetas: Parece que estás en la calle. Adelante, muy cerca, hay un semáforo. No detecto peligros.
 - openimages/f9796848b90791a9.jpg
-    alumno:    Atención: podría haber algo a la altura de la cabeza. Parece que estás en la calle. Adelante, muy cerca, hay una señal de tránsito. A tu derecha hay un árbol. Al fondo hay un edificio gris.
+    alumno:    Cuidado: algo a la altura de la cabeza. Parece que estás en la calle. Adelante, muy cerca, hay una señal de tránsito. A tu derecha hay un árbol. Al fondo hay un edificio gris.
     etiquetas: Parece que estás en la calle. Adelante, muy cerca, hay una señal de tránsito, un poste de luz y un semáforo. A tu derecha hay un árbol. Al fondo hay un edificio gris. No detecto peligros.
 - openimages/243cb9f462917e8a.jpg
-    alumno:    Atención: podría haber un vehículo cerca. Parece que estás en la calle. Adelante hay una persona. A tu izquierda hay un árbol. A tu derecha hay un auto, un poste de luz y un semáforo.
+    alumno:    Parece que estás en la calle. Adelante hay una persona y una señal de tránsito. A tu izquierda hay un árbol. A tu derecha hay un poste de luz. Al fondo hay un edificio gris.
     etiquetas: Cuidado: un obstáculo en el camino. Parece que estás en la calle. Adelante hay varias personas. Al fondo hay un auto gris, un semáforo, un árbol y un edificio gris.
 - openimages/644395d01b541528.jpg
-    alumno:    Atención: podría haber algo a la altura de la cabeza. Parece que estás en la calle. A tu izquierda hay un árbol. Al fondo hay un edificio café.
+    alumno:    A tu izquierda hay un árbol. Al fondo hay un edificio.
     etiquetas: Parece que estás en la calle. Adelante, muy cerca, hay un semáforo. A tu izquierda hay un árbol. Al fondo hay un edificio gris y una señal de tránsito. No detecto peligros.
 - openimages/356bf0a5a6207913.jpg
-    alumno:    Atención: podría haber un obstáculo en el camino. Parece que estás en la calle. No reconozco objetos claros adelante.
+    alumno:    Atención: podría estar el borde de la vereda. No reconozco objetos claros adelante.
     etiquetas: Parece que estás en la calle. Adelante, muy cerca, hay un grifo amarillo. No detecto peligros.
 - openimages/e0beab2586c099f5.jpg
-    alumno:    Parece que estás en la calle. Adelante, muy cerca, hay varias personas. Al fondo hay un edificio. No detecto peligros.
+    alumno:    Atención: podría haber un obstáculo en el camino y podría haber algo a la altura de la cabeza. Parece que estás en la calle. Adelante, muy cerca, hay una señal de tránsito. Al fondo hay un edificio gris y un árbol.
     etiquetas: La imagen está borrosa; no puedo describir bien. Cuidado: un obstáculo en el camino. Parece que estás en la calle. Adelante, muy cerca, hay un grifo amarillo. Al fondo hay una bicicleta, un edificio blanco y un árbol.
 - openimages/fe01815e982763e4.jpg
-    alumno:    A tu izquierda hay un árbol.
+    alumno:    No reconozco objetos claros adelante.
     etiquetas: La imagen está muy oscura; no puedo describir bien. Adelante, muy cerca, hay un grifo gris.
 - openimages/c3b69f07da136c4b.jpg
-    alumno:    A tu derecha hay un árbol. No detecto peligros.
+    alumno:    Atención: podría haber algo a la altura de la cabeza. A tu derecha hay un árbol.
     etiquetas: Cuidado: un obstáculo en el camino. Adelante, muy cerca, hay un grifo rojo. A tu izquierda hay un árbol.
 - openimages/c9cb6dea5678d078.jpg
-    alumno:    Atención: podría haber un obstáculo en el camino. Parece que estás en la calle. Adelante, muy cerca, hay un grifo rojo. Al fondo hay un edificio gris.
+    alumno:    Cuidado: un obstáculo en el camino. Parece que estás en la calle. Adelante, muy cerca, hay un grifo rojo. Al fondo hay un edificio gris.
     etiquetas: Cuidado: un obstáculo en el camino. Parece que estás en la calle. Adelante, muy cerca, hay un grifo rojo. Al fondo hay un edificio blanco, una puerta, una planta y una ventana.
 - openimages/ed4382f505085d43.jpg
-    alumno:    Cuidado: un obstáculo en el camino. Parece que estás en la calle. Adelante, muy cerca, hay un grifo rojo. Al fondo hay un edificio gris.
+    alumno:    Cuidado: un obstáculo en el camino. Parece que estás en la calle. Adelante, muy cerca, hay un grifo rojo.
     etiquetas: Cuidado: un obstáculo en el camino. Parece que estás en la calle. Adelante, muy cerca, hay un grifo rojo. A tu izquierda hay un árbol. A tu derecha hay un poste de luz. Al fondo hay un edificio gris.
 - openimages/9fa5578fb2936944.jpg
     alumno:    Parece que estás en un baño. Adelante, muy cerca, hay un inodoro. No detecto peligros.
