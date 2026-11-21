@@ -19,6 +19,7 @@
 #include "scene_live.h"
 #include "scene_vocab.h"
 #include "tflm_arena.h"
+#include "tflm_model_check.h"
 
 namespace {
 constexpr const char* kModelName = "escena";
@@ -40,6 +41,7 @@ volatile bool liveOn = false;
 volatile bool liveReset = false;
 SceneLiveState liveState;
 tflite::MicroInterpreter* interpreter = nullptr;
+uint8_t* arena = nullptr;
 bool hazardsTrained = false;
 uint8_t* rgb = nullptr;  // 160x120x3 en PSRAM
 
@@ -57,7 +59,7 @@ const int kHeadSizes[kNumHeads] = {kSceneNumObjects,
                                    kSceneNumPlaces,
                                    kSceneNumQuality};
 int headOutput[kNumHeads];  // indice de salida del interprete para cada cabeza
-float* headValues[kNumHeads];
+float* headValues[kNumHeads] = {};
 
 // Indice de salida (0..n-1) de cada cabeza segun la firma "serving_default" del modelo.
 bool mapHeads(const tflite::Model* model) {
@@ -68,6 +70,10 @@ bool mapHeads(const tflite::Model* model) {
   }
   const auto* outputs = signatures->Get(0)->outputs();
   const auto* subgraphOutputs = model->subgraphs()->Get(0)->outputs();
+  if (outputs == nullptr || subgraphOutputs == nullptr) {
+    Serial.println("[Escena] El modelo no trae salidas");
+    return false;
+  }
   for (int h = 0; h < kNumHeads; h++) {
     headOutput[h] = -1;
     for (size_t i = 0; outputs && i < outputs->size(); i++) {
@@ -85,15 +91,34 @@ bool mapHeads(const tflite::Model* model) {
   return true;
 }
 
+// Si el arranque falla a mitad, se devuelve todo lo reservado (la PSRAM la usan la camara y el audio).
+void freeSceneResources() {
+  delete interpreter;
+  interpreter = nullptr;
+  if (arena != nullptr) heap_caps_free(arena);
+  arena = nullptr;
+  for (int h = 0; h < kNumHeads; h++) {
+    if (headValues[h] != nullptr) heap_caps_free(headValues[h]);
+    headValues[h] = nullptr;
+  }
+  if (rgb != nullptr) heap_caps_free(rgb);
+  rgb = nullptr;
+}
+
 bool setupModel() {
   const ModelEntry* entry = modelStoreGet(kModelName);
   if (entry == nullptr) return false;
-  const tflite::Model* model = tflite::GetModel(entry->data);
-  if (model->version() != TFLITE_SCHEMA_VERSION || !mapHeads(model)) return false;
+  // Llega por WiFi: se revisa la estructura antes de leer firma y salidas.
+  const tflite::Model* model = tflmCheckedModel(entry->data, entry->size);
+  if (model == nullptr) {
+    Serial.println("[Escena] El modelo esta danado o no es un .tflite valido");
+    return false;
+  }
+  if (!mapHeads(model)) return false;
   hazardsTrained = (entry->flags & kSceneFlagHazardsTrained) != 0;
 
   const size_t arenaBytes = tflmArenaBytes((int)entry->arenaBytes);
-  uint8_t* arena = allocTflmArena(arenaBytes);
+  arena = allocTflmArena(arenaBytes);
   if (arena == nullptr) {
     Serial.printf("[Escena] Sin memoria para el arena (%u bytes)\n", (unsigned)arenaBytes);
     return false;
@@ -106,13 +131,13 @@ bool setupModel() {
     return false;
   }
   const TfLiteTensor* input = interpreter->input(0);
-  if (input->type != kTfLiteInt8 || input->bytes != (size_t)kInputWidth * kInputHeight * 3) {
-    Serial.println("[Escena] La entrada del modelo no es 160x120x3 int8");
+  if (!tflmInt8TensorFits(input, (size_t)kInputWidth * kInputHeight * 3) || !tflmScaleOk(input)) {
+    Serial.println("[Escena] La entrada del modelo no es 160x120x3 int8 con escala valida");
     return false;
   }
   for (int h = 0; h < kNumHeads; h++) {
     const TfLiteTensor* out = interpreter->output(headOutput[h]);
-    if (out->type != kTfLiteInt8 || out->bytes != (size_t)kHeadSizes[h]) {
+    if (!tflmInt8TensorFits(out, (size_t)kHeadSizes[h]) || !tflmScaleOk(out)) {
       Serial.printf("[Escena] La salida \"%s\" no tiene el tamano esperado\n", kHeadNames[h]);
       return false;
     }
@@ -181,17 +206,23 @@ void sceneLoop(void*) {
     uint32_t bits = 0;
     xTaskNotifyWait(0, UINT32_MAX, &bits, liveOn ? pdMS_TO_TICKS(kLivePeriodMs) : portMAX_DELAY);
     const bool requested = (bits & kNotifyDescribe) != 0;
-    if (modelStoreWriting()) {  // se estan subiendo modelos nuevos: no tocar la particion
+    // Los pesos estan en la flash (particion "modelos"): mientras corre, la subida de modelos espera.
+    if (!modelStoreBeginUse()) {  // se estan subiendo modelos nuevos: no tocar la particion
       sentence[0] = '\0';
       if (requested && onResult) onResult(sentence);
       continue;
     }
+    bool live = false, notify = false;
     if (requested) {
       describe(sentence, false);
-      if (onResult) onResult(sentence);
+      notify = true;
     } else if (liveOn && bits == 0) {  // vencio la espera: toca mirar
-      if (describe(sentence, true) && onLive) onLive(sentence);
+      live = true;
+      notify = describe(sentence, true);
     }
+    modelStoreEndUse();  // los avisos (BLE) ya no tocan el modelo
+    if (notify && !live && onResult) onResult(sentence);
+    if (notify && live && onLive) onLive(sentence);
   }
 }
 }  // namespace
@@ -200,9 +231,14 @@ bool startSceneTask(SceneResultCallback callback, SceneResultCallback liveCallba
   onResult = callback;
   onLive = liveCallback;
   rgb = (uint8_t*)heap_caps_malloc((size_t)kInputWidth * kInputHeight * 3, MALLOC_CAP_SPIRAM);
-  if (rgb == nullptr || !setupModel()) return false;
   // Nucleo 0, prioridad baja: tarda ~1 s y no debe cortar el audio ni el Bluetooth.
-  return xTaskCreatePinnedToCore(sceneLoop, "escena", 8192, nullptr, 1, &sceneTask, 0) == pdPASS;
+  if (rgb == nullptr || !setupModel() ||
+      xTaskCreatePinnedToCore(sceneLoop, "escena", 8192, nullptr, 1, &sceneTask, 0) != pdPASS) {
+    sceneTask = nullptr;
+    freeSceneResources();
+    return false;
+  }
+  return true;
 }
 
 void requestDescribeScene() {

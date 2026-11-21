@@ -19,8 +19,10 @@
 #include "ota_update.h"
 #include "button_gestures.h"
 #include "power_manager.h"
+#include <atomic>
 #include <freertos/FreeRTOS.h>
 #include <freertos/queue.h>
+#include <freertos/semphr.h>
 #include <freertos/task.h>
 
 namespace {
@@ -38,6 +40,8 @@ volatile bool otaRequested = false;
 // Boton de hablar en la pantalla de la app (prototipo sin boton): CMD_APP_PTT_START / STOP.
 volatile bool appPttStartRequested = false;
 volatile bool appPttStopRequested = false;
+// Volumen que falta guardar en la NVS (-1: nada). CMD_VOLUME llega en el hilo BLE; el loop lo guarda.
+std::atomic<int> volumeSaveRequested{-1};
 
 // Wake word "Oye Iris": la tarea de audio avisa y el loop arranca la pregunta (como el boton).
 volatile int wakePercent = 0;   // != 0: hay un "Oye Iris" pendiente
@@ -112,7 +116,10 @@ void onCommandReceived(const char* command) {
   } else if (strcmp(command, "CMD_COLLECT_FRAME") == 0) {
     requestColorFrameCapture();
   } else if (strncmp(command, "CMD_VOLUME:", 11) == 0) {
-    setVolumePercent(atoi(command + 11));
+    // Suena distinto al instante; la NVS (lenta, puede esperar un borrado de pagina) se escribe en el loop.
+    const int percent = atoi(command + 11);
+    setVolumePercent(percent, false);
+    volumeSaveRequested = getVolumePercent();  // ya acotado a 5-100
   } else if (strncmp(command, "CMD_AUDIO_BEGIN:", 16) == 0) {
     beginAudioStream((size_t)strtoul(command + 16, nullptr, 10));
   } else if (strcmp(command, "CMD_OTA_WIFI") == 0) {
@@ -163,18 +170,42 @@ void onSceneLive(const char* sentence) {
 // ─── Respuestas que la placa da por su cuenta (pedidas con el boton, sin que la app pregunte) ───
 // Formato: CMD_SAY:<frase>. La app la muestra y la dice. Si la app todavia no se conecto (la placa
 // acaba de despertar), la frase espera hasta SAY_HOLD_MS.
+// La escriben la tarea de escenas y la del lector (nucleo 0) y el loop (nucleo 1); la lee el loop: todo
+// con sayMutex tomado (estatico: no puede faltar memoria; se crea al inicio de setup(), antes de las
+// tareas). El loop copia la frase y envia sin el candado.
 char pendingSay[440];
 volatile bool sayPending = false;
 volatile uint32_t sayQueuedMs = 0;
+StaticSemaphore_t sayMutexBuffer;
+SemaphoreHandle_t sayMutex = nullptr;
 volatile bool buttonDescribe = false;  // la descripcion en curso la pidio el boton
 volatile bool buttonRead = false;      // la lectura en curso la pidio el boton
 
 void queueSay(const char* text) {
-  sayPending = false;
+  xSemaphoreTake(sayMutex, portMAX_DELAY);
   snprintf(pendingSay, sizeof(pendingSay), "CMD_SAY:%s", text);
   sayQueuedMs = millis();
   sayPending = true;
+  xSemaphoreGive(sayMutex);
   powerActivity();
+}
+
+// Saca la frase pendiente si la app ya escucha (true y la copia en out) o la descarta si espero demasiado.
+bool takePendingSay(char* out, size_t outSize) {
+  bool send = false;
+  xSemaphoreTake(sayMutex, portMAX_DELAY);
+  if (sayPending) {
+    if (bleManager.commandsReady()) {
+      snprintf(out, outSize, "%s", pendingSay);
+      sayPending = false;
+      send = true;
+    } else if (millis() - sayQueuedMs >= SAY_HOLD_MS) {
+      sayPending = false;
+      Serial.println("[Boton] Nadie conectado: la respuesta se descarto");
+    }
+  }
+  xSemaphoreGive(sayMutex);
+  return send;
 }
 
 void onSceneDescribed(const char* sentence) {
@@ -297,6 +328,14 @@ void enterOtaMode(const char* reason) {
   requestLightMeter(false);
   setLightPaused(true);
   setAudioEventsPaused(true);
+  // Los modelos de escenas y del lector leen la particion "modelos" (que se puede reescribir por WiFi):
+  // se apaga el modo en vivo y se espera a que termine una descripcion o lectura en curso. Desde aqui
+  // no corren mas (la placa se reinicia al terminar la actualizacion, o a los 10 min).
+  if (sceneLiveActive()) {
+    setSceneLive(false);
+    bleManager.sendCommand("CMD_LIVE:OFF");
+  }
+  modelStoreLockForWriting(5000);
   shutdownCamera();
   if (startOtaUpdate()) {
     bleManager.sendCommand("CMD_OTA_READY:" OTA_AP_SSID);
@@ -513,6 +552,7 @@ void handleBattery(bool justConnected) {
 }
 
 void handleButton() {
+  if (buttonEvents == nullptr) return;  // la tarea del boton no se pudo crear
   ButtonEvent event;
   while (xQueueReceive(buttonEvents, &event, 0) == pdTRUE) handleButtonEvent(event);
 
@@ -528,6 +568,7 @@ void handleButton() {
 }
 
 void setup() {
+  sayMutex = xSemaphoreCreateMutexStatic(&sayMutexBuffer);  // antes de cualquier tarea que hable
   powerBegin();
   pinMode(BUTTON_PIN, INPUT_PULLUP);
 #ifdef BUTTON_PIN_BOOT
@@ -535,10 +576,18 @@ void setup() {
 #endif
   // Lo primero: mirar el boton (el toque que desperto a la placa puede ser el inicio de un gesto).
   buttonEvents = xQueueCreate(8, sizeof(ButtonEvent));
-  xTaskCreatePinnedToCore(buttonTask, "boton", 3072, nullptr, 4, nullptr, 1);
+  const bool buttonOk = buttonEvents != nullptr &&
+                        xTaskCreatePinnedToCore(buttonTask, "boton", 3072, nullptr, 4, nullptr, 1) == pdPASS;
 
   Serial.begin(115200);
+  if (!buttonOk) {
+    // Sin la tarea nadie lee la cola: se borra y handleButton() no hace nada (la app sigue funcionando).
+    if (buttonEvents != nullptr) vQueueDelete(buttonEvents);
+    buttonEvents = nullptr;
+    Serial.println("Error al crear la tarea del boton: sin memoria");
+  }
   txQueue = (int16_t*)heap_caps_malloc(kTxQueueSamples * sizeof(int16_t), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+  if (txQueue == nullptr) Serial.println("Error: sin PSRAM para la cola de audio hacia la app");
 #if ARDUINO_USB_CDC_ON_BOOT
   // Con USB nativo (XIAO) lo que se imprime antes de abrir el monitor se pierde: espera un poco al PC
   // para que se vean los autotests. Sin cable sigue a los 2,5 s. Al despertar con el boton no se
@@ -590,13 +639,15 @@ void loop() {
 
   // Respuesta pendiente de la placa: sale apenas la app escucha; si no llega nadie, se descarta.
   if (sayPending) {
-    if (bleManager.commandsReady()) {
-      sayPending = false;
-      bleManager.sendCommand(pendingSay);
-    } else if (millis() - sayQueuedMs >= SAY_HOLD_MS) {
-      sayPending = false;
-      Serial.println("[Boton] Nadie conectado: la respuesta se descarto");
-    }
+    static char say[sizeof(pendingSay)];
+    if (takePendingSay(say, sizeof(say))) bleManager.sendCommand(say);
+  }
+
+  // Volumen pedido por la app: se guarda aqui (escribir la NVS en el callback BLE lo trababa).
+  int volumeToSave = volumeSaveRequested.load();
+  // Si llego otro volumen mientras tanto, el intercambio falla y se guarda en la proxima vuelta.
+  if (volumeToSave >= 0 && volumeSaveRequested.compare_exchange_strong(volumeToSave, -1)) {
+    setVolumePercent(volumeToSave, true);
   }
 
   // Mientras alguien la usa, la placa sigue despierta; despues de POWER_IDLE_SLEEP_MS quieta, duerme.
@@ -634,8 +685,11 @@ void loop() {
     helloSent = false;
     powerActivity();
   }
-  handleBattery(connectedNow && !wasConnected);
-  if (connectedNow && !helloSent && millis() - connectedSinceMs > 3000) {  // la app ya se suscribio
+  // Sale apenas la app se suscribe a los comandos (antes era una espera fija de 3 s que a veces no
+  // alcanzaba y otras sobraba). Si nunca se suscribe, a los 10 s se manda igual por si acaso.
+  const bool sendHello = connectedNow && !helloSent &&
+                         (bleManager.commandsReady() || millis() - connectedSinceMs > 10000);
+  if (sendHello) {
     helloSent = true;
     static const char* const kReasons[] = {"?", "encendido", "externo", "software", "panic",
                                            "watchdog_int", "watchdog_tarea", "watchdog", "sueno",
@@ -651,6 +705,8 @@ void loop() {
              cameraSensorName());
     bleManager.sendCommand(hello);
   }
+  // La bateria tambien se informa justo despues del saludo (al conectarse la app todavia no escucha).
+  handleBattery(sendHello);
   // Sin app no hay quien escuche: el modo en vivo se apaga al desconectarse.
   if (!connectedNow && wasConnected && sceneLiveActive()) setSceneLive(false);
   wasConnected = connectedNow;

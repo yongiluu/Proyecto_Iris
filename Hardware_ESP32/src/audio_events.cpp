@@ -16,6 +16,7 @@
 #include "audio_model_data.h"
 #include "config.h"
 #include "tflm_arena.h"
+#include "tflm_model_check.h"
 #if WAKE_WORD_ENABLED
 #include "wakeword_model_data.h"
 #endif
@@ -29,6 +30,7 @@ WakeWordCallback onWake = nullptr;
 // Un modelo TFLite (eventos de audio o wake word) que mira el ultimo segundo de log-mel.
 struct Model {
     tflite::MicroInterpreter* interpreter = nullptr;
+    uint8_t* arena = nullptr;
     TfLiteTensor* input = nullptr;
     TfLiteTensor* output = nullptr;
     float inputScale = 1.0f;
@@ -216,11 +218,11 @@ void onFrame(const float* mel, void*) {
 }
 
 // Carga un modelo y revisa que calce con el front-end. arenaBytes viene del export.
-bool loadModel(Model& m, const char* tag, const unsigned char* modelData, int arenaBytes, int numOutputs,
-               tflite::MicroOpResolver& resolver, tflite::ErrorReporter* errorReporter) {
-    const tflite::Model* model = tflite::GetModel(modelData);
-    if (model->version() != TFLITE_SCHEMA_VERSION) {
-        Serial.printf("[%s] Version de schema del modelo incorrecta\n", tag);
+bool loadModel(Model& m, const char* tag, const unsigned char* modelData, size_t modelBytes, int arenaBytes,
+               int numOutputs, tflite::MicroOpResolver& resolver, tflite::ErrorReporter* errorReporter) {
+    const tflite::Model* model = tflmCheckedModel(modelData, modelBytes);
+    if (model == nullptr) {
+        Serial.printf("[%s] El modelo esta danado o su schema no corresponde\n", tag);
         return false;
     }
     const size_t arenaSize = tflmArenaBytes(arenaBytes);
@@ -230,15 +232,22 @@ bool loadModel(Model& m, const char* tag, const unsigned char* modelData, int ar
         return false;
     }
     auto* interpreter = new tflite::MicroInterpreter(model, resolver, arena, arenaSize, errorReporter);
-    if (interpreter->AllocateTensors() != kTfLiteOk) {
+    bool ok = interpreter->AllocateTensors() == kTfLiteOk;
+    if (!ok) {
         Serial.printf("[%s] AllocateTensors fallo con %u bytes: sube tflmArenaBytes()\n", tag, (unsigned)arenaSize);
-        return false;
     }
-    TfLiteTensor* input = interpreter->input(0);
-    TfLiteTensor* output = interpreter->output(0);
-    if (input->type != kTfLiteInt8 || input->bytes != (size_t)(kAfNumFrames * kAfNumMel) ||
-        output->type != kTfLiteInt8 || output->dims->data[output->dims->size - 1] != numOutputs) {
+    TfLiteTensor* input = ok ? interpreter->input(0) : nullptr;
+    TfLiteTensor* output = ok ? interpreter->output(0) : nullptr;
+    // Salida: el ultimo eje son las clases y en total no hay mas que esas (se leen numOutputs valores).
+    if (ok && (!tflmInt8TensorFits(input, (size_t)(kAfNumFrames * kAfNumMel)) || !tflmScaleOk(input) ||
+               !tflmInt8TensorFits(output, (size_t)numOutputs) ||
+               output->dims->data[output->dims->size - 1] != numOutputs)) {
         Serial.printf("[%s] El modelo no calza con el front-end: vuelve a exportarlo\n", tag);
+        ok = false;
+    }
+    if (!ok) {  // se devuelve lo reservado: sin este modelo la placa sigue con lo demas
+        delete interpreter;
+        heap_caps_free(arena);
         return false;
     }
     m.input = input;
@@ -246,8 +255,18 @@ bool loadModel(Model& m, const char* tag, const unsigned char* modelData, int ar
     m.inputScale = input->params.scale;
     m.inputZeroPoint = input->params.zero_point;
     m.interpreter = interpreter;
+    m.arena = arena;
     Serial.printf("[%s] Listo: arena %u/%u bytes\n", tag, (unsigned)interpreter->arena_used_bytes(), (unsigned)arenaSize);
     return true;
+}
+
+// Devuelve lo que reservo loadModel (si no se pudo arrancar la tarea de inferencia).
+void unloadModel(Model& m) {
+    delete m.interpreter;
+    m.interpreter = nullptr;
+    if (m.arena != nullptr) heap_caps_free(m.arena);
+    m.arena = nullptr;
+    m.input = m.output = nullptr;
 }
 }  // namespace
 
@@ -259,8 +278,8 @@ bool startAudioEvents(AudioEventCallback callback, AudioEventCallback contextCal
     static tflite::MicroErrorReporter errorReporter;
     static tflite::AllOpsResolver resolver;
 
-    if (!loadModel(audioModel, "Audio IA", g_audio_model_data, kAudioTensorArenaSize, kAudioNumClasses, resolver,
-                   &errorReporter)) {
+    if (!loadModel(audioModel, "Audio IA", g_audio_model_data, g_audio_model_data_len, kAudioTensorArenaSize,
+                   kAudioNumClasses, resolver, &errorReporter)) {
         return false;
     }
     audioModel.stride = kAfInferenceStride;
@@ -269,7 +288,8 @@ bool startAudioEvents(AudioEventCallback callback, AudioEventCallback contextCal
 
 #if WAKE_WORD_ENABLED
     // Si el wake word no carga, los eventos de audio siguen funcionando (se habla con el boton).
-    if (loadModel(wakeModel, "Wake word", g_wakeword_model_data, kWakeTensorArenaSize, 2, resolver, &errorReporter)) {
+    if (loadModel(wakeModel, "Wake word", g_wakeword_model_data, g_wakeword_model_data_len, kWakeTensorArenaSize, 2,
+                  resolver, &errorReporter)) {
         wakeModel.stride = kWakeStrideFrames;
         runSelfTest(wakeModel, "Wake word", kWakeSelfTestInput, sizeof(kWakeSelfTestInput), kWakeSelfTestExpected, 2);
     } else {
@@ -279,8 +299,9 @@ bool startAudioEvents(AudioEventCallback callback, AudioEventCallback contextCal
 
     if (xTaskCreatePinnedToCore(inferenceLoop, "audio_ia", 6144, nullptr, 1, &inferenceTask, 1) != pdPASS) {
         Serial.println("[Audio IA] No se pudo crear la tarea de inferencia");
-        audioModel.interpreter = nullptr;
-        wakeModel.interpreter = nullptr;
+        inferenceTask = nullptr;
+        unloadModel(audioModel);
+        unloadModel(wakeModel);
         return false;
     }
     Serial.printf("[Audio IA] Listo: %d clases%s\n", kAudioNumClasses,

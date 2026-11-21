@@ -21,6 +21,7 @@
 #include "ocr_config.h"
 #include "ocr_pipeline.h"
 #include "tflm_arena.h"
+#include "tflm_model_check.h"
 
 namespace {
 constexpr size_t kMaxTextBytes = 400;  // cabe en una notificacion BLE (MTU 512)
@@ -38,17 +39,21 @@ uint8_t* pieces = nullptr;        // hasta kOcrMaxPieces lineas de 32x256
 // inputBytes / outputBytes: lo que este firmware va a escribir y leer en los tensores. Los modelos llegan
 // por WiFi y se entrenan aparte: si no calzan (otro tamano, salida en float), el lector queda apagado
 // en vez de escribir fuera del arena.
-bool setupInterpreter(const char* storeName, tflite::MicroInterpreter** out, const char* name,
-                      size_t inputBytes, size_t outputBytes) {
+uint8_t* detectorArena = nullptr;
+uint8_t* readerArena = nullptr;
+
+bool setupInterpreter(const char* storeName, tflite::MicroInterpreter** out, uint8_t** outArena,
+                      const char* name, size_t inputBytes, size_t outputBytes) {
   const ModelEntry* entry = modelStoreGet(storeName);
   if (entry == nullptr) {
     Serial.printf("[Lector] %s: falta el modelo \"%s\" en la particion de modelos\n", name, storeName);
     return false;
   }
   const int declaredArena = (int)entry->arenaBytes;
-  const tflite::Model* model = tflite::GetModel(entry->data);
-  if (model->version() != TFLITE_SCHEMA_VERSION) {
-    Serial.printf("[Lector] %s: version de schema incorrecta\n", name);
+  // Llega por WiFi: se revisa la estructura (y la version del schema) antes de usarlo.
+  const tflite::Model* model = tflmCheckedModel(entry->data, entry->size);
+  if (model == nullptr) {
+    Serial.printf("[Lector] %s: el modelo esta danado o no es un .tflite valido\n", name);
     return false;
   }
   const size_t arenaBytes = tflmArenaBytes(declaredArena);
@@ -61,23 +66,38 @@ bool setupInterpreter(const char* storeName, tflite::MicroInterpreter** out, con
   static tflite::AllOpsResolver resolver;
   // new (y no static): son dos interpretes con el mismo tipo; viven toda la ejecucion.
   auto* interpreter = new tflite::MicroInterpreter(model, resolver, arena, arenaBytes, &errorReporter);
+  // Desde aqui lo reservado queda a cargo de freeOcrResources() si algo falla.
+  *out = interpreter;
+  *outArena = arena;
   if (interpreter->AllocateTensors() != kTfLiteOk) {
     Serial.printf("[Lector] %s: AllocateTensors fallo con %u bytes\n", name, (unsigned)arenaBytes);
     return false;
   }
   const TfLiteTensor* input = interpreter->input(0);
   const TfLiteTensor* output = interpreter->output(0);
-  if (input->type != kTfLiteInt8 || input->bytes != inputBytes || output->type != kTfLiteInt8 ||
-      output->bytes != outputBytes) {
+  if (!tflmInt8TensorFits(input, inputBytes) || !tflmInt8TensorFits(output, outputBytes) ||
+      !tflmScaleOk(input) || !tflmScaleOk(output)) {
     Serial.printf("[Lector] %s: el modelo no calza con este firmware (entrada %u, salida %u bytes; se esperaban "
-                  "%u y %u int8): exportar de nuevo y subir firmware y modelos juntos\n",
+                  "%u y %u int8 con escala valida): exportar de nuevo y subir firmware y modelos juntos\n",
                   name, (unsigned)input->bytes, (unsigned)output->bytes, (unsigned)inputBytes, (unsigned)outputBytes);
     return false;
   }
   Serial.printf("[Lector] %s listo, arena %u/%u bytes\n", name, (unsigned)interpreter->arena_used_bytes(),
                 (unsigned)arenaBytes);
-  *out = interpreter;
   return true;
+}
+
+// Si el arranque falla a mitad, se devuelve todo lo reservado (la PSRAM la usan la camara y el audio).
+void freeOcrResources() {
+  delete detector;
+  detector = nullptr;
+  delete reader;
+  reader = nullptr;
+  uint8_t** buffers[] = {&detectorArena, &readerArena, &vgaFrame, &detInput, &pieces};
+  for (uint8_t** buffer : buffers) {
+    if (*buffer != nullptr) heap_caps_free(*buffer);
+    *buffer = nullptr;
+  }
 }
 
 // Pixel 0-255 -> int8 con la cuantizacion de la entrada del modelo.
@@ -173,10 +193,12 @@ void ocrLoop(void*) {
   static char text[kMaxTextBytes];
   for (;;) {
     ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
-    if (modelStoreWriting()) {
+    // Los pesos estan en la flash (particion "modelos"): mientras corre, la subida de modelos espera.
+    if (!modelStoreBeginUse()) {
       text[0] = '\0';  // se estan subiendo modelos nuevos: no tocar la particion
     } else {
       readText(text);
+      modelStoreEndUse();
     }
     if (onResult) onResult(text);
   }
@@ -190,16 +212,23 @@ bool startOcrTask(OcrResultCallback callback) {
   pieces = (uint8_t*)heap_caps_malloc(kOcrMaxPieces * kOcrLineHeight * kOcrLineWidth, MALLOC_CAP_SPIRAM);
   if (!vgaFrame || !detInput || !pieces) {
     Serial.println("[Lector] Sin PSRAM para los buffers");
+    freeOcrResources();
     return false;
   }
-  if (!setupInterpreter(kOcrDetectorModelName, &detector, "detector", (size_t)kOcrDetWidth * kOcrDetHeight,
-                        (size_t)kOcrMapWidth * kOcrMapHeight) ||
-      !setupInterpreter(kOcrReaderModelName, &reader, "lector", (size_t)kOcrLineHeight * kOcrLineWidth,
-                        (size_t)kOcrTimeSteps * kOcrNumClasses)) {
+  if (!setupInterpreter(kOcrDetectorModelName, &detector, &detectorArena, "detector",
+                        (size_t)kOcrDetWidth * kOcrDetHeight, (size_t)kOcrMapWidth * kOcrMapHeight) ||
+      !setupInterpreter(kOcrReaderModelName, &reader, &readerArena, "lector",
+                        (size_t)kOcrLineHeight * kOcrLineWidth, (size_t)kOcrTimeSteps * kOcrNumClasses)) {
+    freeOcrResources();
     return false;
   }
   // Nucleo 0, prioridad baja: tarda ~1-3 s y no debe cortar el audio ni el Bluetooth.
-  return xTaskCreatePinnedToCore(ocrLoop, "ocr", 8192, nullptr, 1, &ocrTask, 0) == pdPASS;
+  if (xTaskCreatePinnedToCore(ocrLoop, "ocr", 8192, nullptr, 1, &ocrTask, 0) != pdPASS) {
+    ocrTask = nullptr;
+    freeOcrResources();
+    return false;
+  }
+  return true;
 }
 
 void requestReadText() {

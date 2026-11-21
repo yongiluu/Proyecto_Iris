@@ -110,8 +110,12 @@ void playbackTask(void*) {
 
   for (;;) {
     if (flushRequested) {
-      // Solo esta tarea lee el stream: aqui se puede vaciar sin carreras.
+      // Solo esta tarea lee el stream, pero los escritores (BLE, loop, luz) pueden estar a mitad de un
+      // xStreamBufferSend: FreeRTOS no permite vaciarlo a la vez. Con el candado de los escritores no hay
+      // nadie enviando (si alguno lo tiene, se reintenta en la proxima vuelta).
+      if (xSemaphoreTake(enqueueMutex, pdMS_TO_TICKS(100)) != pdTRUE) continue;
       xStreamBufferReset(playbackStream);
+      xSemaphoreGive(enqueueMutex);
       flushRequested = false;
       playing = false;
       playingNow = false;
@@ -207,13 +211,18 @@ bool initAudioPlayer() {
     playbackStream = xStreamBufferCreate(kFallbackBufferBytes, 1);
   }
   enqueueMutex = xSemaphoreCreateMutex();
-  if (playbackStream == nullptr || enqueueMutex == nullptr) {
+  // Sin el buffer, el candado o la tarea no hay reproduccion: se libera lo reservado y playbackStream
+  // queda en nullptr (playAudioBuffer/playTone no hacen nada).
+  if (playbackStream == nullptr || enqueueMutex == nullptr ||
+      xTaskCreatePinnedToCore(playbackTask, "audio_play", 4096, nullptr, 3, nullptr, 0) != pdPASS) {
+    if (playbackStream != nullptr) vStreamBufferDelete(playbackStream);
     playbackStream = nullptr;
-    Serial.println("[Audio] Error: sin memoria para el buffer de reproduccion");
+    if (storage != nullptr) heap_caps_free(storage);
+    if (enqueueMutex != nullptr) vSemaphoreDelete(enqueueMutex);
+    enqueueMutex = nullptr;
+    Serial.println("[Audio] Error: sin memoria para el buffer o la tarea de reproduccion");
     return false;
   }
-
-  xTaskCreatePinnedToCore(playbackTask, "audio_play", 4096, nullptr, 3, nullptr, 0);
   return true;
 }
 
@@ -225,9 +234,13 @@ void enqueueAudio(const uint8_t* payload, size_t length, bool isAnswer) {
   length &= ~(size_t)1; // PCM de 16 bits: descartar un byte suelto
   if (length == 0) return;
 
-  xSemaphoreTake(enqueueMutex, portMAX_DELAY);
-  size_t sent = xStreamBufferSend(playbackStream, payload, length, kEnqueueTimeoutTicks);
-  xSemaphoreGive(enqueueMutex);
+  // Se llama desde el callback BLE: nunca esperar para siempre. Quien tiene el candado lo suelta en
+  // menos de kEnqueueTimeoutTicks (la espera del envio) o lo que tarda vaciar el buffer.
+  size_t sent = 0;
+  if (xSemaphoreTake(enqueueMutex, kEnqueueTimeoutTicks * 4) == pdTRUE) {
+    sent = xStreamBufferSend(playbackStream, payload, length, kEnqueueTimeoutTicks);
+    xSemaphoreGive(enqueueMutex);
+  }
   lastEnqueueTick = xTaskGetTickCount();
   if (isAnswer && expectedBytes > 0) {
     receivedBytes = receivedBytes + sent;
