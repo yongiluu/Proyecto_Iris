@@ -238,12 +238,17 @@ void releaseJpegFrame(camera_fb_t* frame) {
 }
 
 void shutdownCamera() {
-  if (cameraMutex == nullptr || !cameraReady) return;
-  // Espera a que nadie este usando un frame; despues la camara queda apagada (acquire* devuelve nullptr).
-  xSemaphoreTake(cameraMutex, portMAX_DELAY);
+  // Primero la marca: aunque la camara ya este apagada por un error, tryRecover() no debe volver a
+  // encenderla (ej. durante la actualizacion por WiFi).
   shutdownRequested = true;
-  cameraReady = false;
-  esp_camera_deinit();
+  if (cameraMutex == nullptr) return;
+  // Espera a que nadie este usando un frame; despues la camara queda apagada (acquire* devuelve nullptr).
+  // Con el candado: una recuperacion en curso ya termino y cameraReady es definitivo.
+  xSemaphoreTake(cameraMutex, portMAX_DELAY);
+  if (cameraReady) {
+    cameraReady = false;
+    esp_camera_deinit();
+  }
   xSemaphoreGive(cameraMutex);
 }
 
