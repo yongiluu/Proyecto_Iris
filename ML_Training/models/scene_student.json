@@ -1,9 +1,10 @@
 {
-  "labels": "auto",
+  "labels": "mix",
   "sources": {
-    "auto_openimages": 12000
+    "qwen3-vl-8b-instruct": 123680,
+    "auto_openimages": 2
   },
-  "hazards_trained": false,
-  "alpha": 0.35,
-  "train_images": 10139
+  "hazards_trained": true,
+  "alpha": 0.5,
+  "train_images": 103827
 }

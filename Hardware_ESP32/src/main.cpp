@@ -452,9 +452,36 @@ bool talkActive = false;    // se esta manteniendo el boton para hablar
 bool talkOffline = false;   // ...pero sin la app conectada: al soltar responde el modelo de la placa
 uint32_t talkStartMs = 0;
 
+// Sonido de cada gesto: se distinguen de oido, sin mirar. Antes los 3 toques sonaban igual que 1 (tres
+// pitidos iguales sin pausa se oian como uno solo).
+//   1 toque  = un pitido corto            2 toques = dos pitidos subiendo
+//   3 toques = tres pitidos subiendo      mantener = un tono grave largo (empieza a escuchar)
+void gestureSound(int kind) {
+  switch (kind) {
+    case 1:
+      playTone(1046.0f, 80);
+      break;
+    case 2:
+      playTone(880.0f, 70);
+      playTone(0.0f, 70);
+      playTone(1320.0f, 70);
+      break;
+    case 3:
+      playTone(784.0f, 60);
+      playTone(0.0f, 60);
+      playTone(1046.0f, 60);
+      playTone(0.0f, 60);
+      playTone(1568.0f, 60);
+      break;
+    default:  // mantener
+      playTone(523.0f, 160);
+      break;
+  }
+}
+
 // Un toque: la placa describe lo que ve con su propio modelo, sin celular ni internet.
 void describeLocally() {
-  playTone(1320.0f, 50);
+  gestureSound(1);
   if (!sceneReady) {
     queueSay("Esta placa no tiene instalado el modelo para describir.");
     return;
@@ -465,7 +492,7 @@ void describeLocally() {
 
 // Tres toques: leer el texto de adelante.
 void readLocally() {
-  for (int i = 0; i < 3; i++) playTone(1320.0f, 40);
+  gestureSound(3);
 #ifdef IRIS_OCR
   if (ocrReady) {
     queueSay("Déjame leerlo.");
@@ -484,6 +511,7 @@ void handleButtonEvent(ButtonEvent event) {
     case ButtonEvent::CloudTalkStart:
       talkActive = true;
       talkStartMs = millis();
+      gestureSound(0);  // ya se puede hablar
       if (bleManager.commandsReady()) {
         talkOffline = false;
         // Toque + mantener: esta pregunta va directo a la nube (la app no prueba primero lo local).
@@ -492,7 +520,6 @@ void handleButtonEvent(ButtonEvent event) {
       } else {
         // Sin celular nadie puede entender la pregunta: al soltar responde el modelo de la placa.
         talkOffline = true;
-        playTone(880.0f, 60);
       }
       break;
     case ButtonEvent::TalkStop:
@@ -510,8 +537,7 @@ void handleButtonEvent(ButtonEvent event) {
     case ButtonEvent::Tap2:
       // Dos toques: descripcion detallada de la nube (la pide la app). Sin app, la local.
       if (bleManager.commandsReady()) {
-        playTone(1320.0f, 40);
-        playTone(1320.0f, 40);
+        gestureSound(2);
         bleManager.sendCommand("CMD_CLOUD_DESCRIBE");
       } else {
         describeLocally();

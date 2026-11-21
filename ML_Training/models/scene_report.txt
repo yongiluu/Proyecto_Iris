@@ -1,49 +1,57 @@
-== Test (float32) (940 fotos) ==
-Objetos: precision 58.5%, recall 53.8%, F1 56.0% (umbral 0,5)
-  peores: espejo 0% (n=10), paraguas 0% (n=10), poste 0% (n=11), lavamanos 18% (n=15), cuadro 20% (n=34), cortina 21% (n=16)
-  mejores: auto 67% (n=112), arbol 68% (n=106), gato 69% (n=33), persona 74% (n=261), taza 76% (n=44), bus 76% (n=30)
-Posicion (objetos presentes con etiqueta): 67.7% de acierto (n=1812)
-Distancia (objetos presentes con etiqueta): 73.9% de acierto (n=1812)
-Color (objetos presentes con etiqueta): 46.8% de acierto (n=818)
-Personas: 80.2% de acierto (n=940)
-Lugar: 80.0% de acierto (n=140)
-Calidad: 99.8% de acierto (n=940)
-Peligros: sin etiquetas todavia (las pone el profesor)
+== Test (float32) (9938 fotos) ==
+Objetos: precision 63.1%, recall 63.0%, F1 63.0% (umbral 0,5)
+  peores: cono 0% (n=108), mochila 9% (n=328), basurero 16% (n=331), reloj 26% (n=313), espejo 30% (n=193), semaforo 33% (n=218)
+  mejores: inodoro 68% (n=107), mesa 68% (n=1687), auto 74% (n=1823), arbol 78% (n=2804), edificio 81% (n=3560), persona 83% (n=3680)
+Posicion (objetos presentes con etiqueta): 60.5% de acierto (n=35341)
+Distancia (objetos presentes con etiqueta): 66.7% de acierto (n=35341)
+Color (objetos presentes con etiqueta): 57.2% de acierto (n=20492)
+Personas: 81.0% de acierto (n=9938)
+Lugar: 69.6% de acierto (n=9938)
+Calidad: 86.3% de acierto (n=9938)
+Peligro escalera_baja: avisa 48% de las veces (umbral 0,3), falsas alarmas 1.9%
+Peligro escalera_sube: avisa 66% de las veces (umbral 0,3), falsas alarmas 1.6%
+Peligro escalon: avisa 7% de las veces (umbral 0,3), falsas alarmas 0.3%
+Peligro obstaculo_suelo: avisa 90% de las veces (umbral 0,3), falsas alarmas 34.6%
+Peligro obstaculo_alto: avisa 17% de las veces (umbral 0,3), falsas alarmas 1.1%
+Peligro vehiculo_cerca: avisa 80% de las veces (umbral 0,3), falsas alarmas 6.4%
+Peligro borde_calle: avisa 30% de las veces (umbral 0,3), falsas alarmas 1.2%
+Peligro puerta_vidrio: avisa 37% de las veces (umbral 0,3), falsas alarmas 0.7%
+Peligro hoyo: avisa 0% de las veces (umbral 0,3), falsas alarmas 0.0%
 
 Frases de ejemplo (alumno | etiquetas):
-- openimages/a309797eb790b812.jpg
-    alumno:    Parece que estás en la calle. Adelante hay varias personas, una moto negra y una bicicleta gris.
-    etiquetas: Adelante hay dos personas. Al fondo hay una moto negra.
-- openimages/4b5db81b7145ad1e.jpg
-    alumno:    Parece que estás en la calle. Adelante, muy cerca, hay un edificio negro y una persona.
-    etiquetas: Parece que estás en la calle. Adelante, muy cerca, hay un edificio blanco. A tu derecha hay un árbol. Al fondo hay un auto negro y una ventana.
-- openimages/f9796848b90791a9.jpg
-    alumno:    Parece que estás en la calle. Adelante, muy cerca, hay un árbol. A tu izquierda hay una persona.
-    etiquetas: Adelante hay un semáforo. A tu derecha hay un árbol.
-- openimages/dde9828bc53087c2.jpg
-    alumno:    Adelante, muy cerca, hay una botella azul.
-    etiquetas: Adelante, muy cerca, hay un semáforo.
 - openimages/bf9c1ddbe87e34a0.jpg
-    alumno:    Parece que estás en la calle. Adelante, muy cerca, hay un árbol y un edificio gris.
-    etiquetas: Adelante, muy cerca, hay un árbol. Al fondo hay un semáforo.
+    alumno:    Atención: podría haber algo a la altura de la cabeza. Parece que estás en la calle. A tu izquierda hay un semáforo, un poste de luz y una señal de tránsito. Al fondo hay un árbol.
+    etiquetas: Cuidado: algo a la altura de la cabeza. Parece que estás en la calle. Adelante hay una señal de tránsito. A tu izquierda hay un semáforo. Al fondo hay un árbol.
+- openimages/dde9828bc53087c2.jpg
+    alumno:    Parece que estás en la calle. Adelante, muy cerca, hay un semáforo. No detecto peligros.
+    etiquetas: Parece que estás en la calle. Adelante, muy cerca, hay un semáforo. No detecto peligros.
+- openimages/f9796848b90791a9.jpg
+    alumno:    Atención: podría haber algo a la altura de la cabeza. Parece que estás en la calle. Adelante, muy cerca, hay un semáforo, un poste de luz y una señal de tránsito. A tu derecha hay un árbol. Al fondo hay un edificio gris.
+    etiquetas: Parece que estás en la calle. Adelante, muy cerca, hay una señal de tránsito, un poste de luz y un semáforo. A tu derecha hay un árbol. Al fondo hay un edificio gris. No detecto peligros.
 - openimages/243cb9f462917e8a.jpg
-    alumno:    Parece que estás en la calle. Adelante hay un árbol. A tu derecha hay un edificio gris.
-    etiquetas: Parece que estás en la calle. Adelante, muy cerca, hay un árbol. A tu derecha hay un edificio gris. Al fondo hay un auto, varias personas y un semáforo.
+    alumno:    Cuidado: un vehículo cerca y un obstáculo en el camino. Parece que estás en la calle. Adelante hay una persona. A tu derecha hay un poste de luz, un auto, un semáforo y una señal de tránsito.
+    etiquetas: Cuidado: un obstáculo en el camino. Parece que estás en la calle. Adelante hay varias personas. Al fondo hay un auto gris, un semáforo, un árbol y un edificio gris.
 - openimages/644395d01b541528.jpg
-    alumno:    Adelante, muy cerca, hay un edificio, un árbol y una planta.
-    etiquetas: A tu izquierda hay un árbol. A tu derecha hay un semáforo. Al fondo hay un poste de luz y una señal de tránsito.
-- openimages/e0beab2586c099f5.jpg
-    alumno:    No reconozco objetos claros adelante.
-    etiquetas: A tu izquierda hay un grifo café. A tu derecha hay una persona.
+    alumno:    Atención: podría haber un obstáculo en el camino. Parece que estás en la calle. Adelante, muy cerca, hay un poste de luz y una señal de tránsito. A tu izquierda hay un árbol. Al fondo hay un edificio.
+    etiquetas: Parece que estás en la calle. Adelante, muy cerca, hay un semáforo. A tu izquierda hay un árbol. Al fondo hay un edificio gris y una señal de tránsito. No detecto peligros.
 - openimages/356bf0a5a6207913.jpg
-    alumno:    Parece que estás en la calle. No reconozco objetos claros adelante.
-    etiquetas: Adelante, muy cerca, hay un grifo amarillo.
+    alumno:    Cuidado: un obstáculo en el camino. Parece que estás en la calle. Adelante, muy cerca, hay un grifo amarillo.
+    etiquetas: Parece que estás en la calle. Adelante, muy cerca, hay un grifo amarillo. No detecto peligros.
+- openimages/e0beab2586c099f5.jpg
+    alumno:    Cuidado: un obstáculo en el camino. Parece que estás en la calle. Adelante, muy cerca, hay varias personas. Al fondo hay un edificio y un árbol.
+    etiquetas: La imagen está borrosa; no puedo describir bien. Cuidado: un obstáculo en el camino. Parece que estás en la calle. Adelante, muy cerca, hay un grifo amarillo. Al fondo hay una bicicleta, un edificio blanco y un árbol.
 - openimages/fe01815e982763e4.jpg
-    alumno:    Parece que estás en la calle. Adelante, muy cerca, hay una planta.
-    etiquetas: Adelante, muy cerca, hay un grifo azul.
-- openimages/c9cb6dea5678d078.jpg
-    alumno:    Parece que estás en la calle. No reconozco objetos claros adelante.
-    etiquetas: Adelante, muy cerca, hay un grifo rojo.
+    alumno:    Atención: podría haber un obstáculo en el camino. A tu izquierda hay un árbol.
+    etiquetas: La imagen está muy oscura; no puedo describir bien. Adelante, muy cerca, hay un grifo gris.
 - openimages/c3b69f07da136c4b.jpg
-    alumno:    Parece que estás en la calle. Adelante, muy cerca, hay un árbol y una planta.
-    etiquetas: Adelante, muy cerca, hay un árbol, un grifo rojo y una planta.
+    alumno:    Atención: podría haber un obstáculo en el camino. A tu derecha hay un árbol.
+    etiquetas: Cuidado: un obstáculo en el camino. Adelante, muy cerca, hay un grifo rojo. A tu izquierda hay un árbol.
+- openimages/c9cb6dea5678d078.jpg
+    alumno:    Cuidado: un obstáculo en el camino. Parece que estás en la calle. Adelante, muy cerca, hay un grifo rojo y una bicicleta roja. Al fondo hay un edificio gris.
+    etiquetas: Cuidado: un obstáculo en el camino. Parece que estás en la calle. Adelante, muy cerca, hay un grifo rojo. Al fondo hay un edificio blanco, una puerta, una planta y una ventana.
+- openimages/ed4382f505085d43.jpg
+    alumno:    Cuidado: un obstáculo en el camino. Parece que estás en la calle. Adelante, muy cerca, hay un grifo rojo. Al fondo hay un edificio gris y una puerta roja.
+    etiquetas: Cuidado: un obstáculo en el camino. Parece que estás en la calle. Adelante, muy cerca, hay un grifo rojo. A tu izquierda hay un árbol. A tu derecha hay un poste de luz. Al fondo hay un edificio gris.
+- openimages/9fa5578fb2936944.jpg
+    alumno:    Cuidado: un obstáculo en el camino. Parece que estás en un baño. Adelante, muy cerca, hay un inodoro. A tu izquierda hay un grifo gris.
+    etiquetas: Parece que estás en un baño. Adelante, muy cerca, hay un inodoro. A tu izquierda hay un grifo gris. No detecto peligros.
