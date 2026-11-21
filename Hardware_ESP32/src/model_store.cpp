@@ -1,6 +1,7 @@
 #include "model_store.h"
 
 #include <Arduino.h>
+#include <atomic>
 #include <esp_partition.h>
 #include <string.h>
 
@@ -12,7 +13,12 @@ const uint8_t* base = nullptr;
 size_t baseLength = 0;
 bool started = false;
 ModelStoreStatus startStatus = kModelStoreEmpty;
-volatile bool writing = false;
+// La particion queda mapeada (mmap) toda la ejecucion: los interpretes de TFLM guardan punteros a los
+// pesos. No se desmapea antes de escribirla (spi_flash_munmap): un acceso tardio a un mapeo liberado es
+// un panic seguro; en cambio esp_partition_write/erase funcionan con el mapeo puesto, y despues de subir
+// modelos la placa se reinicia. Lo que hace falta es que nadie LEA mientras se escribe: writing + users.
+std::atomic<bool> writing{false};
+std::atomic<int> users{0};  // usos en curso (modelStoreBeginUse)
 
 struct Cached {
     char name[kModelStoreNameBytes];
@@ -81,4 +87,32 @@ void modelStoreSetWriting(bool value) {
 
 bool modelStoreWriting() {
     return writing;
+}
+
+bool modelStoreBeginUse() {
+    // Primero se anota el uso y despues se mira la escritura (y al reves en modelStoreLockForWriting):
+    // con atomicos secuenciales, o la tarea ve la escritura, o quien escribe ve el uso y lo espera.
+    users.fetch_add(1);
+    if (writing) {
+        users.fetch_sub(1);
+        return false;
+    }
+    return true;
+}
+
+void modelStoreEndUse() {
+    users.fetch_sub(1);
+}
+
+bool modelStoreLockForWriting(uint32_t timeoutMs) {
+    writing = true;
+    const uint32_t start = millis();
+    while (users.load() > 0) {
+        if (millis() - start >= timeoutMs) {
+            Serial.println("[Modelos] Un modelo sigue corriendo: no se puede escribir la particion");
+            return false;
+        }
+        delay(10);
+    }
+    return true;
 }

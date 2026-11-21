@@ -28,7 +28,9 @@ void handleModelsUpload() {
     if (upload.status == UPLOAD_FILE_START) {
         modelsOk = false;
         if (!server->authenticate("iris", IRIS_OTA_PASSWORD)) return;
-        modelStoreSetWriting(true);  // nadie lee modelos mientras se borra y escribe la particion
+        // Nadie lee modelos mientras se borra y escribe la particion: espera a que termine una
+        // descripcion o lectura en curso (enterOtaMode ya las detuvo; esto es la ultima defensa).
+        if (!modelStoreLockForWriting(5000)) return;  // sin Update.begin: responde error y reinicia
         Serial.printf("[OTA] Modelos: recibiendo %s\n", upload.filename.c_str());
         if (!Update.begin(UPDATE_SIZE_UNKNOWN, U_SPIFFS, -1, LOW, "modelos")) Update.printError(Serial);
     } else if (upload.status == UPLOAD_FILE_WRITE && Update.isRunning()) {

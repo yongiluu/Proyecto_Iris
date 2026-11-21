@@ -21,4 +21,13 @@ const ModelEntry* modelStoreGet(const char* name);
 void modelStoreSetWriting(bool writing);
 bool modelStoreWriting();
 
+// Las tareas que corren modelos de la particion (escenas, lector de texto) marcan cada uso: la subida
+// de modelos (OTA) espera a que terminen antes de borrar la flash. modelStoreBeginUse() devuelve false
+// si ya se esta escribiendo (no tocar los modelos); si devuelve true, llamar modelStoreEndUse() al final.
+bool modelStoreBeginUse();
+void modelStoreEndUse();
+// Marca la escritura (desde aqui modelStoreBeginUse() devuelve false) y espera hasta timeoutMs a que
+// terminen los usos en curso. true = nadie esta leyendo los modelos.
+bool modelStoreLockForWriting(uint32_t timeoutMs);
+
 #endif
