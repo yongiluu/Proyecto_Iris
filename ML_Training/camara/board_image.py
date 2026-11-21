@@ -63,3 +63,47 @@ def rgb_to_gray96(rgb: np.ndarray) -> np.ndarray:
 
 def rgb565_to_gray96(data: bytes, width: int, height: int) -> np.ndarray:
     return rgb_to_gray96(unpack_rgb565(data, width, height))
+
+
+# ─── Imagen derecha segun el montaje de la camara (image_convert.cpp: grayUpright / rgb565UprightToRgb888) ───
+MOUNT_UPRIGHT = 0
+MOUNT_TRANSVERSE = 1  # en los lentes: llega girada 90 grados y en espejo (PIL: Image.TRANSVERSE)
+
+
+def _axis_taps(n_out: int, scale: int, offset: int, size: int):
+    s = np.arange(n_out, dtype=np.int64) * scale + scale // 2 - (1 << 15)
+    s = np.maximum(s, 0)
+    i = s >> 16
+    f = (s >> 8) & 0xFF
+    f = np.where(i >= size - 1, 0, f)
+    i = np.minimum(i, size - 1)
+    i1 = np.minimum(i + 1, size - 1)
+    return offset + i, offset + i1, f
+
+
+def upright(image: np.ndarray, mount: int, dw: int, dh: int, max_crop_w: int = 0) -> np.ndarray:
+    """(alto, ancho) o (alto, ancho, 3) uint8 -> (dh, dw[, 3]) derecha, recorte central, bilineal 16.16."""
+    sh, sw = image.shape[:2]
+    uw, uh = (sh, sw) if mount == MOUNT_TRANSVERSE else (sw, sh)
+    if uw * dh > uh * dw:
+        ch, cw = uh, uh * dw // dh
+    else:
+        cw, ch = uw, uw * dh // dw
+    if max_crop_w and cw > max_crop_w:  # zoom digital (lector de texto): solo el centro, sin achicar
+        cw, ch = max_crop_w, max_crop_w * dh // dw
+    x0, y0 = (uw - cw) // 2, (uh - ch) // 2
+    u0, u1, fu = _axis_taps(dw, (cw << 16) // dw, x0, cw)
+    v0, v1, fv = _axis_taps(dh, (ch << 16) // dh, y0, ch)
+
+    def fetch(u, v):
+        if mount == MOUNT_TRANSVERSE:
+            return image[(sh - 1 - u)[np.newaxis, :], (sw - 1 - v)[:, np.newaxis]].astype(np.int64)
+        return image[v[:, np.newaxis], u[np.newaxis, :]].astype(np.int64)
+
+    a, b, c, d = fetch(u0, v0), fetch(u1, v0), fetch(u0, v1), fetch(u1, v1)
+    fx, fy = fu[np.newaxis, :], fv[:, np.newaxis]
+    if image.ndim == 3:
+        fx, fy = fx[..., np.newaxis], fy[..., np.newaxis]
+    top = a * (256 - fx) + b * fx
+    bottom = c * (256 - fx) + d * fx
+    return ((top * (256 - fy) + bottom * fy + (1 << 15)) >> 16).astype(np.uint8)

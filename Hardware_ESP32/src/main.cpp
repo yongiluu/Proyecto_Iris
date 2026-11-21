@@ -3,6 +3,7 @@
 
 #include <Arduino.h>
 #include "config.h"
+#include "image_convert.h"
 #include <esp_heap_caps.h>
 #include <esp_system.h>
 #include "camera_driver.h"
@@ -355,6 +356,42 @@ void enterOtaMode(const char* reason) {
 }
 
 // Escribir OTA (y Enter) en el monitor serial tambien activa la actualizacion por WiFi.
+// Diagnostico: escribir FOTO en el monitor serial manda la foto JPEG que ve la placa (la misma que va a
+// la nube), para revisar orientacion y enfoque desde el PC (Hardware_ESP32/tools/foto_serial.py).
+// Formato: "FOTO_START <bytes>\n" + los bytes del JPEG + "\nFOTO_END\n".
+void sendSerialPhoto() {
+  camera_fb_t* frame = acquireJpegFrame();
+  if (frame == nullptr) {
+    Serial.println("FOTO_ERROR");
+    return;
+  }
+  Serial.printf("FOTO_START %u\n", (unsigned)frame->len);
+  Serial.write(frame->buf, frame->len);
+  Serial.print("\nFOTO_END\n");
+  Serial.flush();
+  releaseJpegFrame(frame);
+}
+
+// Diagnostico: FOTOLECTOR manda la imagen EXACTA que recibe el lector de texto (grises, ya derecha y en
+// 640x480). Formato: "GRIS_START <ancho> <alto>\n" + bytes + "\nGRIS_END\n".
+void sendSerialReaderImage() {
+  static uint8_t* gray = nullptr;
+  if (gray == nullptr) gray = (uint8_t*)heap_caps_malloc(640 * 480, MALLOC_CAP_SPIRAM);
+  camera_fb_t* frame = acquireGrayVgaFrame();
+  if (frame == nullptr || gray == nullptr) {
+    if (frame) releaseGrayVgaFrame(frame);
+    Serial.println("FOTO_ERROR");
+    return;
+  }
+  grayUpright(frame->buf, frame->width, frame->height, CAMERA_MOUNT, gray, 640, 480, OCR_ZOOM_CROP_W);
+  Serial.printf("[Diagnostico] frame del lector %ux%u\n", (unsigned)frame->width, (unsigned)frame->height);
+  releaseGrayVgaFrame(frame);
+  Serial.printf("GRIS_START 640 480\n");
+  Serial.write(gray, 640 * 480);
+  Serial.print("\nGRIS_END\n");
+  Serial.flush();
+}
+
 void handleSerialCommands() {
   static char line[16];
   static size_t length = 0;
@@ -363,6 +400,8 @@ void handleSerialCommands() {
     if (c == '\r' || c == '\n') {
       line[length] = 0;
       if (strcasecmp(line, "OTA") == 0) otaRequested = true;
+      if (strcasecmp(line, "FOTO") == 0) sendSerialPhoto();
+      if (strcasecmp(line, "FOTOLECTOR") == 0) sendSerialReaderImage();
       length = 0;
     } else if (length < sizeof(line) - 1) {
       line[length++] = c;
@@ -655,7 +694,7 @@ void loop() {
       isIrisSpeaking() || sceneLiveActive() || lightMeterActive()) {
     powerActivity();
   }
-  if (powerShouldSleep()) enterSleep("sin uso");
+  if (powerShouldSleep(bleManager.isConnected())) enterSleep("sin uso");
 
   if (appPttStartRequested) {
     appPttStartRequested = false;
@@ -696,8 +735,10 @@ void loop() {
                                            "bajo_voltaje", "sdio"};
     const int reason = (int)esp_reset_reason();
     // "ocr" solo si el lector arranco de verdad (con sus modelos en la particion).
-    char kFeatures[32];
-    snprintf(kFeatures, sizeof(kFeatures), "luz%s%s", ocrReady ? ",ocr" : "", sceneReady ? ",escena,vivo" : "");
+    char kFeatures[48];
+    // "girada": la camara va de lado; la app endereza la foto JPEG que manda a la nube.
+    snprintf(kFeatures, sizeof(kFeatures), "luz%s%s%s", ocrReady ? ",ocr" : "", sceneReady ? ",escena,vivo" : "",
+             CAMERA_MOUNT == kMountTransverse ? ",girada" : "");
     char hello[112];
     snprintf(hello, sizeof(hello), "CMD_HELLO:%lu:%s:%u:%d:%s:%s", (unsigned long)(millis() / 1000),
              reason >= 0 && reason <= 10 ? kReasons[reason] : "?",

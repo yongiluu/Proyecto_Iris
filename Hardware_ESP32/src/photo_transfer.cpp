@@ -4,6 +4,7 @@
 #include <string.h>
 #include "ble_manager.h"
 #include "config.h"
+#include "image_convert.h"
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
 
@@ -67,17 +68,21 @@ void sendColorFrame() {
   camera_fb_t* frame = acquireColorFrame();
   bool ok = frame != nullptr && frame->format == PIXFORMAT_RGB565 &&
             frame->len >= (size_t)frame->width * frame->height * 2u;
-  unsigned width = 0, height = 0;
-  size_t length = 0;
+  // La misma imagen que recibe Retina: derecha segun el montaje y en 160x120 (image_convert.h).
+  const unsigned width = 160, height = 120;
+  const size_t length = (size_t)width * height * 2u;
+  static uint8_t* rgb = nullptr;  // 160x120x3 intermedio, en PSRAM
   if (ok) {
-    width = frame->width;
-    height = frame->height;
-    length = (size_t)width * height * 2u;
     if (frameCopy == nullptr) {
       frameCopy = (uint8_t*)heap_caps_malloc(kFrameCopyBytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
     }
-    ok = frameCopy != nullptr && length <= kFrameCopyBytes;
-    if (ok) memcpy(frameCopy, frame->buf, length);
+    if (rgb == nullptr) rgb = (uint8_t*)heap_caps_malloc((size_t)width * height * 3, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    ok = frameCopy != nullptr && rgb != nullptr && length <= kFrameCopyBytes && frame->width >= width &&
+         frame->height >= height;
+    if (ok) {
+      rgb565UprightToRgb888(frame->buf, frame->width, frame->height, CAMERA_MOUNT, rgb, width, height);
+      rgb888ToRgb565(rgb, (size_t)width * height, frameCopy);
+    }
   }
   if (frame != nullptr) releaseColorFrame(frame);
   if (!ok) {

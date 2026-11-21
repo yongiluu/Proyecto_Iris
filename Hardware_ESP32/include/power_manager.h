@@ -22,7 +22,8 @@ void powerActivity();
 
 // true si ya paso POWER_IDLE_SLEEP_MS sin actividad y se puede dormir (nunca con el cable USB
 // conectado a un PC, para no cortar el monitor serial ni las subidas).
-bool powerShouldSleep();
+// [appConnected]: la app esta conectada por Bluetooth (se espera POWER_IDLE_SLEEP_CONNECTED_MS).
+bool powerShouldSleep(bool appConnected);
 
 // Duerme la placa hasta que se apriete el boton. No vuelve: al despertar la placa arranca de cero.
 // Antes de llamarla hay que apagar la camara y el Bluetooth.

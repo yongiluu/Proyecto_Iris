@@ -14,6 +14,7 @@
 
 #include "camera_driver.h"
 #include "image_convert.h"
+#include "config.h"
 #include "model_store.h"
 #include "scene_describe.h"
 #include "scene_live.h"
@@ -159,12 +160,14 @@ bool describe(char* sentence, bool live) {
     Serial.println("[Escena] No se pudo sacar la foto");
     return !live;
   }
-  const bool ok = frame->format == PIXFORMAT_RGB565 && frame->width == kInputWidth &&
-                  frame->height == kInputHeight && frame->len >= (size_t)kInputWidth * kInputHeight * 2;
-  if (ok) rgb565ToRgb888(frame->buf, (size_t)kInputWidth * kInputHeight, rgb);
+  // Cualquier tamano a color: se endereza segun el montaje y se lleva a 160x120 (image_convert.h).
+  const bool ok = frame->format == PIXFORMAT_RGB565 && frame->width >= kInputWidth &&
+                  frame->height >= kInputHeight && frame->len >= (size_t)frame->width * frame->height * 2;
+  if (ok) rgb565UprightToRgb888(frame->buf, frame->width, frame->height, CAMERA_MOUNT, rgb, kInputWidth,
+                                kInputHeight);
   releaseColorFrame(frame);
   if (!ok) {
-    Serial.println("[Escena] El frame no es 160x120 a color");
+    Serial.println("[Escena] El frame no es RGB565 de al menos 160x120");
     return !live;
   }
 

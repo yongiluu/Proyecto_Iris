@@ -65,7 +65,7 @@ bool startCamera(CameraMode mode) {
   } else if (mode == CameraMode::GrayVga) {
     // Lector de texto: 640x480 en grises (1 byte por pixel, 300 KB en PSRAM). Las letras necesitan detalle.
     config.pixel_format = PIXFORMAT_GRAYSCALE;
-    config.frame_size = FRAMESIZE_VGA;
+    config.frame_size = OCR_FRAME_SIZE;
     config.jpeg_quality = 12;
     config.fb_count = 1;
   } else {

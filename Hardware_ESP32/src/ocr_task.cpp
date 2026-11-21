@@ -3,6 +3,8 @@
 #ifdef IRIS_OCR
 
 #include "ocr_task.h"
+#include "config.h"
+#include "image_convert.h"
 
 #include <Arduino.h>
 #include <TensorFlowLite_ESP32.h>
@@ -146,12 +148,16 @@ void readText(char* text) {
   const uint32_t started = millis();
 
   camera_fb_t* frame = acquireGrayVgaFrame();
-  if (frame == nullptr || frame->len < (size_t)(kOcrVgaWidth * kOcrVgaHeight)) {
+  if (frame == nullptr || frame->width < kOcrVgaHeight || frame->height < kOcrVgaHeight ||
+      frame->len < (size_t)frame->width * frame->height) {
     if (frame) releaseGrayVgaFrame(frame);
     Serial.println("[Lector] No se pudo sacar la foto");
     return;
   }
-  memcpy(vgaFrame, frame->buf, kOcrVgaWidth * kOcrVgaHeight);
+  // Derecha segun el montaje y a 640x480 (la camara de lado en los lentes entrega el texto vertical y
+  // en espejo: asi el lector no entendia nada).
+  grayUpright(frame->buf, frame->width, frame->height, CAMERA_MOUNT, vgaFrame, kOcrVgaWidth, kOcrVgaHeight,
+              OCR_ZOOM_CROP_W);
   releaseGrayVgaFrame(frame);  // la camara vuelve a color para los demas modelos
 
   // 1. Donde hay texto

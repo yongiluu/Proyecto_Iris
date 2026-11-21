@@ -12,6 +12,7 @@ Compila el mismo codigo de la placa y le pasa apretones simulados (cada 5 ms, co
 
 y el caso de la placa dormida: el toque que la despierta cuenta como el primero.
 """
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -20,8 +21,10 @@ TESTS_DIR = Path(__file__).resolve().parent
 REPO_DIR = TESTS_DIR.parents[1]
 BUILD_DIR = TESTS_DIR / "build"
 STEP_MS = 5
-HOLD_MS = 350     # ButtonGestures::kHoldMs
-GAP_MS = 400      # ButtonGestures::kTapGapMs
+_HEADER = (REPO_DIR / "Hardware_ESP32" / "include" / "button_gestures.h").read_text(encoding="utf-8")
+# Los tiempos se leen del firmware: asi la prueba sigue valiendo si se ajustan.
+HOLD_MS = int(re.search(r"kHoldMs\s*=\s*(\d+)", _HEADER).group(1))
+GAP_MS = int(re.search(r"kTapGapMs\s*=\s*(\d+)", _HEADER).group(1))
 
 
 def build() -> Path:

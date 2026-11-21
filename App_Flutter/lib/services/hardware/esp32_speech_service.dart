@@ -12,6 +12,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../core/constants/env_config.dart';
 import '../backend/backend_service.dart';
+import 'camera_orientation.dart';
 
 /// Comunicacion BLE con la placa Iris_ESP32: audio del microfono, audio TTS,
 /// comandos (boton push-to-talk, beep, foto) y fotos JPEG.
@@ -703,6 +704,18 @@ class Esp32SpeechService {
       return;
     }
 
+    if (boardHas('girada') == true) {
+      // Camara de lado en los lentes: enderezar antes de mostrarla o mandarla a la nube.
+      compute(uprightTransverseJpeg, bytes).then((upright) {
+        lastPhotoNotifier.value = upright;
+        _completePhoto(upright);
+      }, onError: (Object e) {
+        debugPrint('No se pudo enderezar la foto: $e');
+        lastPhotoNotifier.value = bytes;
+        _completePhoto(bytes);
+      });
+      return;
+    }
     lastPhotoNotifier.value = bytes;
     _completePhoto(bytes);
   }

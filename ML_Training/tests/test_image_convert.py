@@ -13,7 +13,8 @@ import numpy as np
 
 ML_DIR = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ML_DIR / "camara"))
-from board_image import pack_rgb565, rgb565_to_gray96, unpack_rgb565  # noqa: E402
+from board_image import (MOUNT_TRANSVERSE, MOUNT_UPRIGHT, pack_rgb565, rgb565_to_gray96,  # noqa: E402
+                         unpack_rgb565, upright)
 
 REPO_DIR = ML_DIR.parent
 INCLUDE = REPO_DIR / "Hardware_ESP32" / "include"
@@ -65,6 +66,31 @@ def main() -> int:
         ok = gray_diff == 0 and rgb_diff == 0
         failures += not ok
         print(f"{'✔' if ok else '✗'} {name:20s} max|dif| grises={gray_diff} rgb={rgb_diff}")
+
+    # Imagen derecha (camara de lado en los lentes): grises para el lector y RGB565 -> RGB888 para Retina.
+    cases = [("vga_lector", 640, 480, "gray", MOUNT_TRANSVERSE, 640, 480),
+             ("xga_lector", 1024, 768, "gray", MOUNT_TRANSVERSE, 640, 480),
+             ("qvga_retina", 320, 240, "rgb565", MOUNT_TRANSVERSE, 160, 120),
+             ("qqvga_derecha", 160, 120, "rgb565", MOUNT_UPRIGHT, 160, 120),
+             ("qvga_derecha", 320, 240, "gray", MOUNT_UPRIGHT, 160, 120),
+             ("uxga_lector_zoom", 1600, 1200, "gray", MOUNT_TRANSVERSE, 640, 480, 640)]
+    for name, sw, sh, kind, mount, dw, dh, *zoom in cases:
+        zoom = zoom[0] if zoom else 0
+        if kind == "gray":
+            image = rng.integers(0, 256, (sh, sw), dtype=np.uint8)
+            data, expected = image.tobytes(), upright(image, mount, dw, dh, zoom)
+        else:
+            rgb = rng.integers(0, 256, (sh, sw, 3), dtype=np.uint8)
+            data = pack_rgb565(rgb)
+            expected = upright(unpack_rgb565(data, sw, sh), mount, dw, dh)
+        raw, out = BUILD_DIR / f"{name}.in", BUILD_DIR / f"{name}.out"
+        raw.write_bytes(data)
+        subprocess.run([str(binary), "upright", str(raw), str(sw), str(sh), kind, str(mount), str(dw), str(dh),
+                        str(out), str(zoom)], check=True)
+        got = np.fromfile(out, np.uint8).reshape(expected.shape)
+        diff = int(np.abs(got.astype(int) - expected.astype(int)).max())
+        failures += diff != 0
+        print(f"{'✔' if diff == 0 else '✗'} {name:20s} derecha {sw}x{sh} -> {dw}x{dh} max|dif|={diff}")
 
     print("\nTODO OK: la placa convierte la imagen igual que el entrenamiento." if failures == 0
           else f"\n{failures} prueba(s) fallaron.")

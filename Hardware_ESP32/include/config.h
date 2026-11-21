@@ -26,7 +26,19 @@
 // Foto (JPEG hacia la nube) y camara a color de los modelos locales
 // ==========================================
 #define PHOTO_FRAME_SIZE        FRAMESIZE_VGA // 640x480
-#define CAMERA_COLOR_FRAME_SIZE FRAMESIZE_QQVGA // 160x120 RGB565: lo que miran los modelos locales
+// Como va montada la camara (image_convert.h): 0 = derecha; 1 = de lado en los lentes (la imagen llega
+// girada 90 grados y en espejo; medido con tools/foto_serial.py). La placa la endereza antes de
+// pasarla a Retina y al lector, y avisa a la app ("girada" en CMD_HELLO) para la foto de la nube.
+#define CAMERA_MOUNT            1
+// 320x240 RGB565: Retina recibe 160x120 derecho; al enderezar una imagen de lado se recorta el centro,
+// asi que se captura al doble para no perder detalle.
+#define CAMERA_COLOR_FRAME_SIZE FRAMESIZE_QVGA
+// Lector de texto: 1024x768 en grises y se usa el CENTRO a tamano nativo (zoom digital ~1,2x frente a
+// reducir la foto entera; lo que se quiere leer queda al centro porque se apunta con la cabeza).
+// Probado en la placa: a 1600x1200 la camara es lenta (cualquier movimiento borra el texto) y a veces
+// no alcanza la memoria para cambiar de modo. 1024x768 sale nitida con la cabeza quieta.
+#define OCR_FRAME_SIZE          FRAMESIZE_XGA
+#define OCR_ZOOM_CROP_W         640   // ancho del recorte central (= 640: sin achicar)
 
 // Detector de luz (como Seeing AI): tono mas agudo con mas luz. Ajustable en la placa real con LIGHT_METER_DEBUG.
 #define LIGHT_METER_EXPOSURE    300    // exposicion fija (0-1200): mas alto = mas sensible en penumbra
@@ -84,7 +96,10 @@
 #else
 #define POWER_SLEEP_ENABLED      0
 #endif
-#define POWER_IDLE_SLEEP_MS      45000   // sin uso este tiempo: a dormir
+#define POWER_IDLE_SLEEP_MS      45000   // sin uso este tiempo (y sin la app conectada): a dormir
+// Con la app conectada se espera mas: dormir corta el Bluetooth (el celular dice "se desconecto") y
+// apaga "Oye Iris". Con 45 s pasaba a cada rato mientras se usaba el celular.
+#define POWER_IDLE_SLEEP_CONNECTED_MS 600000  // 10 min
 #define LIVE_MAX_MS              300000  // el modo en vivo se apaga solo a los 5 minutos (gasta como siempre encendida)
 #define SAY_HOLD_MS              20000   // cuanto se guarda una respuesta esperando que la app se conecte
 // Medicion de la pila: la XIAO S3 NO lleva el voltaje de la pila a ningun pin. Hace falta un divisor

@@ -53,9 +53,9 @@ void powerActivity() {
   lastActivityMs = millis();
 }
 
-bool powerShouldSleep() {
+bool powerShouldSleep(bool appConnected) {
   if (!POWER_SLEEP_ENABLED || usbHostConnected()) return false;
-  return millis() - lastActivityMs >= POWER_IDLE_SLEEP_MS;
+  return millis() - lastActivityMs >= (appConnected ? POWER_IDLE_SLEEP_CONNECTED_MS : POWER_IDLE_SLEEP_MS);
 }
 
 void powerDeepSleep() {

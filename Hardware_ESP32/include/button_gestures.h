@@ -20,8 +20,8 @@ enum class ButtonEvent : uint8_t { None, TalkStart, CloudTalkStart, TalkStop, Ta
 
 class ButtonGestures {
 public:
-    static constexpr uint32_t kHoldMs = 350;
-    static constexpr uint32_t kTapGapMs = 400;
+    static constexpr uint32_t kHoldMs = 600;   // antes 350: toques normales (sobre todo cuidadosos) se tomaban como "mantener"
+    static constexpr uint32_t kTapGapMs = 450;
 
     // Llamar seguido (cada ~5-10 ms) con el estado ya sin rebotes. Devuelve a lo mas un evento por llamada.
     ButtonEvent update(bool pressed, uint32_t nowMs);
