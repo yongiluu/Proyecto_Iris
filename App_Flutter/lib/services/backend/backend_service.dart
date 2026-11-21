@@ -188,10 +188,13 @@ class BackendService {
   /// Devuelve null si funciono, o el motivo del error.
   Future<String?> acceptCompanionInvite(String code) async {
     try {
-      await _db.rpc('accept_companion_invite', params: {'invite_code': code.trim()});
-      return null;
+      final linked = await _db.rpc('accept_companion_invite', params: {'invite_code': code.trim()});
+      // El servidor devuelve null con un codigo equivocado (asi cuenta los intentos fallidos).
+      return linked == null ? 'Codigo invalido o vencido.' : null;
     } on PostgrestException catch (e) {
-      return e.message.contains('propio') ? 'Ese codigo es tuyo.' : 'Codigo invalido o vencido.';
+      if (e.message.contains('propio')) return 'Ese codigo es tuyo.';
+      if (e.message.contains('intentos')) return 'Demasiados intentos. Espera 15 minutos y vuelve a probar.';
+      return 'Codigo invalido o vencido.';
     } catch (e) {
       // Sin red no llega una PostgrestException: sin esto el boton no hacia nada ni avisaba.
       debugPrint('Vincular acompañante: $e');

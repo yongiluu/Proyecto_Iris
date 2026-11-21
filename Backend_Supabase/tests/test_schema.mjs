@@ -113,9 +113,10 @@ async function main() {
   const code = (await as(ANA, "select public.create_companion_invite() c")).rows[0].c;
   check(/^\d{6}$/.test(code), `Ana genera un codigo de 6 digitos (${code})`);
   check((await fails(ANA, "select public.accept_companion_invite($1)", [code]))?.includes("propio"), "Ana no puede aceptarse a si misma");
-  check((await fails(CARLA, "select public.accept_companion_invite('000000')")) !== null, "un codigo inventado no sirve");
+  check((await as(CARLA, "select public.accept_companion_invite('000000') r")).rows[0].r === null,
+        "un codigo inventado no sirve (devuelve null y cuenta el intento)");
   await as(BETO, "select public.accept_companion_invite($1)", [code]);
-  check((await fails(CARLA, "select public.accept_companion_invite($1)", [code])) !== null, "el codigo es de un solo uso");
+  check((await as(CARLA, "select public.accept_companion_invite($1) r", [code])).rows[0].r === null, "el codigo es de un solo uso");
   check((await as(ANA, "select count(*)::int n from companion_links")).rows[0].n === 1, "Ana ve el vinculo");
   check((await as(BETO, "select display_name from profiles where id = $1", [ANA])).rows[0]?.display_name === "Ana",
         "Beto ve el nombre de Ana");
@@ -142,6 +143,29 @@ async function main() {
   check(betoEdit.rows.length === 0, "Beto no puede cambiar sus propios permisos");
   check((await as(CARLA, "update preferences set memory_enabled = false where user_id = $1 returning user_id", [ANA])).rows.length === 0,
         "Carla no puede cambiar las preferencias de Ana");
+
+  console.log("\nEndurecimiento (auditoria 2026-11)");
+  check((await fails(ANA, "update companion_links set companion_id = $1 where user_id = $2", [CARLA, ANA]))?.includes("vinculo"),
+        "Ana no puede mover su vinculo a Carla (y asi leer su perfil)");
+  check((await as(ANA, "update companion_links set can_see_location = false where user_id = $1 returning id", [ANA])).rows.length === 1,
+        "Ana si puede cambiar los permisos del vinculo");
+  await as(ANA, "insert into alerts (user_id, kind, lat, lon) values ($1, 'vehiculo', -36.8, -73.05)", [ANA]);
+  check((await fails(BETO, "select lat, lon from alerts")) !== null, "las coordenadas de las alertas no se leen directo");
+  check((await as(BETO, "select count(*)::int n from alerts")).rows[0].n === 2, "Beto sigue viendo las alertas (sin coordenadas)");
+  const alertId = (await as(ANA, "select id from alerts where kind = 'vehiculo'")).rows[0].id;
+  check((await as(ANA, "select * from public.alert_location($1)", [alertId])).rows.length === 1, "Ana ve la ubicacion de su alerta");
+  check((await as(BETO, "select * from public.alert_location($1)", [alertId])).rows.length === 0,
+        "Beto no ve la ubicacion de la alerta sin permiso de ubicacion");
+  check((await as(CARLA, "select public.shares_location($1) s", [ANA])).rows[0].s === false,
+        "shares_location no revela las preferencias de Ana a una desconocida");
+  check((await as(CARLA, "select public.has_training_consent($1) s", [ANA])).rows[0].s === false,
+        "has_training_consent no responde por otras personas");
+  check((await fails(CARLA, "select public.conversation_day_for($1)", [ANA])) !== null,
+        "conversation_day_for no se puede llamar desde la API");
+  // Carla ya fallo 2 veces arriba (codigo inventado y codigo usado): 3 mas llegan al tope de 5.
+  for (let i = 0; i < 3; i++) await as(CARLA, "select public.accept_companion_invite('111111')");
+  check((await fails(CARLA, "select public.accept_companion_invite('222222')"))?.includes("intentos"),
+        "despues de 5 codigos equivocados hay que esperar (no se puede adivinar)");
 
   console.log("\nDatos de entrenamiento (con consentimiento)");
   check(await fails(ANA, "insert into training_uploads (user_id, kind, label, source, storage_path) values ($1, 'foto', 'puerta', 'celular', 'x')", [ANA]) !== null,
