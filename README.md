@@ -50,7 +50,7 @@ Escrito en C++ con PlatformIO. Actúa como periférico BLE usando la librería N
 
 ### Modelos fuera del programa (XIAO)
 
-La flash de 8 MB de la XIAO se reparte en `Hardware_ESP32/partitions_iris_8MB.csv`: dos ranuras de programa (para actualizar por WiFi) y una partición **`modelos`** de 2 MB. Ahí van los modelos que no caben dentro del programa: el lector de texto y la descripción de escenas (cuando la nube no responde, "¿qué hay adelante?" lo contesta la placa sin internet); después, las caras. Se leen directo de la flash, sin gastar RAM, y se actualizan sin recompilar. Los antiguos modelos de visión y cercanía en grises se retiraron: Retina los reemplaza.
+La flash de 8 MB de la XIAO se reparte en `Hardware_ESP32/partitions_iris_8MB.csv`: dos ranuras de programa de 1,875 MB (para actualizar por WiFi) y una partición **`modelos`** de 4 MB. Ahí van los modelos que no caben dentro del programa: el lector de texto y Retina, la descripción de escenas (cuando la nube no responde, "¿qué hay adelante?" lo contesta la placa sin internet); después, las caras. Se leen directo de la flash, sin gastar RAM, y se actualizan sin recompilar. Los antiguos modelos de visión y cercanía en grises se retiraron: Retina los reemplaza.
 
 **Una sola vez, por USB** (la tabla de particiones nueva no se puede grabar por WiFi):
 

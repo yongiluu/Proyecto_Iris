@@ -68,6 +68,12 @@ jobs:
       - name: Gestos del boton de la placa (un toque, dos, tres, mantener)
         working-directory: ML_Training
         run: python tests/test_button_gestures.py
+      - name: Retina en el TFLM de la placa = TensorFlow (y cabe en su arena)
+        working-directory: ML_Training
+        run: python tests/test_scene_tflm.py
+      - name: Los modelos de la placa caben en la particion "modelos"
+        working-directory: ML_Training
+        run: python tools/pack_models.py
       - name: Las tablas generadas para el firmware estan al dia
         run: git diff --exit-code -- Hardware_ESP32/include/scene_vocab.h Hardware_ESP32/src/scene_vocab.cpp Hardware_ESP32/include/ocr_config.h Hardware_ESP32/src/ocr_config.cpp
 

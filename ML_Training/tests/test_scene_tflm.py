@@ -80,6 +80,17 @@ def main() -> int:
     if not ok:
         print("La placa calcularia distinto que el entrenamiento: revisar scene/export_model.py "
               "(capas densas cuantizadas por canal).")
+
+    # El arena que la placa reserva para "escena" (models/firmware_models.json) debe alcanzar. El PC usa
+    # punteros de 64 bits y gasta algo MAS que la placa (32 bits): si aqui cabe, en la placa tambien.
+    import json, re
+    manifest = json.loads((tflm.ML_DIR / "models" / "firmware_models.json").read_text(encoding="utf-8"))
+    board_arena = manifest.get("escena", {}).get("arena", 0)
+    used = re.search(r"arena usada (\d+)", run.stdout)
+    if board_arena and used:
+        fits = int(used.group(1)) <= board_arena
+        print(f"{'✔' if fits else '✘'} arena: usa {int(used.group(1))} bytes de {board_arena} reservados para la placa")
+        ok = ok and fits
     return 0 if ok else 1
 
 

@@ -100,7 +100,8 @@ def main() -> None:
     unsupported = ops - SUPPORTED_OPS
     print(f"Ops: {sorted(ops)}")
     if unsupported:
-        print(f"⚠ Ops que el TFLM de la placa puede no tener: {sorted(unsupported)}")
+        # Igual que audio/ y ocr/: un modelo con ops que la placa no tiene no se anota (fallaria al cargar).
+        raise SystemExit(f"✘ Ops que el TFLM de la placa no tiene: {sorted(unsupported)}")
 
     tensors = {t["index"]: t for t in interpreter.get_tensor_details()}
     produced = {i for op in interpreter._get_ops_details() for i in op["outputs"]}
