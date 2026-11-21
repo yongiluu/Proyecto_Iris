@@ -272,10 +272,13 @@ class _SettingsSheetState extends State<SettingsSheet> {
       valueListenable: widget.boardVolume,
       builder: (context, volume, _) {
         final shown = _volumeDrag ?? volume;
+        // La accion de TalkBack va en Semantics: ExcludeSemantics oculta la del IconButton.
         Widget stepButton(int delta) => Semantics(
               button: true,
+              enabled: connected,
               label: delta < 0 ? 'Bajar volumen de la placa' : 'Subir volumen de la placa',
               value: '$volume por ciento',
+              onTap: connected ? () => widget.onBoardVolumeChanged(volume + delta) : null,
               child: ExcludeSemantics(
                 child: IconButton(
                   iconSize: 22,

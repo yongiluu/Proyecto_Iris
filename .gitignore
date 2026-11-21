@@ -1,0 +1,20 @@
+# Raiz del repositorio de Iris. Cada modulo tiene ademas su propio .gitignore.
+
+# Herramientas locales (worktrees y estado de sesiones de Claude Code)
+.claude/
+
+# Respaldos y exportaciones personales (pueden traer datos privados)
+_backup_*/
+iris_dataset_*.zip
+captura_*.png
+*.bak
+*.orig
+
+# Salidas de compilacion que no deben versionarse
+App_Flutter/android/build/
+**/.pio/
+
+# Llaves y entornos (nunca en git)
+.env
+.env.*
+!.env.template

@@ -120,7 +120,6 @@ class _AssistantScreenState extends State<AssistantScreen>
   // ─── Volume Button ───
   static const MethodChannel _volumeChannel = MethodChannel('com.iris.visual.iris_app/volume');
   static const MethodChannel _soundChannel = MethodChannel('com.iris.visual.iris_app/sound');
-  DateTime? _lastVolumeUpTime;
 
   @override
   void setState(VoidCallback fn) {
@@ -135,8 +134,9 @@ class _AssistantScreenState extends State<AssistantScreen>
     _initServices();
 
     _volumeChannel.setMethodCallHandler((call) async {
-      if (call.method == 'volumeUpPressed') {
-        _handleVolumeUpPress();
+      // El doble toque de subir volumen se detecta en Android (MainActivity): un toque simple sube el volumen.
+      if (call.method == 'volumeUpDouble') {
+        _interruptAndStartListening();
       }
     });
   }
@@ -428,17 +428,6 @@ class _AssistantScreenState extends State<AssistantScreen>
   }
 
   // ─── Volume Button Handler ───
-  void _handleVolumeUpPress() {
-    final now = DateTime.now();
-    if (_lastVolumeUpTime != null && now.difference(_lastVolumeUpTime!).inMilliseconds < 500) {
-      // Doble toque detectado
-      _lastVolumeUpTime = null;
-      _interruptAndStartListening();
-    } else {
-      _lastVolumeUpTime = now;
-    }
-  }
-
   Future<void> _interruptAndStartListening() async {
     if (_isListening || _isProcessing) return;
     // Si estaba hablando, paramos. Un pitido (distinto al de "consulta enviada") avisa que Iris

@@ -189,9 +189,12 @@ class ModeChipButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // ExcludeSemantics oculta el boton de abajo, asi que la accion de TalkBack (doble toque) va aqui.
     return Semantics(
       button: true,
+      enabled: onPressed != null,
       label: semanticLabel ?? label,
+      onTap: onPressed,
       child: ExcludeSemantics(
         child: OutlinedButton.icon(
           onPressed: onPressed,

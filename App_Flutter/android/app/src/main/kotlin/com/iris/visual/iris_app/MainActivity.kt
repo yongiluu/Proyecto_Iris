@@ -87,10 +87,30 @@ class MainActivity : FlutterActivity() {
         }
     }
 
+    // Subir volumen: un toque sube el volumen como siempre (una persona ciega lo necesita); dos toques
+    // seguidos (< 450 ms) le hablan a Iris y no cambian el volumen. El toque simple espera 450 ms por si
+    // llega el segundo. Mantenerlo apretado (repeticion) sube el volumen normal.
+    private val volumeHandler = Handler(Looper.getMainLooper())
+    private var pendingVolumeUp: Runnable? = null
+
     override fun onKeyDown(keyCode: Int, event: KeyEvent?): Boolean {
-        if (keyCode == KeyEvent.KEYCODE_VOLUME_UP) {
-            methodChannel?.invokeMethod("volumeUpPressed", null)
-            return true // Prevenir que suba el volumen del sistema
+        if (keyCode == KeyEvent.KEYCODE_VOLUME_UP && (event?.repeatCount ?: 0) == 0) {
+            val pending = pendingVolumeUp
+            if (pending != null) {
+                volumeHandler.removeCallbacks(pending)
+                pendingVolumeUp = null
+                methodChannel?.invokeMethod("volumeUpDouble", null)
+            } else {
+                val raise = Runnable {
+                    pendingVolumeUp = null
+                    val audio = getSystemService(AUDIO_SERVICE) as AudioManager
+                    audio.adjustStreamVolume(AudioManager.STREAM_MUSIC, AudioManager.ADJUST_RAISE,
+                        AudioManager.FLAG_SHOW_UI)
+                }
+                pendingVolumeUp = raise
+                volumeHandler.postDelayed(raise, 450)
+            }
+            return true
         }
         return super.onKeyDown(keyCode, event)
     }
